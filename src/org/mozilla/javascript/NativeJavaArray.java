@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -18,7 +18,7 @@
  * Copyright (C) 1997-1999 Netscape Communications Corporation. All
  * Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  * Norris Boyd
  * Frank Mitchell
  * Mike Shaver
@@ -87,18 +87,21 @@ public class NativeJavaArray extends NativeJavaObject {
         if (id.equals("length"))
             return new Integer(length);
         Object result = super.get(id, start);
-        if (result == NOT_FOUND && 
-            !ScriptRuntime.hasProp(getPrototype(), id)) 
+        if (result == NOT_FOUND &&
+            !ScriptRuntime.hasProp(getPrototype(), id))
         {
             throw Context.reportRuntimeError2(
                 "msg.java.member.not.found", array.getClass().getName(), id);
         }
-        return result;  
+        return result;
     }
 
     public Object get(int index, Scriptable start) {
-        if (0 <= index && index < length)
-            return NativeJavaObject.wrap(this, Array.get(array, index), cls);
+        if (0 <= index && index < length) {
+            Context cx = Context.getContext();
+            Object obj = Array.get(array, index);
+            return cx.getWrapFactory().wrap(cx, this, obj, cls);
+        }
         return Undefined.instance;
     }
 
@@ -107,17 +110,18 @@ public class NativeJavaArray extends NativeJavaObject {
         if (!id.equals("length"))
             super.put(id, start, value);
     }
-    
+
     public void put(int index, Scriptable start, Object value) {
         if (0 <= index && index < length) {
-            Array.set(array, index, NativeJavaObject.coerceType(cls, value));
+            Array.set(array, index, NativeJavaObject.coerceType(cls, value,
+                                                                true));
             return;
         }
         super.put(index, start, value);
     }
 
     public Object getDefaultValue(Class hint) {
-        if (hint == null || hint == ScriptRuntime.StringClass) 
+        if (hint == null || hint == ScriptRuntime.StringClass)
             return array.toString();
         if (hint == ScriptRuntime.BooleanClass)
             return Boolean.TRUE;
@@ -125,7 +129,7 @@ public class NativeJavaArray extends NativeJavaObject {
             return ScriptRuntime.NaNobj;
         return this;
     }
-    
+
     public Object[] getIds() {
         Object[] result = new Object[length];
         int i = length;
@@ -143,7 +147,7 @@ public class NativeJavaArray extends NativeJavaObject {
 
     public Scriptable getPrototype() {
         if (prototype == null) {
-            prototype = 
+            prototype =
                 ScriptableObject.getClassPrototype(this.getParentScope(),
                                                    "Array");
         }
@@ -154,9 +158,9 @@ public class NativeJavaArray extends NativeJavaObject {
     int length;
     Class cls;
     Scriptable prototype;
-    
-    public void writeExternal(ObjectOutput out) 
-        throws IOException 
+
+    public void writeExternal(ObjectOutput out)
+        throws IOException
     {
         super.writeExternal(out);
 
@@ -165,9 +169,9 @@ public class NativeJavaArray extends NativeJavaObject {
         out.writeObject(cls.getName());
         out.writeObject(prototype);
     }
-    
-    public void readExternal(ObjectInput in) 
-        throws IOException, ClassNotFoundException 
+
+    public void readExternal(ObjectInput in)
+        throws IOException, ClassNotFoundException
     {
         super.readExternal(in);
 
@@ -175,5 +179,5 @@ public class NativeJavaArray extends NativeJavaObject {
         length = in.readInt();
         cls = Class.forName((String)in.readObject());
         prototype = (Scriptable)in.readObject();
-    }    
+    }
 }

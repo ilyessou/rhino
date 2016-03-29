@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -18,7 +18,7 @@
  * Copyright (C) 1997-1999 Netscape Communications Corporation. All
  * Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  * Norris Boyd
  *
  * Alternatively, the contents of this file may be used under the
@@ -58,14 +58,15 @@ public class JavaScriptException extends Exception {
         this.value = value;
     }
 
-    static JavaScriptException wrapException(Scriptable scope,
+    static JavaScriptException wrapException(Context cx, Scriptable scope,
                                              Throwable exn)
     {
         if (exn instanceof InvocationTargetException)
             exn = ((InvocationTargetException)exn).getTargetException();
         if (exn instanceof JavaScriptException)
             return (JavaScriptException)exn;
-        Object wrapper = NativeJavaObject.wrap(scope, exn, Throwable.class);
+        Object wrapper = cx.getWrapFactory().
+                            wrap(cx, scope, exn, Throwable.class);
         return new JavaScriptException(wrapper);
     }
 
@@ -92,9 +93,9 @@ public class JavaScriptException extends Exception {
      * wrapping the original Java exception object.
      *
      * We would prefer to go through a getter to encapsulate the value,
-     * however that causes the bizarre error "nanosecond timeout value 
-     * out of range" on the MS JVM. 
-     * @serial 
+     * however that causes the bizarre error "nanosecond timeout value
+     * out of range" on the MS JVM.
+     * @serial
      */
     Object value;
 }

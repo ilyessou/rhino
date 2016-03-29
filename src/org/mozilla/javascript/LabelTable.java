@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -18,7 +18,7 @@
  * Copyright (C) 1997-1999 Netscape Communications Corporation. All
  * Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  * Roger Lawrence
  *
  * Alternatively, the contents of this file may be used under the
@@ -37,44 +37,89 @@ package org.mozilla.javascript;
 
 public class LabelTable {
 
-    private static final boolean DEBUGLABELS = false;
-    
-    private static final int LabelTableSize = 32;
-    protected Label itsLabelTable[];
-    protected int itsLabelTableTop;
-
     public int acquireLabel()
     {
-        if (itsLabelTable == null) {
-            itsLabelTable = new Label[LabelTableSize];
-            itsLabelTable[0] = new Label();
-            itsLabelTableTop = 1;
-            return 0x80000000;
-        }
-        else {
-            if (itsLabelTableTop == itsLabelTable.length) {
-                Label oldTable[] = itsLabelTable;
-                itsLabelTable = new Label[itsLabelTableTop * 2];
-                System.arraycopy(oldTable, 0, itsLabelTable, 0, itsLabelTableTop);
+        int top = itsLabelTableTop;
+        if (itsLabelTable == null || top == itsLabelTable.length) {
+            if (itsLabelTable == null) {
+                itsLabelTable = new int[MIN_LABEL_TABLE_SIZE];
+            }else {
+                int[] tmp = new int[itsLabelTable.length * 2];
+                System.arraycopy(itsLabelTable, 0, tmp, 0, top);
+                itsLabelTable = tmp;
             }
-            itsLabelTable[itsLabelTableTop] = new Label();
-            int result = itsLabelTableTop++;
-            return result | 0x80000000;
         }
+        itsLabelTableTop = top + 1;
+        itsLabelTable[top] = -1;
+        return top;
     }
 
-    public int markLabel(int theLabel, int pc)
-    {
-        if (DEBUGLABELS) {
-            if ((theLabel & 0x80000000) != 0x80000000)
-                throw new RuntimeException("Bad label, no biscuit");
-        }
-        theLabel &= 0x7FFFFFFF;
-        if (DEBUGLABELS) {
-            System.out.println("Marking label " + theLabel + " at " + pc);
-        }
-        itsLabelTable[theLabel].setPC((short)pc);
-        return theLabel | 0x80000000;
+    public int getLabelPC(int label) {
+        if (label > itsLabelTableTop) throw new RuntimeException();
+        return itsLabelTable[label];
     }
+
+    public void markLabel(int label, int pc) {
+        if (label > itsLabelTableTop || pc < 0) throw new RuntimeException();
+        if (itsLabelTable[label] != -1) {
+            // Can mark label only once
+            throw new RuntimeException();
+        }
+        itsLabelTable[label] = pc;
+    }
+
+    public void addLabelFixup(int label, int fixupSite) {
+        if (label > itsLabelTableTop || fixupSite < 0) {
+            throw new RuntimeException();
+        }
+        int top = itsFixupTableTop;
+        if (itsFixupTable == null || top == itsFixupTable.length) {
+            if (itsFixupTable == null) {
+                itsFixupTable = new long[MIN_FIXUP_TABLE_SIZE];
+            }else {
+                long[] tmp = new long[itsFixupTable.length * 2];
+                System.arraycopy(itsFixupTable, 0, tmp, 0, top);
+                itsFixupTable = tmp;
+            }
+        }
+        itsFixupTableTop = top + 1;
+        itsFixupTable[top] = ((long)label << 32) | fixupSite;
+    }
+
+    public void fixLabelGotos(byte[] codeBuffer) {
+        for (int i = 0; i < itsFixupTableTop; i++) {
+            long fixup = itsFixupTable[i];
+            int label = (int)(fixup >> 32);
+            int fixupSite = (int)fixup;
+            int pc = itsLabelTable[label];
+            if (pc == -1) {
+                // Unlocated label
+                throw new RuntimeException();
+            }
+            // -1 to get delta from instruction start
+            int offset = pc - (fixupSite - 1);
+            if ((short)offset != offset) {
+                throw new RuntimeException
+                    ("Program too complex: too big jump offset");
+            }
+            codeBuffer[fixupSite] = (byte)(offset >> 8);
+            codeBuffer[fixupSite + 1] = (byte)offset;
+        }
+        itsFixupTableTop = 0;
+    }
+
+    public void clearLabels() {
+        itsLabelTableTop = 0;
+        itsFixupTableTop = 0;
+    }
+
+    private static final int MIN_LABEL_TABLE_SIZE = 32;
+    private int[] itsLabelTable;
+    private int itsLabelTableTop;
+
+// itsFixupTable[i] = (label_index << 32) | fixup_site
+    private static final int MIN_FIXUP_TABLE_SIZE = 40;
+    private long[] itsFixupTable;
+    private int itsFixupTableTop;
 
 }

@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -44,11 +44,11 @@ package org.mozilla.javascript;
  *
  * @author Norris Boyd
  */
-public class NativeNumber extends IdScriptable {
+final class NativeNumber extends IdScriptable {
 
     private static final int MAX_PRECISION = 100;
 
-    public static void init(Context cx, Scriptable scope, boolean sealed) {
+    static void init(Context cx, Scriptable scope, boolean sealed) {
         NativeNumber obj = new NativeNumber();
         obj.prototypeFlag = true;
         obj.addAsPrototype(MAX_PROTOTYPE_ID, cx, scope, sealed);
@@ -57,11 +57,11 @@ public class NativeNumber extends IdScriptable {
     /**
      * Zero-parameter constructor: just used to create Number.prototype
      */
-    public NativeNumber() {
+    private NativeNumber() {
         doubleValue = defaultValue;
     }
 
-    public NativeNumber(double number) {
+    private NativeNumber(double number) {
         doubleValue = number;
     }
 
@@ -86,14 +86,14 @@ public class NativeNumber extends IdScriptable {
 
         super.fillConstructorProperties(cx, ctor, sealed);
     }
-    
+
     public int methodArity(int methodId) {
         if (prototypeFlag) {
             switch (methodId) {
-                case Id_constructor:     return 1; 
-                case Id_toString:        return 1; 
-                case Id_valueOf:         return 0; 
-                case Id_toLocaleString:  return 1; 
+                case Id_constructor:     return 1;
+                case Id_toString:        return 1;
+                case Id_valueOf:         return 0;
+                case Id_toLocaleString:  return 1;
                 case Id_toFixed:         return 1;
                 case Id_toExponential:   return 1;
                 case Id_toPrecision:     return 1;
@@ -112,23 +112,24 @@ public class NativeNumber extends IdScriptable {
                 case Id_constructor:
                     return jsConstructor(args, thisObj == null);
 
-                case Id_toString: return realThis(thisObj, f).
-                    jsFunction_toString(toBase(args, 0));
+                case Id_toString:
+                    return realThis(thisObj, f).js_toString(toBase(args, 0));
 
-                case Id_valueOf: return wrap_double(realThis(thisObj, f).
-                    jsFunction_valueOf());
+                case Id_valueOf:
+                    return wrap_double(realThis(thisObj, f).doubleValue);
 
-                case Id_toLocaleString: return realThis(thisObj, f).
-                    jsFunction_toLocaleString(toBase(args, 0));
+                case Id_toLocaleString:
+                    return realThis(thisObj, f).
+                        js_toLocaleString(toBase(args, 0));
 
-                case Id_toFixed: return realThis(thisObj, f).
-                    jsFunction_toFixed(cx, args);
+                case Id_toFixed:
+                    return realThis(thisObj, f).js_toFixed(cx, args);
 
-                case Id_toExponential: return realThis(thisObj, f).
-                    jsFunction_toExponential(cx, args);
+                case Id_toExponential:
+                    return realThis(thisObj, f).js_toExponential(cx, args);
 
-                case Id_toPrecision:return realThis(thisObj, f).
-                    jsFunction_toPrecision(cx, args);
+                case Id_toPrecision:
+                    return realThis(thisObj, f).js_toPrecision(cx, args);
             }
         }
         return super.execMethod(methodId, f, cx, scope, thisObj, args);
@@ -158,29 +159,25 @@ public class NativeNumber extends IdScriptable {
     }
 
     public String toString() {
-        return jsFunction_toString(10);
+        return js_toString(10);
     }
 
-    private String jsFunction_toString(int base) {
+    private String js_toString(int base) {
         return ScriptRuntime.numberToString(doubleValue, base);
     }
 
-    private double jsFunction_valueOf() {
-        return doubleValue;
+    private String js_toLocaleString(int base) {
+        return js_toString(base);
     }
 
-    private String jsFunction_toLocaleString(int base) {
-        return jsFunction_toString(base);
-    }
-
-    private String jsFunction_toFixed(Context cx, Object[] args) {
+    private String js_toFixed(Context cx, Object[] args) {
         /* We allow a larger range of precision than
            ECMA requires; this is permitted by ECMA. */
         return num_to(cx, args, DToA.DTOSTR_FIXED, DToA.DTOSTR_FIXED,
                       -20, MAX_PRECISION, 0);
     }
 
-    private String jsFunction_toExponential(Context cx, Object[] args) {
+    private String js_toExponential(Context cx, Object[] args) {
         /* We allow a larger range of precision than
            ECMA requires; this is permitted by ECMA. */
         return num_to(cx, args,
@@ -189,7 +186,7 @@ public class NativeNumber extends IdScriptable {
                       0, MAX_PRECISION, 1);
     }
 
-    private String jsFunction_toPrecision(Context cx, Object[] args) {
+    private String js_toPrecision(Context cx, Object[] args) {
         /* We allow a larger range of precision than
            ECMA requires; this is permitted by ECMA. */
         return num_to(cx, args, DToA.DTOSTR_STANDARD, DToA.DTOSTR_PRECISION,
@@ -223,16 +220,16 @@ public class NativeNumber extends IdScriptable {
     protected String getIdName(int id) {
         if (prototypeFlag) {
             switch (id) {
-                case Id_constructor:     return "constructor"; 
-                case Id_toString:        return "toString"; 
-                case Id_valueOf:         return "valueOf"; 
-                case Id_toLocaleString:  return "toLocaleString"; 
+                case Id_constructor:     return "constructor";
+                case Id_toString:        return "toString";
+                case Id_valueOf:         return "valueOf";
+                case Id_toLocaleString:  return "toLocaleString";
                 case Id_toFixed:         return "toFixed";
                 case Id_toExponential:   return "toExponential";
                 case Id_toPrecision:     return "toPrecision";
             }
         }
-        return null;        
+        return null;
     }
 
 // #string_id_map#

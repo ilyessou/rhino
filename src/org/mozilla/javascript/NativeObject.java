@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -35,8 +35,6 @@
  */
 
 package org.mozilla.javascript;
-
-import java.util.Hashtable;
 
 /**
  * This class implements the Object native object.
@@ -81,22 +79,22 @@ public class NativeObject extends IdScriptable {
                     return jsConstructor(cx, args, f, thisObj == null);
 
                 case Id_toString:
-                    return jsFunction_toString(cx, thisObj);
+                    return js_toString(cx, thisObj);
 
                 case Id_toLocaleString:
-                    return jsFunction_toLocaleString(cx, thisObj);
+                    return js_toLocaleString(cx, thisObj);
 
                 case Id_valueOf:
-                    return jsFunction_valueOf(thisObj);
+                    return js_valueOf(thisObj);
 
                 case Id_hasOwnProperty:
-                    return jsFunction_hasOwnProperty(thisObj, args);
+                    return js_hasOwnProperty(thisObj, args);
 
                 case Id_propertyIsEnumerable:
-                    return jsFunction_propertyIsEnumerable(cx, thisObj, args);
+                    return js_propertyIsEnumerable(cx, thisObj, args);
 
                 case Id_isPrototypeOf:
-                    return jsFunction_isPrototypeOf(cx, thisObj, args);
+                    return js_isPrototypeOf(cx, thisObj, args);
             }
         }
         return super.execMethod(methodId, f, cx, scope, thisObj, args);
@@ -115,83 +113,82 @@ public class NativeObject extends IdScriptable {
         {
             return new NativeObject();
         }
-        return ScriptRuntime.toObject(ctorObj.getParentScope(), args[0]);
+        return ScriptRuntime.toObject(cx, ctorObj.getParentScope(), args[0]);
     }
 
     public String toString() {
         Context cx = Context.getCurrentContext();
         if (cx != null)
-            return jsFunction_toString(cx, this);
+            return js_toString(cx, this);
         else
             return "[object " + getClassName() + "]";
     }
 
-    private static String jsFunction_toString(Context cx, Scriptable thisObj)
-    {
-        if (cx.getLanguageVersion() != cx.VERSION_1_2)
-            return "[object " + thisObj.getClassName() + "]";
-
-        return toSource(cx, thisObj);
+    private static String js_toString(Context cx, Scriptable thisObj) {
+        if (cx.hasFeature(Context.FEATURE_TO_STRING_AS_SOURCE)) {
+            return toSource(cx, thisObj);
+        }
+        return "[object " + thisObj.getClassName() + "]";
     }
 
-    private static String jsFunction_toLocaleString(Context cx,
-                                                    Scriptable thisObj)
-    {
-        return jsFunction_toString(cx, thisObj);
+    private static String js_toLocaleString(Context cx, Scriptable thisObj) {
+        return js_toString(cx, thisObj);
     }
 
     private static String toSource(Context cx, Scriptable thisObj)
     {
-        Scriptable m = thisObj;
+        StringBuffer result = new StringBuffer(256);
+        result.append('{');
 
-        if (cx.iterating == null)
-            cx.iterating = new Hashtable(31);
+        boolean toplevel, iterating;
+        if (cx.iterating == null) {
+            toplevel = true;
+            iterating = false;
+            cx.iterating = new ObjToIntMap(31);
+        }else {
+            toplevel = false;
+            iterating = cx.iterating.has(thisObj);
+        }
 
-        if (cx.iterating.get(m) == Boolean.TRUE) {
-            return "{}";  // stop recursion
-        } else {
-            StringBuffer result = new StringBuffer("{");
-            Object[] ids = m.getIds();
-
-            for(int i=0; i < ids.length; i++) {
-                if (i > 0)
-                    result.append(", ");
-
-                Object id = ids[i];
-                String idString = ScriptRuntime.toString(id);
-                Object p = (id instanceof String)
-                    ? m.get((String) id, m)
-                    : m.get(((Number) id).intValue(), m);
-                if (p instanceof String) {
-                    result.append(idString + ":\""
-                        + ScriptRuntime
-                          .escapeString(ScriptRuntime.toString(p))
-                        + "\"");
-                } else {
-                    /* wrap changes to cx.iterating in a try/finally
-                     * so that the reference always gets removed, and
-                     * we don't leak memory.  Good place for weak
-                     * references, if we had them.
-                     */
-                    try {
-                        cx.iterating.put(m, Boolean.TRUE); // stop recursion.
-                        result.append(idString + ":" + ScriptRuntime.toString(p));
-                    } finally {
-                        cx.iterating.remove(m);
+        // Make sure cx.iterating is set to null when done
+        // so we don't leak memory
+        try {
+            if (!iterating) {
+                cx.iterating.put(thisObj, 0); // stop recursion.
+                Object[] ids = thisObj.getIds();
+                for(int i=0; i < ids.length; i++) {
+                    if (i > 0)
+                        result.append(", ");
+                    Object id = ids[i];
+                    result.append(id);
+                    result.append(':');
+                    Object p = (id instanceof String)
+                        ? thisObj.get((String) id, thisObj)
+                        : thisObj.get(((Integer) id).intValue(), thisObj);
+                    if (p instanceof String) {
+                        result.append('\"');
+                        result.append(ScriptRuntime.escapeString((String)p));
+                        result.append('\"');
+                    }else {
+                        result.append(ScriptRuntime.toString(p));
                     }
                 }
             }
-            result.append('}');
-            return result.toString();
+        }finally {
+            if (toplevel) {
+                cx.iterating = null;
+            }
         }
+
+        result.append('}');
+        return result.toString();
     }
 
-    private static Object jsFunction_valueOf(Scriptable thisObj) {
+    private static Object js_valueOf(Scriptable thisObj) {
         return thisObj;
     }
 
-    private static Object jsFunction_hasOwnProperty(Scriptable thisObj,
-                                                    Object[] args)
+    private static Object js_hasOwnProperty(Scriptable thisObj, Object[] args)
     {
         if (args.length != 0) {
             if (thisObj.has(ScriptRuntime.toString(args[0]), thisObj))
@@ -200,9 +197,9 @@ public class NativeObject extends IdScriptable {
         return Boolean.FALSE;
     }
 
-    private static Object jsFunction_propertyIsEnumerable(Context cx,
-                                                          Scriptable thisObj,
-                                                          Object[] args)
+    private static Object js_propertyIsEnumerable(Context cx,
+                                                  Scriptable thisObj,
+                                                  Object[] args)
     {
         try {
             if (args.length != 0) {
@@ -221,9 +218,8 @@ public class NativeObject extends IdScriptable {
         return Boolean.FALSE;
     }
 
-    private static Object jsFunction_isPrototypeOf(Context cx,
-                                                   Scriptable thisObj,
-                                                   Object[] args)
+    private static Object js_isPrototypeOf(Context cx, Scriptable thisObj,
+                                           Object[] args)
     {
         if (args.length != 0 && args[0] instanceof Scriptable) {
             Scriptable v = (Scriptable) args[0];

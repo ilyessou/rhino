@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -18,7 +18,7 @@
  * Copyright (C) 1997-1999 Netscape Communications Corporation. All
  * Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the
  * terms of the GNU Public License (the "GPL"), in which case the
@@ -39,12 +39,22 @@ class SubString {
     public SubString()
     {
     }
-    
+
     public SubString(String str)
     {
         index = 0;
         charArray = str.toCharArray();
         length = str.length();
+    }
+
+    public SubString(char[] source, int start, int len)
+    {
+    // there must be a better way of doing this??
+        index = 0;
+        length = len;
+        charArray = new char[len];
+        for (int j = 0; j < len; j++)
+            charArray[j] = source[start + j];
     }
 
     public String toString() {

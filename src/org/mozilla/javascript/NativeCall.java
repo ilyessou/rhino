@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -18,7 +18,7 @@
  * Copyright (C) 1997-1999 Netscape Communications Corporation. All
  * Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  * Norris Boyd
  *
  * Alternatively, the contents of this file may be used under the
@@ -51,43 +51,49 @@ public final class NativeCall extends IdScriptable {
         obj.addAsPrototype(MAX_PROTOTYPE_ID, cx, scope, sealed);
     }
 
-    NativeCall(Context cx, Scriptable scope, NativeFunction funObj, 
+    NativeCall(Context cx, Scriptable scope, NativeFunction funObj,
                Scriptable thisObj, Object[] args)
     {
         this.funObj = funObj;
         this.thisObj = thisObj;
-        
+
         setParentScope(scope);
         // leave prototype null
-        
+
         // save current activation
         this.caller = cx.currentActivation;
         cx.currentActivation = this;
 
         this.originalArgs = (args == null) ? ScriptRuntime.emptyArgs : args;
-        
+
         // initialize values of arguments
         String[] argNames = funObj.argNames;
         if (argNames != null) {
             for (int i=0; i < funObj.argCount; i++) {
-                Object val = i < args.length ? args[i] 
+                Object val = i < args.length ? args[i]
                                              : Undefined.instance;
                 super.put(argNames[i], this, val);
             }
         }
-        
+
         // initialize "arguments" property
         super.put("arguments", this, new Arguments(this));
+
+        if (argNames != null) {
+            for (int i = funObj.argCount; i != argNames.length; i++) {
+                super.put(argNames[i], this, Undefined.instance);
+            }
+        }
     }
-    
+
     private NativeCall() {
     }
 
     public String getClassName() {
         return "Call";
     }
-    
-    private static Object jsConstructor(Context cx, Object[] args, 
+
+    private static Object jsConstructor(Context cx, Object[] args,
                                         Function ctorObj, boolean inNewExpr)
     {
         if (!inNewExpr) {
@@ -98,7 +104,7 @@ public final class NativeCall extends IdScriptable {
         result.setPrototype(getObjectPrototype(ctorObj));
         return result;
     }
-    
+
     NativeCall getActivation(Function f) {
         NativeCall x = this;
         do {
@@ -108,7 +114,7 @@ public final class NativeCall extends IdScriptable {
         } while (x != null);
         return null;
     }
-        
+
     public Function getFunctionObject() {
         return funObj;
     }
@@ -116,15 +122,15 @@ public final class NativeCall extends IdScriptable {
     public Object[] getOriginalArguments() {
         return originalArgs;
     }
-    
+
     public NativeCall getCaller() {
         return caller;
     }
-        
+
     public Scriptable getThisObj() {
         return thisObj;
     }
-    
+
     public int methodArity(int methodId) {
         if (prototypeFlag) {
             if (methodId == Id_constructor) return 1;
@@ -149,9 +155,9 @@ public final class NativeCall extends IdScriptable {
         if (prototypeFlag) {
             if (id == Id_constructor) return "constructor";
         }
-        return null;        
+        return null;
     }
-    
+
     protected int mapNameToId(String s) {
         if (!prototypeFlag) { return 0; }
         return s.equals("constructor") ? Id_constructor : 0;
@@ -164,7 +170,7 @@ public final class NativeCall extends IdScriptable {
     NativeCall caller;
     NativeFunction funObj;
     Scriptable thisObj;
-    Object[] originalArgs;
+    private Object[] originalArgs;
     public int debugPC;
 
     private boolean prototypeFlag;

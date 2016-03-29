@@ -1,14 +1,14 @@
-/* 
+/*
  * The contents of this file are subject to the Netscape Public
  * License Version 1.1 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
  * the License at http://www.mozilla.org/NPL/
- * 
+ *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
- * 
+ *
  * The Original Code is Rhino code, released
  * May 6, 1999.
  *
@@ -16,11 +16,11 @@
  * Communications Corporation.  Portions created by Netscape are
  * Copyright (C) 1997-1999 Netscape Communications Corporation. All
  * Rights Reserved.
- * 
+ *
  * Contributor(s):
  * Norris Boyd
  * Roger Lawrence
- * 
+ *
  * Alternatively, the contents of this file may be used under the
  * terms of the GNU Public License (the "GPL"), in which case the
  * provisions of the GPL are applicable instead of those above.
@@ -45,81 +45,82 @@ import java.io.FileOutputStream;
 import java.io.File;
 import java.io.IOException;
 
-import java.util.Vector;
 import java.util.Hashtable;
 
-public class Optimizer {
+class Optimizer {
 
-    public Optimizer()
-    {
+    Optimizer(IRFactory irFactory) {
+        this.irFactory = irFactory;
     }
 
-    private static final boolean DEBUG_OPTIMIZER = false;
-    private static final boolean DO_CONSTANT_FOLDING = true;
+    void optimize(ScriptOrFnNode scriptOrFn, int optLevel)
+    {
+        itsOptLevel = optLevel;
+        //  run on one function at a time for now
+        int functionCount = scriptOrFn.getFunctionCount();
+        for (int i = 0; i != functionCount; ++i) {
+            OptFunctionNode f = (OptFunctionNode)scriptOrFn.getFunctionNode(i);
+            optimizeFunction(f);
+        }
+    }
 
-    static int blockCount = 0;
-
-    boolean inDirectCallFunction;
-    boolean parameterUsedInNumberContext;
-
-    void optimizeFunction(OptFunctionNode theFunction)
+    private void optimizeFunction(OptFunctionNode theFunction)
     {
         if (theFunction.requiresActivation()) return;
 
         inDirectCallFunction = theFunction.isTargetOfDirectCall();
 
         Node[] theStatementNodes = buildStatementList(theFunction);
-        Block[] theBlocks = Block.buildBlocks(theStatementNodes);
+        Block[] theBlocks = Block.buildBlocks(irFactory, theStatementNodes);
         PrintWriter pw = null;
         try {
             if (DEBUG_OPTIMIZER) {
+                String fileName = "blocks"+debug_blockCount+".txt";
+                ++debug_blockCount;
                 pw = new PrintWriter(
                             new DataOutputStream(
-                                new FileOutputStream(
-                                    new File("blocks"
-                                                + blockCount++ + ".txt"))));
+                                new FileOutputStream(new File(fileName))));
                 pw.println(Block.toString(theBlocks, theStatementNodes));
             }
 
-            OptVariableTable vars = (OptVariableTable) 
-                theFunction.getVariableTable();
-            if (vars != null) {
+            theFunction.establishVarsIndices();
+            for (int i = 0; i < theStatementNodes.length; i++)
+                replaceVariableAccess(theStatementNodes[i], theFunction);
 
-                vars.establishIndices();
-                for (int i = 0; i < theStatementNodes.length; i++)
-                    replaceVariableAccess(theStatementNodes[i], vars);
+            if(DO_CONSTANT_FOLDING){
+                foldConstants(theFunction, null);
+            }
 
-                if(DO_CONSTANT_FOLDING){
-                    foldConstants(theFunction, null);
+            reachingDefDataFlow(theFunction, theBlocks);
+            typeFlow(theFunction, theBlocks);
+            findSinglyTypedVars(theFunction, theBlocks);
+            localCSE(theBlocks, theFunction);
+            if (!theFunction.requiresActivation()) {
+                /*
+                 * Now that we know which local vars are in fact always
+                 * Numbers, we re-write the tree to take advantage of
+                 * that. Any arithmetic or assignment op involving just
+                 * Number typed vars is marked so that the codegen will
+                 * generate non-object code.
+                 */
+                parameterUsedInNumberContext = false;
+                for (int i = 0; i < theStatementNodes.length; i++) {
+                    rewriteForNumberVariables(theStatementNodes[i]);
                 }
-
-                reachingDefDataFlow(vars, theBlocks);
-                typeFlow(vars, theBlocks);
-                findSinglyTypedVars(vars, theBlocks);
-                localCSE(theBlocks, theFunction);
-                if (!theFunction.requiresActivation()) {
-                    /*
-                     * Now that we know which local vars are in fact always 
-                     * Numbers, we re-write the tree to take advantage of 
-                     * that. Any arithmetic or assignment op involving just 
-                     * Number typed vars is marked so that the codegen will 
-                     * generate non-object code.
-                     */
-                    parameterUsedInNumberContext = false;
-                    for (int i = 0; i < theStatementNodes.length; i++) {
-                        rewriteForNumberVariables(theStatementNodes[i]);
-                    }
-                    theFunction.setParameterNumberContext(parameterUsedInNumberContext);
-                    //System.out.println("Function " + theFunction.getFunctionName() + " has parameters in number contexts  : " + parameterUsedInNumberContext);
+                theFunction.setParameterNumberContext(parameterUsedInNumberContext);
+                //System.out.println("Function " + theFunction.getFunctionName() + " has parameters in number contexts  : " + parameterUsedInNumberContext);
+            }
+            if (DEBUG_OPTIMIZER) {
+                for (int i = 0; i < theBlocks.length; i++) {
+                    pw.println("For block " + theBlocks[i].getBlockID());
+                    theBlocks[i].printLiveOnEntrySet(pw, theFunction);
                 }
-                if (DEBUG_OPTIMIZER) {
-                    for (int i = 0; i < theBlocks.length; i++) {
-                        pw.println("For block " + theBlocks[i].getBlockID());
-                        theBlocks[i].printLiveOnEntrySet(pw, vars);
-                    }
-                    vars.print(pw);
+                int N = theFunction.getVarCount();
+                System.out.println("Variable Table, size = " + N);
+                for (int i = 0; i != N; i++) {
+                    OptLocalVariable lVar = theFunction.getVar(i);
+                    pw.println(lVar.toString());
                 }
-
             }
             if (DEBUG_OPTIMIZER) pw.close();
         }
@@ -131,25 +132,8 @@ public class Optimizer {
         }
     }
 
-    public void optimize(Node tree, int optLevel)
-    {
-        itsOptLevel = optLevel;
-        //  run on one function at a time for now
-        PreorderNodeIterator iterator = tree.getPreorderIterator();
-        Node node;
-        while ((node = iterator.nextNode()) != null) {
-                                // should be able to do this more cheaply ?
-                               // - run through initial block children ?
-            if (node.getType() == TokenStream.FUNCTION) {
-                OptFunctionNode theFunction = (OptFunctionNode)
-                    node.getProp(Node.FUNCTION_PROP);
-                if (theFunction != null)
-                    optimizeFunction(theFunction);
-            }
-        }
-    }
-
-    void findSinglyTypedVars(VariableTable theVariables, Block theBlocks[])
+    private static void
+    findSinglyTypedVars(OptFunctionNode fn, Block theBlocks[])
     {
 /*
     discover the type events for each non-volatile variable (not live
@@ -167,8 +151,8 @@ public class Optimizer {
                 theBlocks[i].findDefs();
             }
         }
-        for (int i = 0; i < theVariables.size(); i++) {
-            OptLocalVariable lVar = (OptLocalVariable) theVariables.getVariable(i);
+        for (int i = 0; i < fn.getVarCount(); i++) {
+            OptLocalVariable lVar = fn.getVar(i);
             if (!lVar.isParameter()) {
                 int theType = lVar.getTypeUnion();
                 if (theType == TypeEvent.NumberType) {
@@ -178,9 +162,9 @@ public class Optimizer {
         }
     }
 
-    void doBlockLocalCSE(Block theBlocks[], Block b,
-                    Hashtable theCSETable, boolean beenThere[],
-                    OptFunctionNode theFunction)
+    private static void
+    doBlockLocalCSE(Block theBlocks[], Block b, Hashtable theCSETable,
+                    boolean beenThere[], OptFunctionNode theFunction)
     {
         if (!beenThere[b.getBlockID()]) {
             beenThere[b.getBlockID()] = true;
@@ -199,7 +183,8 @@ public class Optimizer {
         }
     }
 
-    void localCSE(Block theBlocks[], OptFunctionNode theFunction)
+    private static void
+    localCSE(Block theBlocks[], OptFunctionNode theFunction)
     {
         boolean beenThere[] = new boolean[theBlocks.length];
         doBlockLocalCSE(theBlocks, theBlocks[0], null, beenThere, theFunction);
@@ -208,7 +193,8 @@ public class Optimizer {
         }
     }
 
-    void typeFlow(VariableTable theVariables, Block theBlocks[])
+    private static void
+    typeFlow(OptFunctionNode fn, Block theBlocks[])
     {
         boolean visit[] = new boolean[theBlocks.length];
         boolean doneOnce[] = new boolean[theBlocks.length];
@@ -243,7 +229,8 @@ public class Optimizer {
         }
     }
 
-    void reachingDefDataFlow(VariableTable theVariables, Block theBlocks[])
+    private static void
+    reachingDefDataFlow(OptFunctionNode fn, Block theBlocks[])
     {
 /*
     initialize the liveOnEntry and liveOnExit sets, then discover the variables
@@ -251,7 +238,7 @@ public class Optimizer {
     (hence liveOnEntry)
 */
         for (int i = 0; i < theBlocks.length; i++) {
-            theBlocks[i].initLiveOnEntrySets(theVariables);
+            theBlocks[i].initLiveOnEntrySets(fn);
         }
 /*
     this visits every block starting at the last, re-adding the predecessors of
@@ -300,10 +287,10 @@ public class Optimizer {
 */
 
         for (int i = 0; i < theBlocks.length; i++) {
-            theBlocks[i].markVolatileVariables(theVariables);
+            theBlocks[i].markVolatileVariables(fn);
         }
-        
-        theBlocks[0].markAnyTypeVariables(theVariables);
+
+        theBlocks[0].markAnyTypeVariables(fn);
     }
 
 /*
@@ -337,7 +324,7 @@ public class Optimizer {
         was a double value). If the node is a parameter in a directCall
         function, mark it as being referenced in this context.
 */
-    void markDCPNumberContext(Node n)
+    private void markDCPNumberContext(Node n)
     {
         if (inDirectCallFunction && (n.getType() == TokenStream.GETVAR))
         {
@@ -349,7 +336,7 @@ public class Optimizer {
         }
     }
 
-    boolean convertParameter(Node n)
+    private boolean convertParameter(Node n)
     {
         if (inDirectCallFunction && (n.getType() == TokenStream.GETVAR))
         {
@@ -363,7 +350,7 @@ public class Optimizer {
         return false;
     }
 
-    int rewriteForNumberVariables(Node n)
+    private int rewriteForNumberVariables(Node n)
     {
         switch (n.getType()) {
             case TokenStream.POP : {
@@ -413,7 +400,7 @@ public class Optimizer {
                 }
             case TokenStream.SETVAR : {
                     Node lChild = n.getFirstChild();
-                    Node rChild = lChild.getNextSibling();
+                    Node rChild = lChild.getNext();
                     int rType = rewriteForNumberVariables(rChild);
                     OptLocalVariable theVar
                          = (OptLocalVariable)(n.getProp(Node.VARIABLE_PROP));
@@ -456,14 +443,14 @@ public class Optimizer {
                 }
             case TokenStream.RELOP : {
                     Node lChild = n.getFirstChild();
-                    Node rChild = lChild.getNextSibling();
+                    Node rChild = lChild.getNext();
                     int lType = rewriteForNumberVariables(lChild);
                     int rType = rewriteForNumberVariables(rChild);
                     markDCPNumberContext(lChild);
                     markDCPNumberContext(rChild);
 
-                    if ((n.getInt() == TokenStream.INSTANCEOF)
-                            || (n.getInt() == TokenStream.IN)) {
+                    int op = n.getOperation();
+                    if (op == TokenStream.INSTANCEOF || op == TokenStream.IN) {
                         if (lType == TypeEvent.NumberType) {
                             if (!convertParameter(lChild)) {
                                 n.removeChild(lChild);
@@ -526,7 +513,7 @@ public class Optimizer {
 
             case TokenStream.ADD : {
                     Node lChild = n.getFirstChild();
-                    Node rChild = lChild.getNextSibling();
+                    Node rChild = lChild.getNext();
                     int lType = rewriteForNumberVariables(lChild);
                     int rType = rewriteForNumberVariables(rChild);
 
@@ -578,7 +565,7 @@ public class Optimizer {
             case TokenStream.DIV :
             case TokenStream.MOD : {
                     Node lChild = n.getFirstChild();
-                    Node rChild = lChild.getNextSibling();
+                    Node rChild = lChild.getNext();
                     int lType = rewriteForNumberVariables(lChild);
                     int rType = rewriteForNumberVariables(rChild);
                     markDCPNumberContext(lChild);
@@ -630,8 +617,8 @@ public class Optimizer {
                 }
             case TokenStream.SETELEM : {
                     Node arrayBase = n.getFirstChild();
-                    Node arrayIndex = arrayBase.getNextSibling();
-                    Node rValue = arrayIndex.getNextSibling();
+                    Node arrayIndex = arrayBase.getNext();
+                    Node rValue = arrayIndex.getNext();
                     int baseType = rewriteForNumberVariables(arrayBase);
                     if (baseType == TypeEvent.NumberType) {// can never happen ???
                         if (!convertParameter(arrayBase)) {
@@ -662,7 +649,7 @@ public class Optimizer {
                 }
             case TokenStream.GETELEM : {
                     Node arrayBase = n.getFirstChild();
-                    Node arrayIndex = arrayBase.getNextSibling();
+                    Node arrayIndex = arrayBase.getNext();
                     int baseType = rewriteForNumberVariables(arrayBase);
                     if (baseType == TypeEvent.NumberType) {// can never happen ???
                         if (!convertParameter(arrayBase)) {
@@ -674,11 +661,12 @@ public class Optimizer {
                     }
                     int indexType = rewriteForNumberVariables(arrayIndex);
                     if (indexType == TypeEvent.NumberType) {
-                        // setting the ISNUMBER_PROP signals the codegen
-                        // to use the scriptRuntime.getElem that takes
-                        // a double index
-                        n.putIntProp(Node.ISNUMBER_PROP, Node.RIGHT);
-                        markDCPNumberContext(arrayIndex);
+                        if (!convertParameter(arrayIndex)) {
+                            // setting the ISNUMBER_PROP signals the codegen
+                            // to use the scriptRuntime.getElem that takes
+                            // a double index
+                            n.putIntProp(Node.ISNUMBER_PROP, Node.RIGHT);
+                        }
                     }
                     return TypeEvent.NoType;
                 }
@@ -693,15 +681,15 @@ public class Optimizer {
 */
                         Node child = n.getFirstChild(); // the function
                         rewriteForNumberVariables(child);
-                        child = child.getNextSibling(); // the 'this' object
+                        child = child.getNext(); // the 'this' object
                         rewriteForNumberVariables(child);
-                        child = child.getNextSibling(); // the first arg
+                        child = child.getNext(); // the first arg
                         while (child != null) {
                             int type = rewriteForNumberVariables(child);
                             if (type == TypeEvent.NumberType) {
                                 markDCPNumberContext(child);
                             }
-                            child = child.getNextSibling();
+                            child = child.getNext();
                         }
                         return TypeEvent.NoType;
                     }
@@ -710,7 +698,7 @@ public class Optimizer {
             default : {
                     Node child = n.getFirstChild();
                     while (child != null) {
-                        Node nextChild = child.getNextSibling();
+                        Node nextChild = child.getNext();
                         int type = rewriteForNumberVariables(child);
                         if (type == TypeEvent.NumberType) {
                             if (!convertParameter(child)) {
@@ -734,14 +722,14 @@ public class Optimizer {
         Do constant folding, for integers, bools and strings
         as well as for if() statements.
     */
-    void foldConstants(Node n, Node parent){
+    private static void foldConstants(Node n, Node parent){
         Node lChild, rChild=null;           // children
 
         lChild = n.getFirstChild();
         if(lChild == null){                 // no children -- exit
             return;
         }else{
-            rChild = lChild.getNextSibling();
+            rChild = lChild.getNext();
 
             if(rChild == null){
                 foldConstants(lChild, n);   // one child -- recurse
@@ -754,10 +742,10 @@ public class Optimizer {
         foldConstants(rChild, n);
 
         /* take care of all the other children */
-        Node child = rChild.getNextSibling();
+        Node child = rChild.getNext();
         while (child != null) {
             foldConstants(child, n);
-            child = child.getNextSibling();
+            child = child.getNext();
         }
 
 
@@ -766,7 +754,7 @@ public class Optimizer {
         if(lChild == null){                 // no children -- exit
             return;
         }else{
-            rChild = lChild.getNextSibling();
+            rChild = lChild.getNext();
 
             if(rChild == null){
                 return;
@@ -776,7 +764,7 @@ public class Optimizer {
         /* at this point n has two children or more */
         int lt = lChild.getType();
         int rt = rChild.getType();
-        
+
         Node replace = null;
 
         /* two or more children */
@@ -785,27 +773,27 @@ public class Optimizer {
                   // numerical addition and string concatenation
                 if(lt == TokenStream.NUMBER && rt == TokenStream.NUMBER) {
                       // num + num
-                    replace = new Node(TokenStream.NUMBER,
-                        lChild.getDouble() + rChild.getDouble());
+                    replace = Node.
+                        newNumber(lChild.getDouble() + rChild.getDouble());
                 }
                 else if (lt == TokenStream.STRING && rt == TokenStream.STRING) {
                       // string + string
-                    replace = new Node(TokenStream.STRING,
+                    replace = Node.newString(
                         lChild.getString() + rChild.getString());
                 }
                 else if (lt == TokenStream.STRING && rt == TokenStream.NUMBER) {
                     // string + num
-                    replace = new Node(TokenStream.STRING,
+                    replace = Node.newString(
                         lChild.getString() +
                         ScriptRuntime.numberToString(rChild.getDouble(), 10));
                 }
                 else if (lt == TokenStream.NUMBER && rt == TokenStream.STRING) {
-                    // num + string 
-                    replace = new Node(TokenStream.STRING,
+                    // num + string
+                    replace = Node.newString(
                         ScriptRuntime.numberToString(lChild.getDouble(), 10) +
                         rChild.getString());
                 }
-                // can't do anything if we don't know  both types - since 
+                // can't do anything if we don't know  both types - since
                 // 0 + object is supposed to call toString on the object and do
                 // string concantenation rather than addition
                 break;
@@ -814,8 +802,8 @@ public class Optimizer {
                   // subtraction
                 if (lt == TokenStream.NUMBER && rt == TokenStream.NUMBER) {
                     //both numbers
-                    replace = new Node(TokenStream.NUMBER,
-                        lChild.getDouble() - rChild.getDouble());
+                    replace = Node.
+                        newNumber(lChild.getDouble() - rChild.getDouble());
                 }
                 else if (lt == TokenStream.NUMBER && lChild.getDouble() == 0) {
                     // first 0: 0-x -> -x
@@ -825,7 +813,7 @@ public class Optimizer {
                 else if (rt == TokenStream.NUMBER && rChild.getDouble() == 0) {
                     //second 0: x - 0 -> +x
                     // can not make simply x because x - 0 must be number
-                    replace = new Node(TokenStream.UNARYOP, 
+                    replace = new Node(TokenStream.UNARYOP,
                         lChild, TokenStream.ADD);
                 }
                 break;
@@ -834,8 +822,8 @@ public class Optimizer {
                   // multiplication
                 if (lt == TokenStream.NUMBER && rt == TokenStream.NUMBER) {
                     // both constants -- just multiply
-                    replace = new Node(TokenStream.NUMBER,
-                        lChild.getDouble() * rChild.getDouble());
+                    replace = Node.
+                        newNumber(lChild.getDouble() * rChild.getDouble());
                 }
                 else if (lt == TokenStream.NUMBER && lChild.getDouble() == 1) {
                     // first 1: 1*x -> +x
@@ -856,8 +844,8 @@ public class Optimizer {
                 // division
                 if (lt == TokenStream.NUMBER && rt == TokenStream.NUMBER) {
                     // both constants -- just divide, trust Java to handle x/0
-                    replace = new Node(TokenStream.NUMBER,
-                        lChild.getDouble() / rChild.getDouble());
+                    replace = Node.
+                        newNumber(lChild.getDouble() / rChild.getDouble());
                 }
                 else if (rt == TokenStream.NUMBER && rChild.getDouble() == 1) {
                     // second 1: x/1 -> +x
@@ -935,11 +923,11 @@ public class Optimizer {
 
                     if (definedBoolean == ALWAYS_FALSE_BOOLEAN) {
                         //if(false) -> replace by the else clause if it exists
-                        Node next1 = rChild.getNextSibling();
+                        Node next1 = rChild.getNext();
                         if (next1 != null) {
-                            Node next2 = next1.getNextSibling();
+                            Node next2 = next1.getNext();
                             if (next2 != null) {
-                                Node next3 = next2.getNextSibling();
+                                Node next3 = next2.getNext();
                                 if (next3 != null) {
                                     Node elseClause = next3.getFirstChild();
                                     if (elseClause != null) {
@@ -957,23 +945,19 @@ public class Optimizer {
                 }
                 break;
         }//switch
-        
+
         if (replace != null) {
             parent.replaceChild(n, replace);
         }
-
     }
-    
-    private static final int ALWAYS_TRUE_BOOLEAN = 1;
-    private static final int ALWAYS_FALSE_BOOLEAN = -1;
 
     // Check if Node always mean true or false in boolean context
     private static int isAlwaysDefinedBoolean(Node node) {
         int result = 0;
         int type = node.getType();
         if (type == TokenStream.PRIMARY) {
-            int id = node.getInt();
-            if (id == TokenStream.FALSE || id == TokenStream.NULL 
+            int id = node.getOperation();
+            if (id == TokenStream.FALSE || id == TokenStream.NULL
                 || id == TokenStream.UNDEFINED)
             {
                 result = ALWAYS_FALSE_BOOLEAN;
@@ -997,51 +981,64 @@ public class Optimizer {
         return result;
     }
 
-    void replaceVariableAccess(Node n, VariableTable theVariables)
+    private static void
+    replaceVariableAccess(Node n, OptFunctionNode fn)
     {
         Node child = n.getFirstChild();
         while (child != null) {
-            replaceVariableAccess(child, theVariables);
-            child = child.getNextSibling();
+            replaceVariableAccess(child, fn);
+            child = child.getNext();
         }
-        switch (n.getType()) {
-            case TokenStream.SETVAR : {
-                    String name = n.getFirstChild().getString();
-                    OptLocalVariable theVar = (OptLocalVariable) 
-                        theVariables.getVariable(name);
-                    if (theVar != null)
-                        n.putProp(Node.VARIABLE_PROP, theVar);
-                }
-                break;
-            case TokenStream.GETVAR : {
-                    String name = n.getString();
-                    OptLocalVariable theVar = (OptLocalVariable) 
-                        theVariables.getVariable(name);
-                    if (theVar != null)
-                        n.putProp(Node.VARIABLE_PROP, theVar);
-                }
-                break;
-            default :
-                break;
+        int type = n.getType();
+        if (type == TokenStream.SETVAR) {
+            String name = n.getFirstChild().getString();
+            OptLocalVariable theVar = fn.getVar(name);
+            if (theVar != null) {
+                n.putProp(Node.VARIABLE_PROP, theVar);
+            }
+        } else if (type == TokenStream.GETVAR) {
+            String name = n.getString();
+            OptLocalVariable theVar = fn.getVar(name);
+            if (theVar != null) {
+                n.putProp(Node.VARIABLE_PROP, theVar);
+            }
         }
     }
 
-    private Node[] buildStatementList(FunctionNode theFunction)
+    private static Node[] buildStatementList(FunctionNode theFunction)
     {
-        Vector nodeList = new Vector();
+        ObjArray statements = new ObjArray();
 
-        StmtNodeIterator iterator = new StmtNodeIterator(theFunction);
-        Node node = iterator.nextNode();
-        while (node != null) {
-            nodeList.addElement(node);
-            node = iterator.nextNode();
+        PreorderNodeIterator iter = new PreorderNodeIterator();
+        for (iter.start(theFunction); !iter.done(); ) {
+            Node node = iter.getCurrent();
+            int type = node.getType();
+            if (type == TokenStream.BLOCK
+                || type == TokenStream.LOOP
+                || type == TokenStream.FUNCTION)
+            {
+                iter.next();
+            } else {
+                statements.add(node);
+                iter.nextSkipSubtree();
+            }
         }
-        Node[] result = new Node[nodeList.size()];
-        for (int i = 0; i < nodeList.size(); i++) {
-            result[i] = (Node)(nodeList.elementAt(i));
-        }
+
+        Node[] result = new Node[statements.size()];
+        statements.toArray(result);
         return result;
     }
 
-    int itsOptLevel;
+    private static final boolean DEBUG_OPTIMIZER = false;
+    private static int debug_blockCount;
+
+    private static final boolean DO_CONSTANT_FOLDING = true;
+
+    private static final int ALWAYS_TRUE_BOOLEAN = 1;
+    private static final int ALWAYS_FALSE_BOOLEAN = -1;
+
+    private IRFactory irFactory;
+    private int itsOptLevel;
+    private boolean inDirectCallFunction;
+    private boolean parameterUsedInNumberContext;
 }

@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -18,7 +18,7 @@
  * Copyright (C) 1997-1999 Netscape Communications Corporation. All
  * Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  * Norris Boyd
  *
  * Alternatively, the contents of this file may be used under the
@@ -48,16 +48,31 @@ class DefaultErrorReporter implements ErrorReporter {
         // do nothing
     }
 
+    private String generateErrorMessage(String message, String sourceName, int line) {
+        StringBuffer buf = new StringBuffer(message);
+        buf.append(" (");
+        if (sourceName != null) {
+            buf.append(sourceName);
+            buf.append("; ");
+        }
+        if (line > 0) {
+            buf.append("line ");
+            buf.append(line);
+        }
+        buf.append(')');
+        return buf.toString();
+    }
+
     public void error(String message, String sourceName, int line,
                       String lineSource, int lineOffset)
     {
-        throw new EvaluatorException(message);
+        throw new EvaluatorException(generateErrorMessage(message, sourceName, line));
     }
 
     public EvaluatorException runtimeError(String message, String sourceName,
-                                           int line, String lineSource, 
+                                           int line, String lineSource,
                                            int lineOffset)
     {
-        return new EvaluatorException(message);
+        return new EvaluatorException(generateErrorMessage(message, sourceName, line));
     }
 }

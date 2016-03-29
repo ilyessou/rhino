@@ -1,14 +1,14 @@
-/* 
+/*
  * The contents of this file are subject to the Netscape Public
  * License Version 1.1 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
  * the License at http://www.mozilla.org/NPL/
- * 
+ *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
- * 
+ *
  * The Original Code is Rhino code, released
  * May 6, 1999.
  *
@@ -16,11 +16,11 @@
  * Communications Corporation.  Portions created by Netscape are
  * Copyright (C) 1997-1999 Netscape Communications Corporation. All
  * Rights Reserved.
- * 
+ *
  * Contributor(s):
  * Norris Boyd
  * Roger Lawrence
- * 
+ *
  * Alternatively, the contents of this file may be used under the
  * terms of the GNU Public License (the "GPL"), in which case the
  * provisions of the GPL are applicable instead of those above.
@@ -38,8 +38,6 @@ package org.mozilla.javascript.optimizer;
 
 import org.mozilla.javascript.*;
 import java.util.Hashtable;
-import java.util.Stack;
-import java.util.Vector;
 
 /**
  * This class performs node transforms to prepare for optimization.
@@ -50,45 +48,39 @@ import java.util.Vector;
 
 class OptTransformer extends NodeTransformer {
     private Hashtable theFnClassNameList;
-    
-    OptTransformer(Hashtable theFnClassNameList) { 
+
+    OptTransformer(IRFactory irFactory, Hashtable theFnClassNameList) {
+        super(irFactory);
         this.theFnClassNameList = theFnClassNameList;
     }
-    
+
     public NodeTransformer newInstance() {
-        return new OptTransformer((Hashtable) theFnClassNameList.clone());
-    }    
-        
-    public IRFactory createIRFactory(TokenStream ts, Scriptable scope) {
-        return new IRFactory(ts, scope);
+        Hashtable listCopy = (Hashtable) theFnClassNameList.clone();
+        return new OptTransformer(irFactory, listCopy);
     }
 
-    public Node transform(Node tree, Node enclosing, TokenStream ts,
-                                                     Scriptable scope) {
-    
-        // Collect all of the contained functions into a hashtable
+    public ScriptOrFnNode transform(ScriptOrFnNode scriptOrFn) {
+
+        // Collect all of the script contained functions into a hashtable
         // so that the call optimizer can access the class name & parameter
         // count for any call it encounters
-        collectContainedFunctions(tree.getFirstChild());
-        
-        return super.transform(tree, enclosing, ts, scope);
-    }
-  
-    protected VariableTable createVariableTable() {
-        return new OptVariableTable();
+        if (scriptOrFn.getType() == TokenStream.SCRIPT) {
+            collectContainedFunctions(scriptOrFn);
+        }
+        return super.transform(scriptOrFn);
     }
 
-    private int detectDirectCall(Node node, Node tree)
+    private int detectDirectCall(Node node, ScriptOrFnNode tree)
     {
         Context cx = Context.getCurrentContext();
         int optLevel = cx.getOptimizationLevel();
         Node left = node.getFirstChild();
-        
+
         // count the arguments
         int argCount = 0;
-        Node arg = left.getNextSibling();
+        Node arg = left.getNext();
         while (arg != null) {
-            arg = arg.getNextSibling();
+            arg = arg.getNext();
             argCount++;
         }
 
@@ -97,28 +89,28 @@ class OptTransformer extends NodeTransformer {
                 markDirectCall(tree, node, argCount, left.getString());
             } else {
                 if (left.getType() == TokenStream.GETPROP) {
-                    Node name = left.getFirstChild().getNextSibling();
+                    Node name = left.getFirstChild().getNext();
                     markDirectCall(tree, node, argCount, name.getString());
                 }
             }
         }
-        
+
         return argCount;
     }
 
-    protected void visitNew(Node node, Node tree) {
+    protected void visitNew(Node node, ScriptOrFnNode tree) {
         detectDirectCall(node, tree);
         super.visitNew(node, tree);
     }
 
-    protected void visitCall(Node node, Node tree) {
+    protected void visitCall(Node node, ScriptOrFnNode tree) {
         int argCount = detectDirectCall(node, tree);
         if (inFunction && (argCount == 0))
             ((OptFunctionNode)tree).setContainsCalls(argCount);
 
         super.visitCall(node, tree);
     }
-    
+
     /*
      * Optimize a call site by converting call("a", b, c) into :
      *
@@ -131,20 +123,20 @@ class OptTransformer extends NodeTransformer {
      *       else
      *           ScriptRuntime.Call(fn, tmp, b, c)
      */
-    void markDirectCall(Node containingTree, Node callNode, int argCount,
-                        String targetName)
+    private void markDirectCall(Node containingTree, Node callNode,
+                                int argCount, String targetName)
     {
         OptFunctionNode theFunction
                     = (OptFunctionNode)theFnClassNameList.get(targetName);
         if (theFunction != null) {
-            VariableTable varTable = theFunction.getVariableTable();
+            int N = theFunction.getParamCount();
             // Refuse to directCall any function with more
             // than 32 parameters - prevent code explosion
             // for wacky test cases
-            if (varTable.getParameterCount() > 32) 
+            if (N > 32)
                 return;
-            
-            if (argCount == varTable.getParameterCount()) {
+
+            if (argCount == N) {
                 callNode.putProp(Node.DIRECTCALL_PROP, theFunction);
                 ((OptFunctionNode)containingTree)
                                         .addDirectCallTarget(theFunction);
@@ -158,33 +150,17 @@ class OptTransformer extends NodeTransformer {
      * so that the call optimizer can access the class name & parameter
      * count for any call it encounters
      */
-    void collectContainedFunctions(Node node) {
-        for (Node tNode=node; tNode != null; tNode = tNode.getNextSibling()) {
-            if (tNode.getType() == TokenStream.FUNCTION) {
-                FunctionNode fnNode = (FunctionNode)
-                                      tNode.getProp(Node.FUNCTION_PROP);
-                if (fnNode.getFunctionName().length() != 0) {
-                    String name = fnNode.getFunctionName();
-                    Object oldFn = theFnClassNameList.get(name);
-                    if (oldFn == fnNode) {
-                        // already processed this list of functions
-                        return;
-                    }
-                    /*
-                    if (oldFn != null) {
-                        int line = fnNode.getIntProp(Node.BASE_LINENO_PROP, 0);
-                        Object[] errArgs = { name };
-                        Context.reportWarning(
-                            Context.getMessage("msg.fn.redecl", errArgs),
-                            (String) fnNode.getProp(Node.SOURCENAME_PROP),
-                            line, null, 0);
-                    }
-                    */
-                    theFnClassNameList.put(name, fnNode);
+    private void collectContainedFunctions(ScriptOrFnNode scriptOrFn) {
+        int functionCount = scriptOrFn.getFunctionCount();
+        for (int i = 0; i != functionCount; ++i) {
+            OptFunctionNode f = (OptFunctionNode)scriptOrFn.getFunctionNode(i);
+            if (f.getType() == FunctionNode.FUNCTION_STATEMENT) {
+                String name = f.getFunctionName();
+                if (name.length() != 0) {
+                    theFnClassNameList.put(name, f);
                 }
-                addParameters(fnNode);
             }
         }
     }
-    
+
 }

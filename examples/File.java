@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -64,7 +64,7 @@ import java.util.Vector;
  * be wrapped as JavaScript exceptions when called from JavaScript,
  * and may be caught within JavaScript.
  *
- * @author Norris Boyd 
+ * @author Norris Boyd
  */
 public class File extends ScriptableObject {
 
@@ -88,7 +88,7 @@ public class File extends ScriptableObject {
      * to the use.
      */
     public static Scriptable jsConstructor(Context cx, Object[] args,
-                                           Function ctorObj, 
+                                           Function ctorObj,
                                            boolean inNewExpr)
     {
         File result = new File();

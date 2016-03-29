@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -18,7 +18,7 @@
  * Copyright (C) 1999 Netscape Communications Corporation. All
  * Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  * Norris Boyd
  * Matthias Radestock
  *
@@ -38,24 +38,22 @@
 
 package org.mozilla.javascript;
 
-import java.util.Vector;
-
 /**
  * Class ImporterTopLevel
- * 
- * This class defines a ScriptableObject that can be instantiated 
+ *
+ * This class defines a ScriptableObject that can be instantiated
  * as a top-level ("global") object to provide functionality similar
  * to Java's "import" statement.
  * <p>
- * This class can be used to create a top-level scope using the following code: 
+ * This class can be used to create a top-level scope using the following code:
  * <pre>
  *  Scriptable scope = new ImporterTopLevel(cx);
  * </pre>
  * Then JavaScript code will have access to the following methods:
  * <ul>
- * <li>importClass - will "import" a class by making its unqualified name 
+ * <li>importClass - will "import" a class by making its unqualified name
  *                   available as a property of the top-level scope
- * <li>importPackage - will "import" all the classes of the package by 
+ * <li>importPackage - will "import" all the classes of the package by
  *                     searching for unqualified names as classes qualified
  *                     by the given package.
  * </ul>
@@ -67,11 +65,11 @@ import java.util.Vector;
  * js> importPackage(java.util)
  * js> v = new Vector()
  * []
- * 
+ *
  * @author Norris Boyd
  */
 public class ImporterTopLevel extends ScriptableObject {
-    
+
     /**
      * @deprecated
      */
@@ -83,7 +81,7 @@ public class ImporterTopLevel extends ScriptableObject {
         cx.initStandardObjects(this);
         init();
     }
-    
+
     private void init() {
         String[] names = { "importClass", "importPackage" };
 
@@ -95,22 +93,36 @@ public class ImporterTopLevel extends ScriptableObject {
         }
     }
 
-    public String getClassName() { 
+    public String getClassName() {
         return "global";
     }
-    
+
+    public boolean has(String name, Scriptable start) {
+        return super.has(name, start)
+               || getPackageProperty(name, start) != NOT_FOUND;
+    }
+
     public Object get(String name, Scriptable start) {
         Object result = super.get(name, start);
-        if (result != NOT_FOUND) 
+        if (result != NOT_FOUND)
             return result;
-        if (name.equals("_packages_")) 
+        result = getPackageProperty(name, start);
+        return result;
+    }
+
+    private Object getPackageProperty(String name, Scriptable start) {
+        Object result= NOT_FOUND;
+        if (name.equals("_packages_"))
             return result;
         Object plist = ScriptableObject.getProperty(start,"_packages_");
-        if (plist == NOT_FOUND) 
+        if (plist == NOT_FOUND)
             return result;
+        Object[] elements;
         Context cx = Context.enter();
-        Object[] elements = cx.getElements((Scriptable)plist);
-        Context.exit();
+        try {
+            elements = cx.getElements((Scriptable)plist);
+        }
+        finally { Context.exit(); }
         for (int i=0; i < elements.length; i++) {
             NativeJavaPackage p = (NativeJavaPackage) elements[i];
             Object v = p.getPkgProperty(name, start, false);
@@ -125,7 +137,7 @@ public class ImporterTopLevel extends ScriptableObject {
         }
         return result;
     }
-    
+
     public static void importClass(Context cx, Scriptable thisObj,
                                    Object[] args, Function funObj) {
         for (int i=0; i<args.length; i++) {
@@ -144,7 +156,7 @@ public class ImporterTopLevel extends ScriptableObject {
             thisObj.put(n,thisObj,cl);
         }
     }
-    
+
     public static void importPackage(Context cx, Scriptable thisObj,
                                    Object[] args, Function funObj) {
         Scriptable importedPackages;

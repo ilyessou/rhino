@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -18,7 +18,7 @@
  * Copyright (C) 1997-1999 Netscape Communications Corporation. All
  * Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  * Norris Boyd
  *
  * Alternatively, the contents of this file may be used under the
@@ -35,11 +35,13 @@
 
 package org.mozilla.javascript;
 
+import java.io.Serializable;
+
 /**
  * This class implements the Undefined value in JavaScript.
  */
-public class Undefined implements Scriptable {
-
+public class Undefined implements Scriptable, Serializable
+{
     static final public Scriptable instance = new Undefined();
 
     public String getClassName() {
@@ -134,5 +136,9 @@ public class Undefined implements Scriptable {
 
     private RuntimeException reportError() {
         return Context.reportRuntimeError0("msg.undefined");
+    }
+
+    public Object readResolve() {
+        return Undefined.instance;
     }
 }

@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -36,6 +36,9 @@
 package org.mozilla.javascript;
 
 import java.io.Serializable;
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 
 /**
  * Map to associate non-negative integers to objects or integers.
@@ -49,8 +52,6 @@ import java.io.Serializable;
 
 class UintMap implements Serializable {
 
-    static final long serialVersionUID = -55740507849272970L;
-
 // Map implementation via hashtable,
 // follows "The Art of Computer Programming" by Donald E. Knuth
 
@@ -59,13 +60,13 @@ class UintMap implements Serializable {
     }
 
     public UintMap(int initialCapacity) {
-        if (Context.check && initialCapacity < 0) Context.codeBug();
+        if (initialCapacity < 0) Context.codeBug();
         // Table grow when number of stored keys >= 3/4 of max capacity
         int minimalCapacity = initialCapacity * 4 / 3;
         int i;
         for (i = 2; (1 << i) < minimalCapacity; ++i) { }
-        minimalPower = i;
-        if (checkSelf && minimalPower < 2) Context.codeBug();
+        power = i;
+        if (check && power < 2) Context.codeBug();
     }
 
     public boolean isEmpty() {
@@ -77,29 +78,16 @@ class UintMap implements Serializable {
     }
 
     public boolean has(int key) {
-        if (Context.check && key < 0) Context.codeBug();
+        if (key < 0) Context.codeBug();
         return 0 <= findIndex(key);
-    }
-
-    public boolean isObjectType(int key) {
-        if (Context.check && key < 0) Context.codeBug();
-        int index = findIndex(key);
-        return index >= 0 && isObjectTypeValue(index);
-    }
-
-    public boolean isIntType(int key) {
-        if (Context.check && key < 0) Context.codeBug();
-        int index = findIndex(key);
-        return index >= 0 && !isObjectTypeValue(index);
     }
 
     /**
      * Get object value assigned with key.
-     * @return key object value or null if key is absent or does
-     * not have object value
+     * @return key object value or null if key is absent
      */
     public Object getObject(int key) {
-        if (Context.check && key < 0) Context.codeBug();
+        if (key < 0) Context.codeBug();
         if (values != null) {
             int index = findIndex(key);
             if (0 <= index) {
@@ -111,18 +99,16 @@ class UintMap implements Serializable {
 
     /**
      * Get integer value assigned with key.
-     * @return key integer value or defaultValue if key is absent or does
-     * not have int value
+     * @return key integer value or defaultValue if key is absent
      */
     public int getInt(int key, int defaultValue) {
-        if (Context.check && key < 0) Context.codeBug();
-        if (ivaluesShift != 0) {
-            int index = findIndex(key);
-            if (0 <= index) {
-                if (!isObjectTypeValue(index)) {
-                    return keys[ivaluesShift + index];
-                }
+        if (key < 0) Context.codeBug();
+        int index = findIndex(key);
+        if (0 <= index) {
+            if (ivaluesShift != 0) {
+                return keys[ivaluesShift + index];
             }
+            return 0;
         }
         return defaultValue;
     }
@@ -131,26 +117,28 @@ class UintMap implements Serializable {
      * Get integer value assigned with key.
      * @return key integer value or defaultValue if key does not exist or does
      * not have int value
-     * @throws RuntimeException if key does not exist or does
-     * not have int value
+     * @throws RuntimeException if key does not exist
      */
     public int getExistingInt(int key) {
-        if (Context.check && key < 0) Context.codeBug();
-        if (ivaluesShift != 0) {
-            int index = findIndex(key);
-            if (0 <= index) {
-                if (!isObjectTypeValue(index)) {
-                    return keys[ivaluesShift + index];
-                }
+        if (key < 0) Context.codeBug();
+        int index = findIndex(key);
+        if (0 <= index) {
+            if (ivaluesShift != 0) {
+                return keys[ivaluesShift + index];
             }
+            return 0;
         }
         // Key must exist
-        if (Context.check) Context.codeBug();
+        Context.codeBug();
         return 0;
     }
 
+    /**
+     * Set object value of the key.
+     * If key does not exist, also set its int value to 0.
+     */
     public void put(int key, Object value) {
-        if (Context.check && !(key >= 0 && value != null)) Context.codeBug();
+        if (key < 0) Context.codeBug();
         int index = ensureIndex(key, false);
         if (values == null) {
             values = new Object[1 << power];
@@ -158,34 +146,51 @@ class UintMap implements Serializable {
         values[index] = value;
     }
 
+    /**
+     * Set int value of the key.
+     * If key does not exist, also set its object value to null.
+     */
     public void put(int key, int value) {
-        if (Context.check && key < 0) Context.codeBug();
+        if (key < 0) Context.codeBug();
         int index = ensureIndex(key, true);
         if (ivaluesShift == 0) {
             int N = 1 << power;
-            int[] tmp = new int[N * 2];
-            System.arraycopy(keys, 0, tmp, 0, N);
-            keys = tmp;
+            // keys.length can be N * 2 after clear which set ivaluesShift to 0
+            if (keys.length != N * 2) {
+                int[] tmp = new int[N * 2];
+                System.arraycopy(keys, 0, tmp, 0, N);
+                keys = tmp;
+            }
             ivaluesShift = N;
         }
         keys[ivaluesShift + index] = value;
-        if (values != null) { values[index] = null; }
     }
 
     public void remove(int key) {
-        if (Context.check && key < 0) Context.codeBug();
+        if (key < 0) Context.codeBug();
         int index = findIndex(key);
         if (0 <= index) {
             keys[index] = DELETED;
             --keyCount;
+            // Allow to GC value and make sure that new key with the deleted
+            // slot shall get proper default values
             if (values != null) { values[index] = null; }
+            if (ivaluesShift != 0) { keys[ivaluesShift + index] = 0; }
         }
     }
 
     public void clear() {
-        power = 0;
-        keys = null;
-        values = null;
+        int N = 1 << power;
+        if (keys != null) {
+            for (int i = 0; i != N; ++i) {
+                keys[i] = EMPTY;
+            }
+            if (values != null) {
+                for (int i = 0; i != N; ++i) {
+                    values[i] = null;
+                }
+            }
+        }
         ivaluesShift = 0;
         keyCount = 0;
         occupiedCount = 0;
@@ -228,7 +233,7 @@ class UintMap implements Serializable {
                 int step = tableLookupStep(fraction, mask, power);
                 int n = 0;
                 do {
-                    if (checkSelf) {
+                    if (check) {
                         if (n >= occupiedCount) Context.codeBug();
                         ++n;
                     }
@@ -241,7 +246,11 @@ class UintMap implements Serializable {
         return -1;
     }
 
-    private int getFreeIndex(int key) {
+// Insert key that is not present to table without deleted entries
+// and enough free space
+    private int insertNewKey(int key) {
+        if (check && occupiedCount != keyCount) Context.codeBug();
+        if (check && keyCount == 1 << power) Context.codeBug();
         int[] keys = this.keys;
         int fraction = key * A;
         int index = fraction >>> (32 - power);
@@ -250,17 +259,19 @@ class UintMap implements Serializable {
             int step = tableLookupStep(fraction, mask, power);
             int firstIndex = index;
             do {
-                if (checkSelf && keys[index] == DELETED) Context.codeBug();
+                if (check && keys[index] == DELETED) Context.codeBug();
                 index = (index + step) & mask;
-                if (checkSelf && firstIndex == index) Context.codeBug();
+                if (check && firstIndex == index) Context.codeBug();
             } while (keys[index] != EMPTY);
         }
+        keys[index] = key;
+        ++occupiedCount;
+        ++keyCount;
         return index;
     }
 
     private void rehashTable(boolean ensureIntSpace) {
-        if (keys == null) { power = minimalPower; }
-        else {
+        if (keys != null) {
             // Check if removing deleted entries would free enough space
             if (keyCount * 2 >= occupiedCount) {
                 // Need to grow: less then half of deleted entries
@@ -281,12 +292,14 @@ class UintMap implements Serializable {
         Object[] oldValues = values;
         if (oldValues != null) { values = new Object[N]; }
 
-        if (old != null) {
-            for (int i = 0, remaining = keyCount; remaining != 0; ++i) {
-                int entry = old[i];
-                if (entry != EMPTY && entry != DELETED) {
-                    int index = getFreeIndex(entry);
-                    keys[index] = entry;
+        int oldCount = keyCount;
+        occupiedCount = 0;
+        if (oldCount != 0) {
+            keyCount = 0;
+            for (int i = 0, remaining = oldCount; remaining != 0; ++i) {
+                int key = old[i];
+                if (key != EMPTY && key != DELETED) {
+                    int index = insertNewKey(key);
                     if (oldValues != null) {
                         values[index] = oldValues[i];
                     }
@@ -297,7 +310,6 @@ class UintMap implements Serializable {
                 }
             }
         }
-        occupiedCount = keyCount;
     }
 
 // Ensure key index creating one if necessary
@@ -317,7 +329,7 @@ class UintMap implements Serializable {
                 int step = tableLookupStep(fraction, mask, power);
                 int n = 0;
                 do {
-                    if (checkSelf) {
+                    if (check) {
                         if (n >= occupiedCount) Context.codeBug();
                         ++n;
                     }
@@ -331,7 +343,7 @@ class UintMap implements Serializable {
             }
         }
         // Inserting of new key
-        if (checkSelf && keys != null && keys[index] != EMPTY)
+        if (check && keys != null && keys[index] != EMPTY)
             Context.codeBug();
         if (firstDeleted >= 0) {
             index = firstDeleted;
@@ -342,7 +354,7 @@ class UintMap implements Serializable {
                 // Too litle unused entries: rehash
                 rehashTable(intType);
                 keys = this.keys;
-                index = getFreeIndex(key);
+                return insertNewKey(key);
             }
             ++occupiedCount;
         }
@@ -351,11 +363,74 @@ class UintMap implements Serializable {
         return index;
     }
 
-    private boolean isObjectTypeValue(int index) {
-        if (checkSelf && !(index >= 0 && index < (1 << power)))
-            Context.codeBug();
-        return values != null && values[index] != null;
+    private void writeObject(ObjectOutputStream out)
+        throws IOException
+    {
+        out.defaultWriteObject();
+
+        int count = keyCount;
+        if (count != 0) {
+            boolean hasIntValues = (ivaluesShift != 0);
+            boolean hasObjectValues = (values != null);
+            out.writeBoolean(hasIntValues);
+            out.writeBoolean(hasObjectValues);
+
+            for (int i = 0; count != 0; ++i) {
+                int key = keys[i];
+                if (key != EMPTY && key != DELETED) {
+                    --count;
+                    out.writeInt(key);
+                    if (hasIntValues) {
+                        out.writeInt(keys[ivaluesShift + i]);
+                    }
+                    if (hasObjectValues) {
+                        out.writeObject(values[i]);
+                    }
+                }
+            }
+        }
     }
+
+    private void readObject(ObjectInputStream in)
+        throws IOException, ClassNotFoundException
+    {
+        in.defaultReadObject();
+
+        int writtenKeyCount = keyCount;
+        if (writtenKeyCount != 0) {
+            keyCount = 0;
+            boolean hasIntValues = in.readBoolean();
+            boolean hasObjectValues = in.readBoolean();
+
+            int N = 1 << power;
+            if (hasIntValues) {
+                keys = new int[2 * N];
+                ivaluesShift = N;
+            }else {
+                keys = new int[N];
+            }
+            for (int i = 0; i != N; ++i) {
+                keys[i] = EMPTY;
+            }
+            if (hasObjectValues) {
+                values = new Object[N];
+            }
+            for (int i = 0; i != writtenKeyCount; ++i) {
+                int key = in.readInt();
+                int index = insertNewKey(key);
+                if (hasIntValues) {
+                    int ivalue = in.readInt();
+                    keys[ivaluesShift + index] = ivalue;
+                }
+                if (hasObjectValues) {
+                    values[index] = in.readObject();
+                }
+            }
+        }
+    }
+
+    static final long serialVersionUID = -6916326879143724506L;
+
 
 // A == golden_ratio * (1 << 32) = ((sqrt(5) - 1) / 2) * (1 << 32)
 // See Knuth etc.
@@ -369,24 +444,31 @@ class UintMap implements Serializable {
 // values[0 <= i < N]: value of key at keys[i]
 // keys[N <= i < 2N]: int values of keys at keys[i - N]
 
-    private int[] keys;
-    private Object[] values;
+    private transient int[] keys;
+    private transient Object[] values;
 
-    private int minimalPower;
     private int power;
     private int keyCount;
-    private int occupiedCount; // == keyCount + deleted_count
+    private transient int occupiedCount; // == keyCount + deleted_count
 
     // If ivaluesShift != 0, keys[ivaluesShift + index] contains integer
     // values associated with keys
-    private int ivaluesShift;
+    private transient int ivaluesShift;
 
-// Rudimentary support for Design-by-Contract
-    private static final boolean checkSelf = Context.check && false;
+// If true, enables consitency checks
+    private static final boolean check = false;
 
-/*
+/* TEST START
+
     public static void main(String[] args) {
+        if (!check) {
+            System.err.println("Set check to true and re-run");
+            throw new RuntimeException("Set check to true and re-run");
+        }
+
         UintMap map;
+        map = new UintMap();
+        testHash(map, 2);
         map = new UintMap();
         testHash(map, 10 * 1000);
         map = new UintMap(30 * 1000);
@@ -469,12 +551,107 @@ class UintMap implements Serializable {
             check(map.size() == old_size);
         }
 
+        System.out.print("."); System.out.flush();
+        map.clear();
+        check(map.size() == 0);
+        for (int i = 0; i != N; ++i) {
+            map.put(i * i, i);
+            map.put(i * i + 1, new Double(i+0.5));
+        }
+        checkSameMaps(map, (UintMap)writeAndRead(map));
+
+        System.out.print("."); System.out.flush();
+        map = new UintMap(0);
+        checkSameMaps(map, (UintMap)writeAndRead(map));
+        map = new UintMap(1);
+        checkSameMaps(map, (UintMap)writeAndRead(map));
+        map = new UintMap(1000);
+        checkSameMaps(map, (UintMap)writeAndRead(map));
+
+        System.out.print("."); System.out.flush();
+        map = new UintMap(N / 10);
+        for (int i = 0; i != N; ++i) {
+            map.put(2*i+1, i);
+        }
+        checkSameMaps(map, (UintMap)writeAndRead(map));
+
+        System.out.print("."); System.out.flush();
+        map = new UintMap(N / 10);
+        for (int i = 0; i != N; ++i) {
+            map.put(2*i+1, i);
+        }
+        for (int i = 0; i != N / 2; ++i) {
+            map.remove(2*i+1);
+        }
+        checkSameMaps(map, (UintMap)writeAndRead(map));
+
+        System.out.print("."); System.out.flush();
+        map = new UintMap();
+        for (int i = 0; i != N; ++i) {
+            map.put(2*i+1, new Double(i + 10));
+        }
+        for (int i = 0; i != N / 2; ++i) {
+            map.remove(2*i+1);
+        }
+        checkSameMaps(map, (UintMap)writeAndRead(map));
+
         System.out.println(); System.out.flush();
+
     }
 
-    static void check(boolean condition) {
+    private static void checkSameMaps(UintMap map1, UintMap map2) {
+        check(map1.size() == map2.size());
+        int[] keys = map1.getKeys();
+        check(keys.length == map1.size());
+        for (int i = 0; i != keys.length; ++i) {
+            int key = keys[i];
+            check(map2.has(key));
+            check(map1.isObjectType(key) == map2.isObjectType(key));
+            check(map1.isIntType(key) == map2.isIntType(key));
+            Object o1 = map1.getObject(key);
+            Object o2 = map2.getObject(key);
+            if (map1.isObjectType(key)) {
+                check(o1.equals(o2));
+            }else {
+                check(map1.getObject(key) == null);
+                check(map2.getObject(key) == null);
+            }
+            if (map1.isIntType(key)) {
+                check(map1.getExistingInt(key) == map2.getExistingInt(key));
+            }else {
+                check(map1.getInt(key, -10) == -10);
+                check(map1.getInt(key, -11) == -11);
+                check(map2.getInt(key, -10) == -10);
+                check(map2.getInt(key, -11) == -11);
+            }
+        }
+    }
+
+    private static void check(boolean condition) {
         if (!condition) Context.codeBug();
     }
 
-//*/
+    private static Object writeAndRead(Object obj) {
+        try {
+            java.io.ByteArrayOutputStream
+                bos = new java.io.ByteArrayOutputStream();
+            java.io.ObjectOutputStream
+                out = new java.io.ObjectOutputStream(bos);
+            out.writeObject(obj);
+            out.close();
+            byte[] data = bos.toByteArray();
+            java.io.ByteArrayInputStream
+                bis = new java.io.ByteArrayInputStream(data);
+            java.io.ObjectInputStream
+                in = new java.io.ObjectInputStream(bis);
+            Object result = in.readObject();
+            in.close();
+            return result;
+        }catch (Exception ex) {
+            ex.printStackTrace();
+            throw new RuntimeException("Unexpected");
+        }
+    }
+
+// TEST END */
 }

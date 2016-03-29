@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -39,9 +39,9 @@ import java.io.*;
 import org.mozilla.javascript.*;
 
 /**
- * Class ScriptableInputStream is used to read in a JavaScript 
+ * Class ScriptableInputStream is used to read in a JavaScript
  * object or function previously serialized with a ScriptableOutputStream.
- * References to names in the exclusion list 
+ * References to names in the exclusion list
  * replaced with references to the top-level scope specified during
  * creation of the ScriptableInputStream.
  *
@@ -51,11 +51,11 @@ import org.mozilla.javascript.*;
 public class ScriptableInputStream extends ObjectInputStream {
 
     /**
-     * Create a ScriptableInputStream. 
+     * Create a ScriptableInputStream.
      * @param in the InputStream to read from.
      * @param scope the top-level scope to create the object in.
      */
-    public ScriptableInputStream(InputStream in, Scriptable scope) 
+    public ScriptableInputStream(InputStream in, Scriptable scope)
         throws IOException
     {
         super(in);
@@ -63,7 +63,7 @@ public class ScriptableInputStream extends ObjectInputStream {
         enableResolveObject(true);
     }
 
-    protected Object resolveObject(Object obj) 
+    protected Object resolveObject(Object obj)
         throws IOException
     {
         if (obj instanceof ScriptableOutputStream.PendingLookup) {
@@ -73,6 +73,10 @@ public class ScriptableInputStream extends ObjectInputStream {
                 throw new IOException("Object " + name + " not found upon " +
                                       "deserialization.");
             }
+        }else if (obj instanceof UniqueTag) {
+            obj = ((UniqueTag)obj).readResolve();
+        }else if (obj instanceof Undefined) {
+            obj = ((Undefined)obj).readResolve();
         }
         return obj;
     }

@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -18,7 +18,7 @@
  * Copyright (C) 1997-1999 Netscape Communications Corporation. All
  * Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  * Norris Boyd
  * Igor Bukanov
  * Mike McCabe
@@ -42,21 +42,15 @@ package org.mozilla.javascript;
  * See ECMA 15.6.
  * @author Norris Boyd
  */
-public class NativeBoolean extends IdScriptable {
+final class NativeBoolean extends IdScriptable {
 
-    public static void init(Context cx, Scriptable scope, boolean sealed) {
-        NativeBoolean obj = new NativeBoolean();
+    static void init(Context cx, Scriptable scope, boolean sealed) {
+        NativeBoolean obj = new NativeBoolean(false);
         obj.prototypeFlag = true;
         obj.addAsPrototype(MAX_PROTOTYPE_ID, cx, scope, sealed);
     }
 
-    /**
-     * Zero-parameter constructor: just used to create Boolean.prototype
-     */
-    public NativeBoolean() {
-    }
-
-    public NativeBoolean(boolean b) {
+    private NativeBoolean(boolean b) {
         booleanValue = b;
     }
 
@@ -88,13 +82,17 @@ public class NativeBoolean extends IdScriptable {
     {
         if (prototypeFlag) {
             if (methodId == Id_constructor) {
-                return jsConstructor(args, thisObj == null);
-            }
-            else if (methodId == Id_toString) {
-                return realThis(thisObj, f).jsFunction_toString();
-            }
-            else if (methodId == Id_valueOf) {
-                return wrap_boolean(realThis(thisObj, f).jsFunction_valueOf());
+                boolean b = ScriptRuntime.toBoolean(args, 0);
+                if (thisObj == null) {
+                    // new Boolean(val) creates a new boolean object.
+                    return new NativeBoolean(b);
+                }
+                // Boolean(val) converts val to a boolean.
+                return wrap_boolean(b);
+            } else if (methodId == Id_toString) {
+                return realThis(thisObj, f).booleanValue ? "true" : "false";
+            } else if (methodId == Id_valueOf) {
+                return wrap_boolean(realThis(thisObj, f).booleanValue);
             }
         }
 
@@ -108,33 +106,13 @@ public class NativeBoolean extends IdScriptable {
         return (NativeBoolean)thisObj;
     }
 
-
-    private Object jsConstructor(Object[] args, boolean inNewExpr) {
-        boolean b = ScriptRuntime.toBoolean(args, 0);
-        if (inNewExpr) {
-            // new Boolean(val) creates a new boolean object.
-            return new NativeBoolean(b);
-        }
-
-        // Boolean(val) converts val to a boolean.
-        return wrap_boolean(b);
-    }
-
-    private String jsFunction_toString() {
-        return booleanValue ? "true" : "false";
-    }
-
-    private boolean jsFunction_valueOf() {
-        return booleanValue;
-    }
-
     protected String getIdName(int id) {
         if (prototypeFlag) {
             if (id == Id_constructor) return "constructor";
             if (id == Id_toString) return "toString";
             if (id == Id_valueOf) return "valueOf";
         }
-        return null;        
+        return null;
     }
 
 // #string_id_map#

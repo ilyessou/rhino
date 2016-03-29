@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -18,7 +18,7 @@
  * Copyright (C) 1997-1999 Netscape Communications Corporation. All
  * Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the
  * terms of the GNU Public License (the "GPL"), in which case the
@@ -33,11 +33,11 @@
  */
 
 /*
-	Environment.java
-	
-	Wraps java.lang.System properties.
-	
-	by Patrick C. Beard <beard@netscape.com>
+        Environment.java
+
+        Wraps java.lang.System properties.
+
+        by Patrick C. Beard <beard@netscape.com>
  */
 
 package org.mozilla.javascript.tools.shell;
@@ -58,7 +58,7 @@ import java.util.Properties;
  */
 public class Environment extends ScriptableObject {
     private Environment thePrototypeInstance = null;
-    
+
     public static void defineClass(ScriptableObject scope) {
         try {
             ScriptableObject.defineClass(scope, Environment.class);
@@ -75,7 +75,7 @@ public class Environment extends ScriptableObject {
         if (thePrototypeInstance == null)
             thePrototypeInstance = this;
     }
-    
+
     public Environment(ScriptableObject scope) {
         setParentScope(scope);
         Object ctor = ScriptRuntime.getTopLevelProp(scope, "Environment");
@@ -84,25 +84,25 @@ public class Environment extends ScriptableObject {
             setPrototype((Scriptable) s.get("prototype", s));
         }
     }
-    
+
     public boolean has(String name, Scriptable start) {
         if (this == thePrototypeInstance)
             return super.has(name, start);
-        
+
         return (System.getProperty(name) != null);
     }
 
     public Object get(String name, Scriptable start) {
         if (this == thePrototypeInstance)
             return super.get(name, start);
-        
+
         String result = System.getProperty(name);
         if (result != null)
             return ScriptRuntime.toObject(getParentScope(), result);
         else
             return Scriptable.NOT_FOUND;
     }
-    
+
     public void put(String name, Scriptable start, Object value) {
         if (this == thePrototypeInstance)
             super.put(name, start, value);
@@ -126,7 +126,7 @@ public class Environment extends ScriptableObject {
             return super.getIds();
         return collectIds();
     }
-    
+
     public Object[] getAllIds() {
         if (this == thePrototypeInstance)
             return super.getAllIds();

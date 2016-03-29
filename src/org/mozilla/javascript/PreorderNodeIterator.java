@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -18,7 +18,7 @@
  * Copyright (C) 1997-1999 Netscape Communications Corporation. All
  * Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  * Norris Boyd
  * Roger Lawrence
  * Igor Bukanov
@@ -41,52 +41,64 @@ package org.mozilla.javascript;
  * This class implements a preorder tree iterator for the Node class.
  *
  * @see Node
- * @author Norris Boyd
+ * @author Igor Bukanov
  */
-public class PreorderNodeIterator {
-    public PreorderNodeIterator(Node n) {
-        start = n;
-    }
+public final class PreorderNodeIterator {
 
-    public Node currentNode() {
+    public PreorderNodeIterator() { }
+
+    public Node getCurrent() {
         return current;
     }
 
     public Node getCurrentParent() {
-        // Should not be used when stackTop == 0, 
+        // Should not be used when stackTop == 0,
         // i.e. with start or its siblings
         return stack[stackTop - 1];
     }
 
-    public Node nextNode() {
-        if (current == null) {
-            current = start;
+    public void start(Node tree) {
+        current = tree;
+        cachedPrev = null;
+        while (stackTop != 0) {
+            --stackTop;
+            stack[stackTop] = null;
         }
-        else if (current.first != null) {
+    }
+
+    public boolean done() {
+        return current == null;
+    }
+
+    public void next() {
+        Node first = current.getFirstChild();
+        if (first != null) {
             stackPush(current);
             cachedPrev = null;
-            current = current.first;
+            current = first;
+        } else {
+            nextSkipSubtree();
         }
-        else {
-            for (;;) {
-                cachedPrev = current;
-                current = current.next;
-                if (current != null) { break; }
-                if (stackTop == 0) {
-                    // Iteration end: clear cachedPrev that currently points
-                    // to the last sibling of start
-                    cachedPrev = null; break;
-                }
-                --stackTop;
-                current = stack[stackTop];
-                stack[stackTop] = null;
+    }
+
+    public void nextSkipSubtree() {
+        for (;;) {
+            cachedPrev = current;
+            current = current.next;
+            if (current != null) { break; }
+            if (stackTop == 0) {
+                // Iteration end: clear cachedPrev that currently
+                // points to the last sibling of start
+                cachedPrev = null; break;
             }
+            --stackTop;
+            current = stack[stackTop];
+            stack[stackTop] = null;
         }
-        return current;
     }
 
     public void replaceCurrent(Node newNode) {
-        // Should not be used when stackTop == 0, 
+        // Should not be used when stackTop == 0,
         // i.e. with start or its siblings
         Node parent = stack[stackTop - 1];
         if (cachedPrev != null && cachedPrev.next == current) {
@@ -99,7 +111,20 @@ public class PreorderNodeIterator {
         }
         current = newNode;
     }
-    
+
+    public void addBeforeCurrent(Node newNode) {
+        // Should not be used when stackTop == 0,
+        // i.e. with start or its siblings
+        Node parent = stack[stackTop - 1];
+        if (cachedPrev != null && cachedPrev.next == current) {
+            parent.addChildAfter(newNode, cachedPrev);
+        }
+        else {
+            parent.addChildBefore(newNode, current);
+        }
+        cachedPrev = newNode;
+    }
+
     private void stackPush(Node n) {
         int N = stackTop;
         if (N == 0) {
@@ -114,7 +139,6 @@ public class PreorderNodeIterator {
         stackTop = N + 1;
     }
 
-    private Node start;
     private Node[] stack;
     private int stackTop;
 
@@ -122,5 +146,5 @@ public class PreorderNodeIterator {
 
 //cache previous sibling of current not to search for it when
 //replacing current
-    private Node cachedPrev; 
+    private Node cachedPrev;
 }

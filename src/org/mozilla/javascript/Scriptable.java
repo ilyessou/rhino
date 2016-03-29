@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -18,7 +18,7 @@
  * Copyright (C) 1997-1999 Netscape Communications Corporation. All
  * Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  * Norris Boyd
  *
  * Alternatively, the contents of this file may be used under the
@@ -46,7 +46,7 @@ package org.mozilla.javascript;
  * class rather than implementing Scriptable when writing host objects.
  * <p>
  * There are many static methods defined in ScriptableObject that perform
- * the multiple calls to the Scriptable interface needed in order to  
+ * the multiple calls to the Scriptable interface needed in order to
  * manipulate properties in prototype chains.
  * <p>
  *
@@ -70,7 +70,7 @@ public interface Scriptable {
      * Value returned from <code>get</code> if the property is not
      * found.
      */
-    public static final Object NOT_FOUND = new Object();
+    public static final Object NOT_FOUND = UniqueTag.NOT_FOUND;
 
     /**
      * Get a named property from the object.
@@ -160,7 +160,7 @@ public interface Scriptable {
     /**
      * Sets a named property in this object.
      * <p>
-     * The property is specified by a string name 
+     * The property is specified by a string name
      * as defined for <code>get</code>.
      * <p>
      * The possible values that may be passed in are as defined for
@@ -186,11 +186,11 @@ public interface Scriptable {
      * <LI>java.lang.Number objects</LI>
      * <LI>org.mozilla.javascript.Scriptable objects</LI>
      * <LI>null</LI>
-     * <LI>The value returned by Context.getUndefinedValue()</LI> 
-     * </UL><p> 
+     * <LI>The value returned by Context.getUndefinedValue()</LI>
+     * </UL><p>
      * Arbitrary Java objects may be wrapped in a Scriptable by first calling
      * <code>Context.toObject</code>. This allows the property of a JavaScript
-     * object to contain an arbitrary Java object as a value.<p> 
+     * object to contain an arbitrary Java object as a value.<p>
      * Note that <code>has</code> will be called by the runtime first before
      * <code>set</code> is called to determine in which object the
      * property is defined.

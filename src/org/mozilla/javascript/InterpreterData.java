@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -18,7 +18,7 @@
  * Copyright (C) 1997-2000 Netscape Communications Corporation. All
  * Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  * Norris Boyd
  * Roger Lawrence
  *
@@ -38,91 +38,73 @@ package org.mozilla.javascript;
 
 import java.io.Serializable;
 
-class InterpreterData implements Serializable {
+import org.mozilla.javascript.debug.DebuggableScript;
+
+final class InterpreterData implements Serializable, DebuggableScript {
 
     static final long serialVersionUID = 4815333329084415557L;
-    
+
     static final int INITIAL_MAX_ICODE_LENGTH = 1024;
     static final int INITIAL_STRINGTABLE_SIZE = 64;
     static final int INITIAL_NUMBERTABLE_SIZE = 64;
-    
-    InterpreterData(int lastICodeTop, int lastStringTableIndex, 
-                    Object securityDomain,
-                    boolean useDynamicScope, boolean checkThis)
-    {
-        itsICodeTop = lastICodeTop == 0 
-                      ? INITIAL_MAX_ICODE_LENGTH
-                      : lastICodeTop * 2;
+
+    InterpreterData(Object securityDomain) {
+        itsICodeTop = INITIAL_MAX_ICODE_LENGTH;
         itsICode = new byte[itsICodeTop];
 
-        itsStringTable = new String[lastStringTableIndex == 0
-                                    ? INITIAL_STRINGTABLE_SIZE
-                                    : lastStringTableIndex * 2];
+        itsStringTable = new String[INITIAL_STRINGTABLE_SIZE];
 
-        itsUseDynamicScope = useDynamicScope;
-        itsCheckThis = checkThis;
-        if (securityDomain == null)
-            Context.checkSecurityDomainRequired();
         this.securityDomain = securityDomain;
     }
-    
-    public boolean placeBreakpoint(int line) { // XXX throw exn?
-        int offset = getOffset(line);
-        if (offset != -1 && (itsICode[offset] == (byte)TokenStream.LINE ||
-                             itsICode[offset] == (byte)TokenStream.BREAKPOINT))
-        {
-            itsICode[offset] = (byte) TokenStream.BREAKPOINT;
-            return true;
-        }
-        return false;
-    }
-    
-    public boolean removeBreakpoint(int line) {
-        int offset = getOffset(line);
-        if (offset != -1 && itsICode[offset] == (byte) TokenStream.BREAKPOINT)
-        {
-            itsICode[offset] = (byte) TokenStream.LINE;
-            return true;
-        }
-        return false;
-    }
-    
-    private int getOffset(int line) {
-        int offset = itsLineNumberTable.getInt(line, -1);
-        if (0 <= offset && offset <= itsICode.length) {
-            return offset;
-        }
-        return -1;
-    }    
-    
+
     String itsName;
     String itsSource;
     String itsSourceFile;
     boolean itsNeedsActivation;
     boolean itsFromEvalCode;
-    boolean itsUseDynamicScope;
     boolean itsCheckThis;
-    byte itsFunctionType;
+    int itsFunctionType;
 
     String[] itsStringTable;
-    int itsStringTableIndex;
-
     double[] itsDoubleTable;
-    int itsDoubleTableIndex;
-    
-    InterpretedFunction[] itsNestedFunctions;
-    
+    InterpreterData[] itsNestedFunctions;
     Object[] itsRegExpLiterals;
 
     byte[] itsICode;
     int itsICodeTop;
-    
+
+    int itsMaxVars;
     int itsMaxLocals;
-    int itsMaxArgs;
-    int itsMaxStack;
     int itsMaxTryDepth;
-    
-    UintMap itsLineNumberTable;
+    int itsMaxStack;
+    int itsMaxFrameArray;
+
+    // see comments in NativeFuncion for definition of argNames and argCount
+    String[] argNames;
+    int argCount;
+
+    int itsMaxCalleeArgs;
 
     Object securityDomain;
+
+    public boolean isFunction() {
+        return itsFunctionType != 0;
+    }
+
+    public String getFunctionName() {
+        return itsName;
+    }
+
+    public String getSourceName() {
+        return itsSourceFile;
+    }
+
+    public boolean isGeneratedScript() {
+        return ScriptRuntime.isGeneratedScript(itsSourceFile);
+    }
+
+    public int[] getLineNumbers() {
+        return Interpreter.getLineNumbers(this);
+    }
+
 }

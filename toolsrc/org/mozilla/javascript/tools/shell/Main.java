@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -18,7 +18,7 @@
  * Copyright (C) 1997-1999 Netscape Communications Corporation. All
  * Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  * Patrick Beard
  * Norris Boyd
  * Rob Ginda
@@ -65,16 +65,24 @@ public class Main {
      * execute scripts.
      */
     public static void main(String args[]) {
+        try {
+            if (Boolean.getBoolean("rhino.use_java_policy_security")) {
+                initJavaPolicySecuritySupport();
+            }
+        }catch (SecurityException ex) {
+            ex.printStackTrace(System.err);
+        }
+
         int result = exec(args);
         if (result != 0)
             System.exit(result);
     }
-    
+
     /**
      *  Execute the given arguments, but don't System.exit at the end.
      */
     public static int exec(String args[]) {
-        Context cx = Context.enter();
+        Context cx = enterContext();
         // Create the top-level scope object.
         global = getGlobal();
         errorReporter = new ToolErrorReporter(false, global.getErr());
@@ -82,7 +90,7 @@ public class Main {
 
         args = processOptions(cx, args);
 
-        if (processStdin) 
+        if (processStdin)
             fileList.addElement(null);
 
         // define "arguments" array in the top-level object
@@ -90,7 +98,7 @@ public class Main {
         Scriptable argsObj = cx.newArray(global, args);
         global.defineProperty("arguments", argsObj,
                               ScriptableObject.DONTENUM);
-        
+
         for (int i=0; i < fileList.size(); i++) {
             processSource(cx, (String) fileList.elementAt(i));
         }
@@ -102,7 +110,7 @@ public class Main {
     public static Global getGlobal() {
         if (global == null) {
             try {
-                global = new Global(Context.enter());
+                global = new Global(enterContext());
             }
             finally {
                 Context.exit();
@@ -111,11 +119,18 @@ public class Main {
         return global;
     }
 
+    static Context enterContext() {
+        Context cx = new Context();
+        if (securityImpl != null) {
+            cx.setSecurityController(securityImpl);
+        }
+        return Context.enter(cx);
+    }
+
     /**
      * Parse arguments.
      */
     public static String[] processOptions(Context cx, String args[]) {
-        cx.setTargetPackage("");    // default to no package
         for (int i=0; i < args.length; i++) {
             String arg = args[i];
             if (!arg.startsWith("-")) {
@@ -148,7 +163,7 @@ public class Main {
                 if (++i == args.length)
                     usage(arg);
                 Reader reader = new StringReader(args[i]);
-                evaluateReader(cx, global, reader, "<command>", 1);
+                evaluateReader(cx, global, reader, "<command>", 1, null);
                 continue;
             }
             if (arg.equals("-w")) {
@@ -175,6 +190,25 @@ public class Main {
         System.exit(1);
     }
 
+    private static void initJavaPolicySecuritySupport() {
+        Throwable exObj;
+        try {
+            Class cl = Class.forName
+                ("org.mozilla.javascript.tools.shell.JavaPolicySecurity");
+            securityImpl = (SecurityProxy)cl.newInstance();
+            return;
+        }catch (ClassNotFoundException ex) {
+            exObj = ex;
+        }catch (IllegalAccessException ex) {
+            exObj = ex;
+        }catch (InstantiationException ex) {
+            exObj = ex;
+        }catch (LinkageError ex) {
+            exObj = ex;
+        }
+        throw new RuntimeException("Can not load security support: "+exObj);
+    }
+
     /**
      * Evaluate JavaScript source.
      *
@@ -185,13 +219,13 @@ public class Main {
     public static void processSource(Context cx, String filename) {
         if (filename == null || filename.equals("-")) {
             if (filename == null) {
-                // print implementation version 
+                // print implementation version
                 getOut().println(cx.getImplementationVersion());
             }
 
             // Use the interpreter for interactive input
             cx.setOptimizationLevel(-1);
-            
+
             BufferedReader in = new BufferedReader
                 (new InputStreamReader(global.getIn()));
             int lineno = 1;
@@ -202,7 +236,7 @@ public class Main {
                     global.getErr().print("js> ");
                 global.getErr().flush();
                 String source = "";
-                    
+
                 // Collect lines of source to compile.
                 while (true) {
                     String newline;
@@ -223,8 +257,8 @@ public class Main {
                         break;
                 }
                 Reader reader = new StringReader(source);
-                Object result = evaluateReader(cx, global, reader, 
-                                               "<stdin>", startline);
+                Object result = evaluateReader(cx, global, reader,
+                                               "<stdin>", startline, null);
                 if (result != cx.getUndefinedValue()) {
                     try {
                         global.getErr().println(cx.toString(result));
@@ -233,9 +267,9 @@ public class Main {
                             "msg.uncaughtJSException", ee.toString());
                         exitCode = EXITCODE_RUNTIME_ERROR;
                         if (ee.getSourceName() != null) {
-                            Context.reportError(msg, ee.getSourceName(), 
-                                                ee.getLineNumber(), 
-                                                ee.getLineSource(), 
+                            Context.reportError(msg, ee.getSourceName(),
+                                                ee.getLineNumber(),
+                                                ee.getLineSource(),
                                                 ee.getColumnNumber());
                         } else {
                             Context.reportError(msg);
@@ -243,15 +277,25 @@ public class Main {
                     }
                 }
                 NativeArray h = global.history;
-                h.put((int)h.jsGet_length(), h, source);
+                h.put((int)h.getLength(), h, source);
             }
             global.getErr().println();
         } else processFile(cx, global, filename);
         System.gc();
     }
-    
+
     public static void processFile(Context cx, Scriptable scope,
                                    String filename)
+    {
+        if (securityImpl == null) {
+            processFileSecure(cx, scope, filename, null);
+        }else {
+            securityImpl.callProcessFileSecure(cx, scope, filename);
+        }
+    }
+
+    static void processFileSecure(Context cx, Scriptable scope,
+                                  String filename, Object securityDomain)
     {
         Reader in = null;
         // Try filename first as URL
@@ -303,20 +347,21 @@ public class Main {
             } catch (IOException ioe) {
                 global.getErr().println(ioe.toString());
             }
-        }            
+        }
         // Here we evalute the entire contents of the file as
         // a script. Text is printed only if the print() function
         // is called.
-        evaluateReader(cx, scope, in, filename, 1);
+        evaluateReader(cx, scope, in, filename, 1, securityDomain);
     }
 
-    public static Object evaluateReader(Context cx, Scriptable scope, 
-                                        Reader in, String sourceName, 
-                                        int lineno)
+    public static Object evaluateReader(Context cx, Scriptable scope,
+                                        Reader in, String sourceName,
+                                        int lineno, Object securityDomain)
     {
         Object result = cx.getUndefinedValue();
         try {
-            result = cx.evaluateReader(scope, in, sourceName, lineno, null);
+            result = cx.evaluateReader(scope, in, sourceName, lineno,
+                                       securityDomain);
         }
         catch (WrappedException we) {
             global.getErr().println(we.getWrappedException().toString());
@@ -327,9 +372,9 @@ public class Main {
                 "msg.uncaughtJSException", ee.toString());
             exitCode = EXITCODE_RUNTIME_ERROR;
             if (ee.getSourceName() != null) {
-                Context.reportError(msg, ee.getSourceName(), 
-                                    ee.getLineNumber(), 
-                                    ee.getLineSource(), 
+                Context.reportError(msg, ee.getSourceName(),
+                                    ee.getLineNumber(),
+                                    ee.getLineSource(),
                                     ee.getColumnNumber());
             } else {
                 Context.reportError(msg);
@@ -340,10 +385,10 @@ public class Main {
             exitCode = EXITCODE_RUNTIME_ERROR;
         }
         catch (JavaScriptException jse) {
-	    	// Need to propagate ThreadDeath exceptions.
-	    	Object value = jse.getValue();
-	    	if (value instanceof ThreadDeath)
-	    		throw (ThreadDeath) value;
+            // Need to propagate ThreadDeath exceptions.
+            Object value = jse.getValue();
+            if (value instanceof ThreadDeath)
+                throw (ThreadDeath) value;
             exitCode = EXITCODE_RUNTIME_ERROR;
             Context.reportError(ToolErrorReporter.getMessage(
                 "msg.uncaughtJSException",
@@ -366,7 +411,7 @@ public class Main {
     private static void p(String s) {
         global.getOut().println(s);
     }
-    
+
     public static ScriptableObject getScope() {
         return global;
     }
@@ -374,7 +419,7 @@ public class Main {
     public static InputStream getIn() {
         return Global.getInstance(getGlobal()).getIn();
     }
-    
+
     public static void setIn(InputStream in) {
         Global.getInstance(getGlobal()).setIn(in);
     }
@@ -382,12 +427,12 @@ public class Main {
     public static PrintStream getOut() {
         return Global.getInstance(getGlobal()).getOut();
     }
-    
+
     public static void setOut(PrintStream out) {
         Global.getInstance(getGlobal()).setOut(out);
     }
 
-    public static PrintStream getErr() { 
+    public static PrintStream getErr() {
         return Global.getInstance(getGlobal()).getErr();
     }
 
@@ -403,4 +448,5 @@ public class Main {
     //static private DebugShell debugShell;
     static boolean processStdin = true;
     static Vector fileList = new Vector(5);
+    private static SecurityProxy securityImpl;
 }

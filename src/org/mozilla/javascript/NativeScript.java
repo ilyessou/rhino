@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -18,7 +18,7 @@
  * Copyright (C) 1997-1999 Netscape Communications Corporation. All
  * Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  * Norris Boyd
  * Roger Lawrence
  * Mike McCabe
@@ -59,7 +59,7 @@ import java.io.IOException;
 
 public class NativeScript extends NativeFunction implements Script {
 
-    public static void init(Context cx, Scriptable scope, boolean sealed) {
+    static void init(Context cx, Scriptable scope, boolean sealed) {
         NativeScript obj = new NativeScript();
         obj.scopeInit(cx, scope, sealed);
     }
@@ -68,17 +68,8 @@ public class NativeScript extends NativeFunction implements Script {
     }
 
     private void scopeInit(Context cx, Scriptable scope, boolean sealed) {
-        // prototypeIdShift != 0 serves as indicator of prototype instance
-        // and as id offset to take into account ids present in each instance
-        // of the base class NativeFunction. 
-        // Not to depend on the assumption NativeFunction.maxInstanceId() != 0,
-        // 1 is added super.maxInstanceId() to make sure that 
-        // prototypeIdShift != 0 in the NativeScript prototype.
-        // In a similar way the following methods use 
-        // methodId - prototypeIdShift + 1, not methodId - prototypeIdShift
-        // to unshift prototype id to [1 .. MAX_PROTOTYPE_ID] interval
-        prototypeIdShift = super.maxInstanceId() + 1;
-        addAsPrototype(MAX_PROTOTYPE_ID + prototypeIdShift - 1, 
+        prototypeIdShift = getMaxId();
+        addAsPrototype(prototypeIdShift + MAX_PROTOTYPE_ID,
                        cx, scope, sealed);
     }
 
@@ -99,8 +90,8 @@ public class NativeScript extends NativeFunction implements Script {
     }
 
     public int methodArity(int methodId) {
-        if (prototypeIdShift != 0) {
-            switch (methodId - prototypeIdShift + 1) {
+        if (0 <= prototypeIdShift) {
+            switch (methodId - prototypeIdShift) {
                 case Id_constructor: return 1;
                 case Id_toString:    return 0;
                 case Id_exec:        return 0;
@@ -111,32 +102,31 @@ public class NativeScript extends NativeFunction implements Script {
     }
 
     public Object execMethod(int methodId, IdFunction f, Context cx,
-                             Scriptable scope, Scriptable thisObj, 
+                             Scriptable scope, Scriptable thisObj,
                              Object[] args)
         throws JavaScriptException
     {
-        if (prototypeIdShift != 0) {
-            switch (methodId - prototypeIdShift + 1) {
+        if (0 <= prototypeIdShift) {
+            switch (methodId - prototypeIdShift) {
                 case Id_constructor:
                     return jsConstructor(cx, scope, args);
 
                 case Id_toString:
-                    return realThis(thisObj, f, true).
-                        jsFunction_toString(cx, args);
+                    return realThis(thisObj, f, true).js_toString(cx, args);
 
                 case Id_exec:
-                    return realThis(thisObj, f, true).jsFunction_exec();
+                    return realThis(thisObj, f, true).js_exec();
 
                 case Id_compile:
                     return realThis(thisObj, f, false).
-                        jsFunction_compile(ScriptRuntime.toString(args, 0));
+                        js_compile(cx, ScriptRuntime.toString(args, 0));
             }
         }
 
         return super.execMethod(methodId, f, cx, scope, thisObj, args);
     }
 
-    private NativeScript realThis(Scriptable thisObj, IdFunction f, 
+    private NativeScript realThis(Scriptable thisObj, IdFunction f,
                                   boolean readOnly)
     {
         while (!(thisObj instanceof NativeScript)) {
@@ -149,17 +139,17 @@ public class NativeScript extends NativeFunction implements Script {
      * The Java method defining the JavaScript Script constructor.
      *
      */
-    private static Object jsConstructor(Context cx, Scriptable scope, 
+    private static Object jsConstructor(Context cx, Scriptable scope,
                                         Object[] args)
     {
-        String source = args.length == 0
+        String source = (args.length == 0)
                         ? ""
                         : ScriptRuntime.toString(args[0]);
-        return compile(scope, source);
+        return compile(cx, scope, source);
     }
 
-    public static Script compile(Scriptable scope, String source) {
-        Context cx = Context.getContext();
+    private static Script compile(Context cx, Scriptable scope, String source)
+    {
         StringReader reader = new StringReader(source);
         try {
             int[] linep = { 0 };
@@ -168,39 +158,28 @@ public class NativeScript extends NativeFunction implements Script {
                 filename = "<Script object>";
                 linep[0] = 1;
             }
-            Object securityDomain = 
-                cx.getSecurityDomainForStackDepth(5);
-            return cx.compileReader(scope, reader, filename, linep[0], 
-                                    securityDomain);
+            return cx.compileReader(scope, reader, filename, linep[0], null);
         }
         catch (IOException e) {
             throw new RuntimeException("Unexpected IOException");
         }
     }
 
-    private Scriptable jsFunction_compile(String source) {
-        script = compile(null, source);
+    private Scriptable js_compile(Context cx, String source) {
+        script = compile(cx, null, source);
         return this;
     }
 
-    private Object jsFunction_exec() throws JavaScriptException {
+    private Object js_exec() throws JavaScriptException {
         throw Context.reportRuntimeError1
             ("msg.cant.call.indirect", "exec");
     }
 
-    private Object jsFunction_toString(Context cx, Object[] args)
-    {
+    private Object js_toString(Context cx, Object[] args) {
         Script thisScript = script;
         if (thisScript == null) { thisScript = this; }
         Scriptable scope = getTopLevelScope(this);
         return cx.decompileScript(thisScript, scope, 0);
-    }
-    
-    /*
-     * Override method in NativeFunction to avoid ever returning "anonymous"
-     */
-    public String getFunctionName() {
-        return "";
     }
 
     /**
@@ -228,8 +207,8 @@ public class NativeScript extends NativeFunction implements Script {
     }
 
     protected String getIdName(int id) {
-        if (prototypeIdShift != 0) {
-            switch (id - prototypeIdShift + 1) {
+        if (0 <= prototypeIdShift) {
+            switch (id - prototypeIdShift) {
                 case Id_constructor: return "constructor";
                 case Id_toString:    return "toString";
                 case Id_exec:        return "exec";
@@ -240,13 +219,13 @@ public class NativeScript extends NativeFunction implements Script {
     }
 
     protected int mapNameToId(String s) {
-        if (prototypeIdShift != 0) {
+        if (0 <= prototypeIdShift) {
             int id = toPrototypeId(s);
-            if (id != 0) { 
+            if (id != 0) {
                 // Shift [1, MAX_PROTOTYPE_ID] to
-                // [super.maxInstanceId() + 1,
-                //    super.maxInstanceId() + MAX_PROTOTYPE_ID]
-                return id + prototypeIdShift - 1; 
+                // [NativeFunction.getMaxId() + 1,
+                //    NativeFunction.getMaxId() + MAX_PROTOTYPE_ID]
+                return prototypeIdShift + id;
             }
         }
         return super.mapNameToId(s);
@@ -281,6 +260,9 @@ public class NativeScript extends NativeFunction implements Script {
 
     private Script script;
 
-    private int prototypeIdShift;
+    // "0 <= prototypeIdShift" serves as indicator of prototype instance
+    // and as id offset to take into account ids present in each instance
+    // of the base class NativeFunction.
+    private int prototypeIdShift = -1;
 }
 

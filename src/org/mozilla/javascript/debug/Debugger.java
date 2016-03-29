@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -18,7 +18,7 @@
  * Copyright (C) 1997-2000 Netscape Communications Corporation. All
  * Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  * Norris Boyd
  *
  * Alternatively, the contents of this file may be used under the
@@ -39,13 +39,28 @@ package org.mozilla.javascript.debug;
 
 import org.mozilla.javascript.Context;
 
+/**
+Interface to implement if the application is interested in receiving debug
+information.
+*/
 public interface Debugger {
-    
-    void handleCompilationDone(Context cx, DebuggableScript fnOrScript, 
-                               StringBuffer source);
 
-    void handleBreakpointHit(Context cx);
-    
-    void handleExceptionThrown(Context cx, Object exception);
-    
+/**
+Called when compilation of a particular function or script into internal
+bytecode is done.
+
+@param cx current Context for this thread
+@param fnOrScript object describing the function or script
+@param source the function or script source
+*/
+    void handleCompilationDone(Context cx, DebuggableScript fnOrScript,
+                               String source);
+
+/**
+Called when execution entered a particular function or script.
+
+@return implementation of DebugFrame which receives debug information during
+        the function or script execution or null otherwise
+*/
+    DebugFrame getFrame(Context cx, DebuggableScript fnOrScript);
 }

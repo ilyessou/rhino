@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -18,7 +18,7 @@
  * Copyright (C) 1997-2000 Netscape Communications Corporation. All
  * Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  * Norris Boyd
  * David C. Navas
  *
@@ -37,37 +37,43 @@
 package org.mozilla.javascript.optimizer;
 
 import java.util.Hashtable;
-import java.io.IOException;
 import java.lang.reflect.Method;
 
 import org.mozilla.javascript.Invoker;
+import org.mozilla.javascript.Context;
+import org.mozilla.javascript.GeneratedClassLoader;
 import org.mozilla.classfile.ByteCode;
 import org.mozilla.classfile.ClassFileWriter;
-import org.mozilla.classfile.DefiningClassLoader;
 
 /**
- * Avoid cost of java.lang.reflect.Method.invoke() by compiling a class to 
+ * Avoid cost of java.lang.reflect.Method.invoke() by compiling a class to
  * perform the method call directly.
  */
 public class InvokerImpl extends Invoker {
-    
-    public Invoker createInvoker(Method method, Class[] types) {
-        
-        Invoker result = (Invoker)invokersCache.get(method);
-        if (result != null) { return result; }
-        
-        int classNum = 0;
+
+    public Invoker createInvoker(Context cx, Method method, Class[] types) {
+
+        Invoker result;
+        int classNum;
         synchronized (this) {
+            if (invokersCache == null) {
+                invokersCache = new Hashtable();
+                ClassLoader parentLoader = cx.getApplicationClassLoader();
+                classLoader = cx.createClassLoader(parentLoader);
+            } else {
+                result = (Invoker)invokersCache.get(method);
+                if (result != null) { return result; }
+            }
             classNum = ++classNumber;
         }
-        
+
         String className = "inv" + classNum;
-            
-        ClassFileWriter cfw = new ClassFileWriter(className, 
+
+        ClassFileWriter cfw = new ClassFileWriter(className,
                                 "org.mozilla.javascript.Invoker", "");
-        cfw.setFlags((short)(ClassFileWriter.ACC_PUBLIC | 
+        cfw.setFlags((short)(ClassFileWriter.ACC_PUBLIC |
                              ClassFileWriter.ACC_FINAL));
-            
+
         // Add our instantiator!
         cfw.startMethod("<init>", "()V", ClassFileWriter.ACC_PUBLIC);
         cfw.add(ByteCode.ALOAD_0);
@@ -78,12 +84,12 @@ public class InvokerImpl extends Invoker {
         cfw.stopMethod((short)1, null); // one argument -- this???
 
         // Add the invoke() method call
-        cfw.startMethod("invoke", 
+        cfw.startMethod("invoke",
                         "(Ljava/lang/Object;[Ljava/lang/Object;)"+
                          "Ljava/lang/Object;",
-                        (short)(ClassFileWriter.ACC_PUBLIC | 
+                        (short)(ClassFileWriter.ACC_PUBLIC |
                                 ClassFileWriter.ACC_FINAL));
-            
+
         // If we return a primitive type, then do something special!
         String declaringClassName = method.getDeclaringClass().getName
             ().replace('.', '/');
@@ -92,7 +98,7 @@ public class InvokerImpl extends Invoker {
         String invokeSpecialType = null;
         boolean returnsVoid = false;
         boolean returnsBoolean = false;
-            
+
         if (returnType.isPrimitive()) {
             if (returnType == Boolean.TYPE) {
                 returnsBoolean = true;
@@ -125,30 +131,30 @@ public class InvokerImpl extends Invoker {
                 cfw.add(ByteCode.DUP);
                 invokeSpecialType = "(B)";
             } else if (returnType == Character.TYPE) {
-                cfw.add(ByteCode.NEW, invokeSpecial 
+                cfw.add(ByteCode.NEW, invokeSpecial
                             = "java/lang/Character");
                 cfw.add(ByteCode.DUP);
                 invokeSpecialType = "(C)";
             }
         }
-            
+
         // handle setup of call to virtual function (if calling non-static)
         if (!java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
             cfw.add(ByteCode.ALOAD_1);
             cfw.add(ByteCode.CHECKCAST, declaringClassName);
         }
-            
+
         // Handle parameters!
         StringBuffer params = new StringBuffer(2 + ((types!=null)?(20 *
                                 types.length):0));
-            
+
         params.append('(');
         if (types != null) {
             for(int i = 0; i < types.length; i++) {
                 Class type = types[i];
 
                 cfw.add(ByteCode.ALOAD_2);
-                    
+
                 if (i <= 5) {
                     cfw.add((byte) (ByteCode.ICONST_0 + i));
                 } else if (i <= Byte.MAX_VALUE) {
@@ -158,57 +164,57 @@ public class InvokerImpl extends Invoker {
                 } else {
                     cfw.addLoadConstant((int)i);
                 }
-                    
+
                 cfw.add(ByteCode.AALOAD);
-                    
+
                 if (type.isPrimitive()) {
                     // Convert enclosed type back to primitive.
-                        
+
                     if (type == Boolean.TYPE) {
                         cfw.add(ByteCode.CHECKCAST, "java/lang/Boolean");
-                        cfw.add(ByteCode.INVOKEVIRTUAL, "java/lang/Boolean", 
+                        cfw.add(ByteCode.INVOKEVIRTUAL, "java/lang/Boolean",
                                 "booleanValue", "()", "Z");
                         params.append('Z');
                     } else if (type == Integer.TYPE) {
                         cfw.add(ByteCode.CHECKCAST, "java/lang/Number");
-                        cfw.add(ByteCode.INVOKEVIRTUAL, "java/lang/Number", 
+                        cfw.add(ByteCode.INVOKEVIRTUAL, "java/lang/Number",
                                 "intValue", "()", "I");
                         params.append('I');
                     } else if (type == Short.TYPE) {
                         cfw.add(ByteCode.CHECKCAST, "java/lang/Number");
-                        cfw.add(ByteCode.INVOKEVIRTUAL, "java/lang/Number", 
+                        cfw.add(ByteCode.INVOKEVIRTUAL, "java/lang/Number",
                                 "shortValue", "()", "S");
                         params.append('S');
                     } else if (type == Character.TYPE) {
                         cfw.add(ByteCode.CHECKCAST, "java/lang/Character");
-                        cfw.add(ByteCode.INVOKEVIRTUAL, "java/lang/Character", 
+                        cfw.add(ByteCode.INVOKEVIRTUAL, "java/lang/Character",
                                 "charValue", "()", "C");
                         params.append('C');
                     } else if (type == Double.TYPE) {
                         cfw.add(ByteCode.CHECKCAST, "java/lang/Number");
-                        cfw.add(ByteCode.INVOKEVIRTUAL, "java/lang/Number", 
+                        cfw.add(ByteCode.INVOKEVIRTUAL, "java/lang/Number",
                                 "doubleValue", "()", "D");
                         params.append('D');
                     } else if (type == Float.TYPE) {
                         cfw.add(ByteCode.CHECKCAST, "java/lang/Number");
-                        cfw.add(ByteCode.INVOKEVIRTUAL, "java/lang/Number", 
+                        cfw.add(ByteCode.INVOKEVIRTUAL, "java/lang/Number",
                                 "floatValue", "()", "F");
                         params.append('F');
                     } else if (type == Byte.TYPE) {
                         cfw.add(ByteCode.CHECKCAST, "java/lang/Byte");
-                        cfw.add(ByteCode.INVOKEVIRTUAL, "java/lang/Byte", 
+                        cfw.add(ByteCode.INVOKEVIRTUAL, "java/lang/Byte",
                                 "byteValue", "()", "B");
                         params.append('B');
                     }
                 } else {
                     String typeName = type.getName().replace('.', '/');
                     cfw.add(ByteCode.CHECKCAST, typeName);
-                        
+
                     if (!type.isArray()) {
                         params.append('L');
                     }
                     params.append(typeName);
-                        
+
                     if (!type.isArray()) {
                         params.append(';');
                     }
@@ -216,10 +222,10 @@ public class InvokerImpl extends Invoker {
             }
         }
         params.append(')');
-            
+
         // Call actual function!
         if (!java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
-            cfw.add(ByteCode.INVOKEVIRTUAL, declaringClassName, 
+            cfw.add(ByteCode.INVOKEVIRTUAL, declaringClassName,
                     method.getName(), params.toString(),
                     (invokeSpecialType!=null?invokeSpecialType.substring(1,2)
                                              :returnType.isArray()?
@@ -227,7 +233,7 @@ public class InvokerImpl extends Invoker {
                                               :"L".concat
                 (returnType.getName().replace('.', '/').concat(";"))));
         } else {
-            cfw.add(ByteCode.INVOKESTATIC, declaringClassName, 
+            cfw.add(ByteCode.INVOKESTATIC, declaringClassName,
                     method.getName(), params.toString(),
                     (invokeSpecialType!=null?invokeSpecialType.substring(1,2)
                                              :returnType.isArray()?
@@ -235,7 +241,7 @@ public class InvokerImpl extends Invoker {
                                               :"L".concat
                 (returnType.getName().replace('.', '/').concat(";"))));
         }
-            
+
         // Handle return value
         if (returnsVoid) {
             cfw.add(ByteCode.ACONST_NULL);
@@ -264,47 +270,34 @@ public class InvokerImpl extends Invoker {
             cfw.add(ByteCode.ARETURN);
         }
         cfw.stopMethod((short)3, null); // three arguments, including the this pointer???
-            
+
+        byte[] bytes = cfw.toByteArray();
+
         // Add class to our classloader.
-        java.io.ByteArrayOutputStream bos = 
-            new java.io.ByteArrayOutputStream(550);
-            
+        Class c = classLoader.defineClass(className, bytes);
+        classLoader.linkClass(c);
         try {
-            cfw.write(bos);
-        }
-        catch (IOException ioe) {
-            throw new RuntimeException("unexpected IOException" + ioe.toString());
-        }
-            
-        try {
-            byte[] bytes = bos.toByteArray();
-                
-            classLoader.defineClass(className, bytes);
-            Class c = classLoader.loadClass(className, true);
             result = (Invoker)c.newInstance();
-                
-            if (false) {
-                System.out.println("Generated method delegate for: " + method.getName() 
-                                   + " on " + method.getDeclaringClass().getName() + " :: " + params.toString() 
-                                   + " :: " + types);
-            }
-        } catch (ClassNotFoundException e) {
-            throw new RuntimeException("unexpected " + e.toString());
         } catch (InstantiationException e) {
             throw new RuntimeException("unexpected " + e.toString());
         } catch (IllegalAccessException e) {
             throw new RuntimeException("unexpected " + e.toString());
         }
-
+        if (false) {
+            System.out.println
+                ("Generated method delegate for: "+method.getName()
+                 +" on "+method.getDeclaringClass().getName()+" :: "
+                 +params.toString()+" :: "+types);
+        }
         invokersCache.put(method, result);
         return result;
     }
-        
+
     public Object invoke(Object that, Object [] args) {
         return null;
     }
 
     int classNumber;
-    Hashtable invokersCache = new Hashtable();
-    DefiningClassLoader classLoader = new DefiningClassLoader();
+    Hashtable invokersCache;
+    GeneratedClassLoader classLoader;
 }

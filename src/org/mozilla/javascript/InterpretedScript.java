@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -18,7 +18,7 @@
  * Copyright (C) 1997-1999 Netscape Communications Corporation. All
  * Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  * Roger Lawrence
  *
  * Alternatively, the contents of this file may be used under the
@@ -35,63 +35,39 @@
 
 package org.mozilla.javascript;
 
-import org.mozilla.javascript.debug.*;
-
 import java.util.*;
 
-public class InterpretedScript extends NativeScript implements DebuggableScript {
+final class InterpretedScript extends NativeScript
+{
 
-    InterpretedScript(Context cx,
-                      InterpreterData theData, 
-                      String[] argNames, short argCount)
+    InterpretedScript(Context cx, InterpreterData theData)
     {
         itsData = theData;
-        this.argNames = argNames;
-        this.argCount = argCount;
         functionName = "";
-        nestedFunctions = itsData.itsNestedFunctions;
-        version = (short)cx.getLanguageVersion();   
+        version = (short)cx.getLanguageVersion();
+        argNames = itsData.argNames;
+        argCount = (short)itsData.argCount;
     }
-    
+
     public Object exec(Context cx, Scriptable scope)
         throws JavaScriptException
     {
-        return call(cx, scope, scope, null);    
+        return call(cx, scope, scope, ScriptRuntime.emptyArgs);
     }
 
-    public Object call(Context cx, Scriptable scope, 
+    public Object call(Context cx, Scriptable scope,
                        Scriptable thisObj, Object[] args)
         throws JavaScriptException
     {
-        scope = ScriptRuntime.initScript(cx, scope, this, thisObj, 
-                                         itsData.itsFromEvalCode);
-        return Interpreter.interpret(cx, scope, thisObj, args, this, itsData);    
+        return Interpreter.interpret(cx, scope, thisObj,
+                                     args, null, 0, args.length,
+                                     this, itsData);
     }
-    
-    public boolean isFunction() {
-        return false;
+
+    protected Object getSourcesTree() {
+        return Interpreter.getSourcesTree(itsData);
     }
-    
-    public Scriptable getScriptable() {
-        return this;
-    }
-    
-    public String getSourceName() {
-        return itsData.itsSourceFile;
-    }
-    
-    public int[] getLineNumbers() {
-        return itsData.itsLineNumberTable.getKeys();
-    }
-    
-    public boolean placeBreakpoint(int line) { // XXX throw exn?
-        return itsData.placeBreakpoint(line);
-    }
-    
-    public boolean removeBreakpoint(int line) {
-        return itsData.removeBreakpoint(line);
-    }
-    
+
     InterpreterData itsData;
 }
 

@@ -1,14 +1,14 @@
-/* 
+/*
  * The contents of this file are subject to the Netscape Public
  * License Version 1.1 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
  * the License at http://www.mozilla.org/NPL/
- * 
+ *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
- * 
+ *
  * The Original Code is Rhino code, released
  * May 6, 1999.
  *
@@ -16,11 +16,11 @@
  * Communications Corporation.  Portions created by Netscape are
  * Copyright (C) 1997-1999 Netscape Communications Corporation. All
  * Rights Reserved.
- * 
+ *
  * Contributor(s):
  * Norris Boyd
  * Roger Lawrence
- * 
+ *
  * Alternatively, the contents of this file may be used under the
  * terms of the GNU Public License (the "GPL"), in which case the
  * provisions of the GPL are applicable instead of those above.
@@ -38,32 +38,30 @@ package org.mozilla.javascript.optimizer;
 
 import org.mozilla.javascript.*;
 
-import java.util.Vector;
-import java.util.Hashtable;
-import java.util.Enumeration;
-
 public class FatBlock {
 
-    public FatBlock(int startNodeIndex, int endNodeIndex, Node[] statementNodes)
+    public FatBlock(IRFactory irFactory, int startNodeIndex, int endNodeIndex,
+                    Node[] statementNodes)
     {
-        itsShadowOfFormerSelf = new Block(startNodeIndex, endNodeIndex, statementNodes);
+        itsShadowOfFormerSelf = new Block(irFactory, startNodeIndex,
+                                          endNodeIndex, statementNodes);
     }
-    
+
     public Node getEndNode()
         { return itsShadowOfFormerSelf.getEndNode(); }
-    
-    public Block getSlimmerSelf()   
+
+    public Block getSlimmerSelf()
         { return itsShadowOfFormerSelf; }
 
-    private Block[] reduceToArray(Hashtable h)
+    private Block[] reduceToArray(ObjToIntMap map)
     {
         Block[] result = null;
-        if (!h.isEmpty()) {
-            result = new Block[h.size()];
-            Enumeration enum = h.elements();
+        if (!map.isEmpty()) {
+            result = new Block[map.size()];
             int i = 0;
-            while (enum.hasMoreElements()) {
-                FatBlock fb = (FatBlock)(enum.nextElement());
+            ObjToIntMap.Iterator iter = map.newIterator();
+            for (iter.start(); !iter.done(); iter.next()) {
+                FatBlock fb = (FatBlock)(iter.getKey());
                 result[i++] = fb.itsShadowOfFormerSelf;
             }
         }
@@ -76,17 +74,17 @@ public class FatBlock {
         itsShadowOfFormerSelf.setPredecessorList(reduceToArray(itsPredecessors));
         return itsShadowOfFormerSelf;
     }
-    
-    public void addSuccessor(FatBlock b)  { itsSuccessors.put(b, b); }
-    public void addPredecessor(FatBlock b)  { itsPredecessors.put(b, b); }
-        
+
+    public void addSuccessor(FatBlock b)  { itsSuccessors.put(b, 0); }
+    public void addPredecessor(FatBlock b)  { itsPredecessors.put(b, 0); }
+
         // all the Blocks that come immediately after this
-    private Hashtable itsSuccessors = new Hashtable(4);   
+    private ObjToIntMap itsSuccessors = new ObjToIntMap();
         // all the Blocks that come immediately before this
-    private Hashtable itsPredecessors = new Hashtable(4);
-    
+    private ObjToIntMap itsPredecessors = new ObjToIntMap();
+
     private Block itsShadowOfFormerSelf;
-    
-    
+
+
 }
-    
+

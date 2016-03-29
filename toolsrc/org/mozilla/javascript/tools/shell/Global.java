@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -18,8 +18,9 @@
  * Copyright (C) 1997-1999 Netscape Communications Corporation. All
  * Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  * Patrick Beard
+ * Igor Bukanov
  * Norris Boyd
  * Rob Ginda
  * Kurt Westerfeld
@@ -53,14 +54,14 @@ import org.mozilla.javascript.serialize.*;
  */
 public class Global extends ImporterTopLevel {
 
-    public Global(Context cx) 
+    public Global(Context cx)
     {
         // Define some global functions particular to the shell. Note
         // that these functions are not part of ECMA.
         super(cx);
         String[] names = { "print", "quit", "version", "load", "help",
                            "loadClass", "defineClass", "spawn", "sync",
-                           "serialize", "deserialize" };
+                           "serialize", "deserialize", "runCommand" };
         try {
             defineFunctionProperties(names, Global.class,
                                            ScriptableObject.DONTENUM);
@@ -68,25 +69,25 @@ public class Global extends ImporterTopLevel {
             throw new Error();  // shouldn't occur.
         }
         defineProperty(privateName, this, ScriptableObject.DONTENUM);
-        
+
         // Set up "environment" in the global scope to provide access to the
         // System environment variables.
         Environment.defineClass(this);
         Environment environment = new Environment(this);
         defineProperty("environment", environment,
                        ScriptableObject.DONTENUM);
-        
+
         history = (NativeArray) cx.newArray(this, 0);
         defineProperty("history", history, ScriptableObject.DONTENUM);
     }
-    
+
     /**
      * Print a help message.
      *
      * This method is defined as a JavaScript function.
      */
     public static void help(Context cx, Scriptable thisObj,
-                            Object[] args, Function funObj) 
+                            Object[] args, Function funObj)
     {
         PrintStream out = getInstance(thisObj).getOut();
         out.println(ToolErrorReporter.getMessage("msg.help"));
@@ -117,7 +118,7 @@ public class Global extends ImporterTopLevel {
         out.println();
         return Context.getUndefinedValue();
     }
-    
+
     /**
      * Quit the shell.
      *
@@ -216,8 +217,7 @@ public class Global extends ImporterTopLevel {
     {
         Class clazz = getClass(args);
         if (!Script.class.isAssignableFrom(clazz)) {
-            throw Context.reportRuntimeError(ToolErrorReporter.getMessage(
-                "msg.must.implement.Script"));
+            throw reportRuntimeError("msg.must.implement.Script");
         }
         Script script = (Script) clazz.newInstance();
         script.exec(cx, thisObj);
@@ -228,17 +228,14 @@ public class Global extends ImporterTopLevel {
                InvocationTargetException
     {
         if (args.length == 0) {
-            throw Context.reportRuntimeError(ToolErrorReporter.getMessage(
-                "msg.expected.string.arg"));
+            throw reportRuntimeError("msg.expected.string.arg");
         }
         String className = Context.toString(args[0]);
         try {
             return Class.forName(className);
         }
         catch (ClassNotFoundException cnfe) {
-            throw Context.reportRuntimeError(ToolErrorReporter.getMessage(
-                "msg.class.not.found",
-                className));
+            throw reportRuntimeError("msg.class.not.found", className);
         }
     }
 
@@ -268,7 +265,7 @@ public class Global extends ImporterTopLevel {
             throw Context.reportRuntimeError(
                 "Expected a filename to read the serialization from");
         }
-        String filename = cx.toString(args[0]); 
+        String filename = cx.toString(args[0]);
         FileInputStream fis = new FileInputStream(filename);
         Scriptable scope = ScriptableObject.getTopLevelScope(thisObj);
         ObjectInputStream in = new ScriptableInputStream(fis, scope);
@@ -278,9 +275,9 @@ public class Global extends ImporterTopLevel {
     }
 
     /**
-     * The spawn function runs a given function or script in a different 
+     * The spawn function runs a given function or script in a different
      * thread.
-     * 
+     *
      * js> function g() { a = 7; }
      * js> a = 3;
      * 3
@@ -299,18 +296,18 @@ public class Global extends ImporterTopLevel {
             if (args.length > 1 && args[1] instanceof Scriptable) {
                 newArgs = cx.getElements((Scriptable) args[1]);
             }
+            if (newArgs == null) { newArgs = ScriptRuntime.emptyArgs; }
             runner = new Runner(scope, (Function) args[0], newArgs);
         } else if (args.length != 0 && args[0] instanceof Script) {
             runner = new Runner(scope, (Script) args[0]);
         } else {
-            throw Context.reportRuntimeError(ToolErrorReporter.getMessage(
-                "msg.spawn.args"));
+            throw reportRuntimeError("msg.spawn.args");
         }
         Thread thread = new Thread(runner);
         thread.start();
         return thread;
     }
-    
+
     /**
      * The sync function creates a synchronized function (in the sense
      * of a Java synchronized method) from an existing function. The
@@ -332,21 +329,164 @@ public class Global extends ImporterTopLevel {
      * exit
      */
     public static Object sync(Context cx, Scriptable thisObj, Object[] args,
-                               Function funObj)
+                              Function funObj)
     {
         if (args.length == 1 && args[0] instanceof Function) {
             return new Synchronizer((Function)args[0]);
         }
         else {
-            throw Context.reportRuntimeError(ToolErrorReporter.getMessage(
-                "msg.spawn.args"));
+            throw reportRuntimeError("msg.sync.args");
         }
     }
-    
+
+    /**
+     * Execute the specified command with the given argument and options
+     * as a separate process and return the exit status of the process.
+     * <p>
+     * Usage:
+     * <pre>
+     * runCommand(command)
+     * runCommand(command, arg1, ..., argN)
+     * runCommand(command, arg1, ..., argN, options)
+     * </pre>
+     * All except the last arguments to runCommand are converted to strings
+     * and denote command name and its arguments. If the last argument is a
+     * JavaScript object, it is an option object. Otherwise it is converted to
+     * string denoting the last argument and options objects assumed to be
+     * empty.
+     * Te following properties of the option object are processed:
+     * <ul>
+     * <li><tt>args</tt> - provides an array of additional command arguments
+     * <li><tt>env</tt> - explicit environment object. All its enumeratable
+     *   properties define the corresponding environment variable names.
+     * <li><tt>input</tt> - the process input. If it is not
+     *   java.io.InputStream, it is converted to string and sent to the process
+     *   as its input. If not specified, no input is provided to the process.
+     * <li><tt>output</tt> - the process output instead of java.lang.System.out.
+     *   If it is not instance of java.io.OutputStream, the process output is
+     *   read, converted to a string, appended to the output property value
+     *   converted to string and put as the new value of the output property.
+     * <li><tt>err</tt> - the process error output instead of
+     *   java.lang.System.err. If it is not instance of java.io.OutputStream,
+     *   the process error output is read, converted to a string, appended to
+     *   the err property value converted to string and put as the new
+     *   value of the err property.
+     * </ul>
+     */
+    public static Object runCommand(Context cx, Scriptable thisObj,
+                                    Object[] args, Function funObj)
+        throws IOException
+    {
+        int L = args.length;
+        if (L == 0 || (L == 1 && args[0] instanceof Scriptable)) {
+            throw reportRuntimeError("msg.runCommand.bad.args");
+        }
+
+        InputStream in = null;
+        OutputStream out = null, err = null;
+        ByteArrayOutputStream outBytes = null, errBytes = null;
+        Object outObj = null, errObj = null;
+        String[] environment = null;
+        Scriptable params = null;
+        Object[] addArgs = null;
+        if (args[L - 1] instanceof Scriptable) {
+            params = (Scriptable)args[L - 1];
+            --L;
+            Object envObj = ScriptableObject.getProperty(params, "env");
+            if (envObj != Scriptable.NOT_FOUND) {
+                if (envObj == null) {
+                    environment = new String[0];
+                } else {
+                    if (!(envObj instanceof Scriptable)) {
+                        throw reportRuntimeError("msg.runCommand.bad.env");
+                    }
+                    Scriptable envHash = (Scriptable)envObj;
+                    Object[] ids = ScriptableObject.getPropertyIds(envHash);
+                    environment = new String[ids.length];
+                    for (int i = 0; i != ids.length; ++i) {
+                        Object keyObj = ids[i], val;
+                        String key;
+                        if (keyObj instanceof String) {
+                            key = (String)keyObj;
+                            val = ScriptableObject.getProperty(envHash, key);
+                        } else {
+                            int ikey = ((Number)keyObj).intValue();
+                            key = Integer.toString(ikey);
+                            val = ScriptableObject.getProperty(envHash, ikey);
+                        }
+                        if (val == ScriptableObject.NOT_FOUND) {
+                            val = Undefined.instance;
+                        }
+                        environment[i] = key+'='+ScriptRuntime.toString(val);
+                    }
+                }
+            }
+            Object inObj = ScriptableObject.getProperty(params, "input");
+            if (inObj != Scriptable.NOT_FOUND) {
+                in = toInputStream(inObj);
+            }
+            outObj = ScriptableObject.getProperty(params, "output");
+            if (outObj != Scriptable.NOT_FOUND) {
+                out = toOutputStream(outObj);
+                if (out == null) {
+                    outBytes = new ByteArrayOutputStream();
+                    out = outBytes;
+                }
+            }
+            errObj = ScriptableObject.getProperty(params, "err");
+            if (errObj != Scriptable.NOT_FOUND) {
+                err = toOutputStream(errObj);
+                if (err == null) {
+                    errBytes = new ByteArrayOutputStream();
+                    err = errBytes;
+                }
+            }
+            Object addArgsObj = ScriptableObject.getProperty(params, "args");
+            if (addArgsObj != Scriptable.NOT_FOUND) {
+                Scriptable s = cx.toObject(addArgsObj,
+                                           getTopLevelScope(thisObj));
+                addArgs = cx.getElements(s);
+            }
+        }
+        Global global = getInstance(thisObj);
+        if (out == null) {
+            out = (global != null) ? global.getOut() : System.out;
+        }
+        if (err == null) {
+            err = (global != null) ? global.getErr() : System.err;
+        }
+        // If no explicit input stream, do not send any input to process,
+        // in particular, do not use System.in to avoid deadlocks
+        // when waiting for user input to send to process which is already
+        // terminated as it is not always possible to interrupt read method.
+
+        String[] cmd = new String[(addArgs == null) ? L : L + addArgs.length];
+        for (int i = 0; i != L; ++i) {
+            cmd[i] = ScriptRuntime.toString(args[i]);
+        }
+        if (addArgs != null) {
+            for (int i = 0; i != addArgs.length; ++i) {
+                cmd[L + i] = ScriptRuntime.toString(addArgs[i]);
+            }
+        }
+
+        int exitCode = runProcess(cmd, environment, in, out, err);
+        if (outBytes != null) {
+            String s = ScriptRuntime.toString(outObj) + outBytes.toString();
+            ScriptableObject.putProperty(params, "output", s);
+        }
+        if (errBytes != null) {
+            String s = ScriptRuntime.toString(errObj) + errBytes.toString();
+            ScriptableObject.putProperty(params, "err", s);
+        }
+
+        return new Integer(exitCode);
+    }
+
     public InputStream getIn() {
         return inStream == null ? System.in : inStream;
     }
-    
+
     public void setIn(InputStream in) {
         inStream = in;
     }
@@ -354,26 +494,242 @@ public class Global extends ImporterTopLevel {
     public PrintStream getOut() {
         return outStream == null ? System.out : outStream;
     }
-    
+
     public void setOut(PrintStream out) {
         outStream = out;
     }
 
-    public PrintStream getErr() { 
+    public PrintStream getErr() {
         return errStream == null ? System.err : errStream;
     }
 
     public void setErr(PrintStream err) {
         errStream = err;
     }
-        
+
     static final String privateName = "org.mozilla.javascript.tools.shell.Global private";
-    
+
     public static Global getInstance(Scriptable scope) {
         Object v = ScriptableObject.getProperty(scope,privateName);
         if (v instanceof Global)
             return (Global) v;
         return null;
+    }
+
+    /**
+     * If any of in, out, err is null, the corresponding process stream will
+     * be closed immediately, otherwise it will be closed as soon as
+     * all data will be read from/written to process
+     */
+    private static int runProcess(String[] cmd, String[] environment,
+                                  InputStream in, OutputStream out,
+                                  OutputStream err)
+        throws IOException
+    {
+        Process p;
+        if (environment == null) {
+            p = Runtime.getRuntime().exec(cmd);
+        } else {
+            p = Runtime.getRuntime().exec(cmd, environment);
+        }
+        PipeThread inThread = null, errThread = null;
+        try {
+            InputStream errProcess = null;
+            try {
+                if (err != null) {
+                    errProcess = p.getErrorStream();
+                } else {
+                    p.getErrorStream().close();
+                }
+                InputStream outProcess = null;
+                try {
+                    if (out != null) {
+                        outProcess = p.getInputStream();
+                    } else {
+                        p.getInputStream().close();
+                    }
+                    OutputStream inProcess = null;
+                    try {
+                        if (in != null) {
+                            inProcess = p.getOutputStream();
+                        } else {
+                            p.getOutputStream().close();
+                        }
+
+                        if (out != null) {
+                            // Read process output on this thread
+                            if (err != null) {
+                                errThread = new PipeThread(true, errProcess,
+                                                           err);
+                                errThread.start();
+                            }
+                            if (in != null) {
+                                inThread = new PipeThread(false, in,
+                                                          inProcess);
+                                inThread.start();
+                            }
+                            pipe(true, outProcess, out);
+                        } else if (in != null) {
+                            // No output, read process input on this thread
+                            if (err != null) {
+                                errThread = new PipeThread(true, errProcess,
+                                                           err);
+                                errThread.start();
+                            }
+                            pipe(false, in, inProcess);
+                            in.close();
+                        } else if (err != null) {
+                            // No output or input, read process err
+                            // on this thread
+                            pipe(true, errProcess, err);
+                            errProcess.close();
+                            errProcess = null;
+                        }
+
+                        // wait for process completion
+                        for (;;) {
+                            try { p.waitFor(); break; }
+                            catch (InterruptedException ex) { }
+                        }
+
+                        return p.exitValue();
+                    } finally {
+                        // pipe will close stream as well, but for reliability
+                        // duplicate it in any case
+                        if (inProcess != null) {
+                            inProcess.close();
+                        }
+                    }
+                } finally {
+                    if (outProcess != null) {
+                        outProcess.close();
+                    }
+                }
+            } finally {
+                if (errProcess != null) {
+                    errProcess.close();
+                }
+            }
+        } finally {
+            p.destroy();
+            if (inThread != null) {
+                for (;;) {
+                    try { inThread.join(); break; }
+                    catch (InterruptedException ex) { }
+                }
+            }
+            if (errThread != null) {
+                for (;;) {
+                    try { errThread.join(); break; }
+                    catch (InterruptedException ex) { }
+                }
+            }
+        }
+    }
+
+    static void pipe(boolean fromProcess, InputStream from, OutputStream to)
+        throws IOException
+    {
+        try {
+            final int SIZE = 4096;
+            byte[] buffer = new byte[SIZE];
+            for (;;) {
+                int n;
+                if (!fromProcess) {
+                    n = from.read(buffer, 0, SIZE);
+                } else {
+                    try {
+                        n = from.read(buffer, 0, SIZE);
+                    } catch (IOException ex) {
+                        // Ignore exception as it can be cause by closed pipe
+                        break;
+                    }
+                }
+                if (n < 0) { break; }
+                if (fromProcess) {
+                    to.write(buffer, 0, n);
+                    to.flush();
+                } else {
+                    try {
+                        to.write(buffer, 0, n);
+                        to.flush();
+                    } catch (IOException ex) {
+                        // Ignore exception as it can be cause by closed pipe
+                        break;
+                    }
+                }
+            }
+        } finally {
+            if (fromProcess) {
+                from.close();
+            } else {
+                to.close();
+            }
+        }
+    }
+
+    private static InputStream toInputStream(Object value)
+        throws IOException
+    {
+        InputStream is = null;
+        String s = null;
+        if (value instanceof Wrapper) {
+            Object unwrapped = ((Wrapper)value).unwrap();
+            if (unwrapped instanceof InputStream) {
+                is = (InputStream)unwrapped;
+            } else if (unwrapped instanceof byte[]) {
+                is = new ByteArrayInputStream((byte[])unwrapped);
+            } else if (unwrapped instanceof Reader) {
+                s = readerToString((Reader)unwrapped);
+            } else if (unwrapped instanceof char[]) {
+                s = new String((char[])unwrapped);
+            }
+        }
+        if (is == null) {
+            if (s == null) { s = ScriptRuntime.toString(value); }
+            is = new ByteArrayInputStream(s.getBytes());
+        }
+        return is;
+    }
+
+    private static OutputStream toOutputStream(Object value) {
+        OutputStream os = null;
+        if (value instanceof Wrapper) {
+            Object unwrapped = ((Wrapper)value).unwrap();
+            if (unwrapped instanceof OutputStream) {
+                os = (OutputStream)unwrapped;
+            }
+        }
+        return os;
+    }
+
+    private static String readerToString(Reader reader)
+        throws IOException
+    {
+        char[] buffer = new char[4096];
+        int offset = 0;
+        for (;;) {
+            int n = reader.read(buffer, offset, buffer.length - offset);
+            if (n < 0) { break;    }
+            offset += n;
+            if (offset == buffer.length) {
+                char[] tmp = new char[buffer.length * 2];
+                System.arraycopy(buffer, 0, tmp, 0, offset);
+                buffer = tmp;
+            }
+        }
+        return new String(buffer, 0, offset);
+    }
+
+    static RuntimeException reportRuntimeError(String msgId) {
+        String message = ToolErrorReporter.getMessage(msgId);
+        return Context.reportRuntimeError(message);
+    }
+
+    static RuntimeException reportRuntimeError(String msgId, String msgArg)
+    {
+        String message = ToolErrorReporter.getMessage(msgId, msgArg);
+        return Context.reportRuntimeError(message);
     }
 
     NativeArray history;
@@ -397,8 +753,7 @@ class Runner implements Runnable {
     }
 
     public void run() {
-        Context cx = Context.enter();
-
+        Context cx = Main.enterContext();
         try {
             if (f != null)
                 f.call(cx, scope, scope, args);
@@ -408,9 +763,9 @@ class Runner implements Runnable {
             Context.reportError(ToolErrorReporter.getMessage(
                 "msg.uncaughtJSException",
                 e.getMessage()));
-        } 
-        
-        cx.exit();
+        } finally {
+            Context.exit();
+        }
     }
 
     private Scriptable scope;
@@ -418,3 +773,27 @@ class Runner implements Runnable {
     private Script s;
     private Object[] args;
 }
+
+class PipeThread extends Thread {
+
+    PipeThread(boolean fromProcess, InputStream from, OutputStream to) {
+        setDaemon(true);
+        this.fromProcess = fromProcess;
+        this.from = from;
+        this.to = to;
+    }
+
+    public void run() {
+        try {
+            Global.pipe(fromProcess, from, to);
+        } catch (IOException ex) {
+            throw Global.reportRuntimeError(
+                "msg.uncaughtIOException", ex.getMessage());
+        }
+    }
+
+    private boolean fromProcess;
+    private InputStream from;
+    private OutputStream to;
+}
+

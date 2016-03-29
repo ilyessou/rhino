@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -18,7 +18,7 @@
  * Copyright (C) 1997-1999 Netscape Communications Corporation. All
  * Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  * Norris Boyd
  *
  * Alternatively, the contents of this file may be used under the
@@ -97,7 +97,7 @@ public interface ErrorReporter {
      * @param lineOffset the offset into lineSource where problem was detected
      * @return an EvaluatorException that will be thrown.
      */
-    EvaluatorException runtimeError(String message, String sourceName, 
-                                    int line, String lineSource, 
+    EvaluatorException runtimeError(String message, String sourceName,
+                                    int line, String lineSource,
                                     int lineOffset);
 }

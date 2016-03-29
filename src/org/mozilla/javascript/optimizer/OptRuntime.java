@@ -1,14 +1,14 @@
-/* 
+/*
  * The contents of this file are subject to the Netscape Public
  * License Version 1.1 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
  * the License at http://www.mozilla.org/NPL/
- * 
+ *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
- * 
+ *
  * The Original Code is Rhino code, released
  * May 6, 1999.
  *
@@ -16,12 +16,12 @@
  * Communications Corporation.  Portions created by Netscape are
  * Copyright (C) 1997-2000 Netscape Communications Corporation. All
  * Rights Reserved.
- * 
+ *
  * Contributor(s):
  * Norris Boyd
  * Roger Lawrence
  * Hannes Wallnoefer
- * 
+ *
  * Alternatively, the contents of this file may be used under the
  * terms of the GNU Public License (the "GPL"), in which case the
  * provisions of the GPL are applicable instead of those above.
@@ -40,36 +40,35 @@ package org.mozilla.javascript.optimizer;
 import org.mozilla.javascript.*;
 
 public final class OptRuntime extends ScriptRuntime {
-    
+
     /**
      * No instances should be created.
      */
-    private OptRuntime() { 
+    private OptRuntime() {
     }
-    
-    public static Object getElem(Object obj, double dblIndex, Scriptable scope) {
-        int index;
-        String s;
-        index = (int) dblIndex;
-        s = ((double) index) == dblIndex ? null : toString(new Double(dblIndex));
+
+    public static Object getElem(Object obj, double dblIndex, Scriptable scope)
+    {
+        int index = (int) dblIndex;
         Scriptable start = obj instanceof Scriptable
                            ? (Scriptable) obj
                            : toObject(scope, obj);
         Scriptable m = start;
-        if (s != null) {
+        if (((double) index) != dblIndex) {
+            String s = toString(dblIndex);
             while (m != null) {
                 Object result = m.get(s, start);
                 if (result != Scriptable.NOT_FOUND)
                     return result;
                 m = m.getPrototype();
             }
-            return Undefined.instance;
-        }
-        while (m != null) {
-            Object result = m.get(index, start);
-            if (result != Scriptable.NOT_FOUND)
-                return result;
-            m = m.getPrototype();
+        } else {
+            while (m != null) {
+                Object result = m.get(index, start);
+                if (result != Scriptable.NOT_FOUND)
+                    return result;
+                m = m.getPrototype();
+            }
         }
         return Undefined.instance;
     }
@@ -77,17 +76,13 @@ public final class OptRuntime extends ScriptRuntime {
     public static Object setElem(Object obj, double dblIndex, Object value,
                                  Scriptable scope)
     {
-        int index;
-        String s;
-        index = (int) dblIndex;
-        s = ((double) index) == dblIndex ?
-                    null : toString(new Double(dblIndex));
-
+        int index = (int) dblIndex;
         Scriptable start = obj instanceof Scriptable
                      ? (Scriptable) obj
                      : toObject(scope, obj);
         Scriptable m = start;
-        if (s != null) {
+        if (((double) index) != dblIndex) {
+            String s = toString(dblIndex);
             do {
                 if (m.has(s, start)) {
                     m.put(s, start, value);
@@ -96,17 +91,16 @@ public final class OptRuntime extends ScriptRuntime {
                 m = m.getPrototype();
             } while (m != null);
             start.put(s, start, value);
-            return value;
-       }
-
-        do {
-            if (m.has(index, start)) {
-                m.put(index, start, value);
-                return value;
-            }
-            m = m.getPrototype();
-        } while (m != null);
-        start.put(index, start, value);
+       } else {
+            do {
+                if (m.has(index, start)) {
+                    m.put(index, start, value);
+                    return value;
+                }
+                m = m.getPrototype();
+            } while (m != null);
+            start.put(index, start, value);
+        }
         return value;
     }
 
@@ -115,7 +109,7 @@ public final class OptRuntime extends ScriptRuntime {
             val1 = ((Scriptable) val1).getDefaultValue(null);
         if (!(val1 instanceof String))
             return new Double(toNumber(val1) + val2);
-        return toString(val1) + numberToString(val2, 10);
+        return toString(val1) + toString(val2);
     }
 
     public static Object add(double val1, Object val2) {
@@ -123,7 +117,7 @@ public final class OptRuntime extends ScriptRuntime {
             val2 = ((Scriptable) val2).getDefaultValue(null);
         if (!(val2 instanceof String))
             return new Double(toNumber(val2) + val1);
-        return numberToString(val1, 10) + toString(val2);
+        return toString(val1) + toString(val2);
     }
 
     public static boolean neq(Object x, Object y) {
@@ -152,7 +146,7 @@ public final class OptRuntime extends ScriptRuntime {
                 return 0;
             return d1 < d2 ? 1 : 0;
         }
-        return toString(new Double(d1)).compareTo(toString(val2)) < 0 ? 1 : 0;
+        return toString(d1).compareTo(toString(val2)) < 0 ? 1 : 0;
     }
 
     public static Boolean cmp_LTB(Object val1, double d2) {
@@ -173,7 +167,7 @@ public final class OptRuntime extends ScriptRuntime {
                 return 0;
             return d1 < d2 ? 1 : 0;
         }
-        return toString(val1).compareTo(toString(new Double(d2))) < 0 ? 1 : 0;
+        return toString(val1).compareTo(toString(d2)) < 0 ? 1 : 0;
     }
 
     public static Boolean cmp_LEB(double d1, Object val2) {
@@ -194,7 +188,7 @@ public final class OptRuntime extends ScriptRuntime {
                 return 0;
             return d1 <= d2 ? 1 : 0;
         }
-        return toString(new Double(d1)).compareTo(toString(val2)) <= 0 ? 1 : 0;
+        return toString(d1).compareTo(toString(val2)) <= 0 ? 1 : 0;
     }
 
     public static Boolean cmp_LEB(Object val1, double d2) {
@@ -215,7 +209,7 @@ public final class OptRuntime extends ScriptRuntime {
                 return 0;
             return d1 <= d2 ? 1 : 0;
         }
-        return toString(val1).compareTo(toString(new Double(d2))) <= 0 ? 1 : 0;
+        return toString(val1).compareTo(toString(d2)) <= 0 ? 1 : 0;
     }
 
     public static int cmp(Object val1, Object val2) {
@@ -248,7 +242,7 @@ public final class OptRuntime extends ScriptRuntime {
             do {
                 prop = m.get(id, obj);
                 if (prop != Scriptable.NOT_FOUND) {
-                    thisArg = obj;                    
+                    thisArg = obj;
                     break search;
                 }
                 m = m.getPrototype();
@@ -262,12 +256,12 @@ public final class OptRuntime extends ScriptRuntime {
                         ScriptRuntime.getMessage("msg.is.not.defined", errorArgs),
                         scope);
         }
-        
+
         while (thisArg instanceof NativeWith)
             thisArg = thisArg.getPrototype();
         if (thisArg instanceof NativeCall)
             thisArg = ScriptableObject.getTopLevelScope(thisArg);
-        
+
         Function function;
         try {
             function = (Function) prop;
@@ -280,7 +274,7 @@ public final class OptRuntime extends ScriptRuntime {
 
         return function.call(cx, scope, thisArg, args);
     }
-    
+
     public static Object thisGet(Scriptable thisObj, String id,
                                  Scriptable scope)
     {
@@ -303,12 +297,16 @@ public final class OptRuntime extends ScriptRuntime {
         }
         return Undefined.instance;
     }
-    
+
     public static Object[] padStart(Object[] currentArgs, int count) {
         Object[] result = new Object[currentArgs.length + count];
         System.arraycopy(currentArgs, 0, result, count, currentArgs.length);
         return result;
     }
-    
 
+    public static void initFunction(NativeFunction fn, int functionType,
+                                    Scriptable scope, Context cx)
+    {
+        ScriptRuntime.initFunction(cx, scope, fn, functionType, false);
+    }
 }

@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -34,7 +34,7 @@
  */
 package org.mozilla.javascript.tools.idswitch;
 
-public class IdValuePair 
+public class IdValuePair
 {
     public final int idLength;
     public final String id;
@@ -52,4 +52,4 @@ public class IdValuePair
 
     public void setLineNumber(int value) { lineNumber = value; }
 }
-    
+

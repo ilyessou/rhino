@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -47,7 +47,7 @@ public abstract class Invoker {
     public abstract Object invoke(Object that, Object [] args);
 
     /** Factory method to get invoker for given method */
-    public Invoker createInvoker(Method method, Class[] types) {
+    public Invoker createInvoker(Context cx, Method method, Class[] types) {
         return null;
     }
 

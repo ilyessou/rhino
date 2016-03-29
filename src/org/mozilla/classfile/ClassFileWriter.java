@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -18,7 +18,7 @@
  * Copyright (C) 1997-1999 Netscape Communications Corporation. All
  * Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  * Roger Lawrence
  *
  * Alternatively, the contents of this file may be used under the
@@ -42,27 +42,27 @@ import java.util.*;
 
 /**
  * ClassFileWriter
- * 
- * A ClassFileWriter is used to write a Java class file. Methods are 
- * provided to create fields and methods, and within methods to write 
+ *
+ * A ClassFileWriter is used to write a Java class file. Methods are
+ * provided to create fields and methods, and within methods to write
  * Java bytecodes.
- * 
+ *
  * @author Roger Lawrence
  */
-public class ClassFileWriter extends LabelTable {
+public class ClassFileWriter {
 
     /**
      * Construct a ClassFileWriter for a class.
-     * 
+     *
      * @param className the name of the class to write, including
-     *        full package qualification. 
-     * @param superClassName the name of the superclass of the class 
-     *        to write, including full package qualification. 
-     * @param sourceFileName the name of the source file to use for 
+     *        full package qualification.
+     * @param superClassName the name of the superclass of the class
+     *        to write, including full package qualification.
+     * @param sourceFileName the name of the source file to use for
      *        producing debug information, or null if debug information
      *        is not desired
      */
-    public ClassFileWriter(String className, String superClassName, 
+    public ClassFileWriter(String className, String superClassName,
                            String sourceFileName)
     {
         itsConstantPool = new ConstantPool();
@@ -72,16 +72,16 @@ public class ClassFileWriter extends LabelTable {
             itsSourceFileNameIndex = itsConstantPool.addUtf8(sourceFileName);
         itsFlags = ACC_PUBLIC;
     }
-    
+
     /**
      * Add an interface implemented by this class.
-     * 
-     * This method may be called multiple times for classes that 
+     *
+     * This method may be called multiple times for classes that
      * implement multiple interfaces.
-     * 
-     * @param interfaceName a name of an interface implemented 
-     *        by the class being written, including full package 
-     *        qualification. 
+     *
+     * @param interfaceName a name of an interface implemented
+     *        by the class being written, including full package
+     *        qualification.
      */
     public void addInterface(String interfaceName) {
         short interfaceIndex = itsConstantPool.addClass(interfaceName);
@@ -102,8 +102,8 @@ public class ClassFileWriter extends LabelTable {
 
     /**
      * Set the class's flags.
-     * 
-     * Flags must be a set of the following flags, bitwise or'd 
+     *
+     * Flags must be a set of the following flags, bitwise or'd
      * together:
      *      ACC_PUBLIC
      *      ACC_PRIVATE
@@ -118,15 +118,15 @@ public class ClassFileWriter extends LabelTable {
     }
 
     public static String fullyQualifiedForm(String name) {
-    	return name.replace('.', '/');
-    }  
+        return name.replace('.', '/');
+    }
 
     /**
      * Add a field to the class.
-     * 
+     *
      * @param fieldName the name of the field
      * @param type the type of the field using ...
-     * @param flags the attributes of the field, such as ACC_PUBLIC, etc. 
+     * @param flags the attributes of the field, such as ACC_PUBLIC, etc.
      *        bitwise or'd together
      */
     public void addField(String fieldName, String type, short flags) {
@@ -135,17 +135,17 @@ public class ClassFileWriter extends LabelTable {
         itsFields.addElement(
                 new ClassFileField(fieldNameIndex, typeIndex, flags));
     }
-    
+
     /**
      * Add a field to the class.
-     * 
+     *
      * @param fieldName the name of the field
      * @param type the type of the field using ...
-     * @param flags the attributes of the field, such as ACC_PUBLIC, etc. 
+     * @param flags the attributes of the field, such as ACC_PUBLIC, etc.
      *        bitwise or'd together
      * @param value an initial integral value
      */
-    public void addField(String fieldName, String type, short flags, 
+    public void addField(String fieldName, String type, short flags,
                          int value)
     {
         short fieldNameIndex = itsConstantPool.addUtf8(fieldName);
@@ -158,17 +158,17 @@ public class ClassFileWriter extends LabelTable {
         itsFields.addElement(
                 new ClassFileField(fieldNameIndex, typeIndex, flags, cvAttr));
     }
-    
+
     /**
      * Add a field to the class.
-     * 
+     *
      * @param fieldName the name of the field
      * @param type the type of the field using ...
-     * @param flags the attributes of the field, such as ACC_PUBLIC, etc. 
+     * @param flags the attributes of the field, such as ACC_PUBLIC, etc.
      *        bitwise or'd together
      * @param value an initial long value
      */
-    public void addField(String fieldName, String type, short flags, 
+    public void addField(String fieldName, String type, short flags,
                          long value)
     {
         short fieldNameIndex = itsConstantPool.addUtf8(fieldName);
@@ -181,17 +181,17 @@ public class ClassFileWriter extends LabelTable {
         itsFields.addElement(
                 new ClassFileField(fieldNameIndex, typeIndex, flags, cvAttr));
     }
-    
+
     /**
      * Add a field to the class.
-     * 
+     *
      * @param fieldName the name of the field
      * @param type the type of the field using ...
-     * @param flags the attributes of the field, such as ACC_PUBLIC, etc. 
+     * @param flags the attributes of the field, such as ACC_PUBLIC, etc.
      *        bitwise or'd together
      * @param value an initial double value
      */
-    public void addField(String fieldName, String type, short flags, 
+    public void addField(String fieldName, String type, short flags,
                          double value)
     {
         short fieldNameIndex = itsConstantPool.addUtf8(fieldName);
@@ -203,46 +203,45 @@ public class ClassFileWriter extends LabelTable {
         cvAttr[3] = itsConstantPool.addConstant(value);
         itsFields.addElement(
                 new ClassFileField(fieldNameIndex, typeIndex, flags, cvAttr));
-    }      
+    }
 
     /**
      * Add a method and begin adding code.
-     * 
+     *
      * This method must be called before other methods for adding code,
      * exception tables, etc. can be invoked.
-     * 
+     *
      * @param methodName the name of the method
      * @param type a string representing the type
-     * @param flags the attributes of the field, such as ACC_PUBLIC, etc. 
+     * @param flags the attributes of the field, such as ACC_PUBLIC, etc.
      *        bitwise or'd together
      */
     public void startMethod(String methodName, String type, short flags) {
         short methodNameIndex = itsConstantPool.addUtf8(methodName);
         short typeIndex = itsConstantPool.addUtf8(type);
-        itsCurrentMethod = new ClassFileMethod(methodNameIndex, typeIndex, 
+        itsCurrentMethod = new ClassFileMethod(methodNameIndex, typeIndex,
                                                flags);
         itsMethods.addElement(itsCurrentMethod);
     }
-    
+
     /**
      * Complete generation of the method.
-     * 
-     * After this method is called, no more code can be added to the 
+     *
+     * After this method is called, no more code can be added to the
      * method begun with <code>startMethod</code>.
-     * 
+     *
      * @param maxLocals the maximum number of local variable slots
      *        (a.k.a. Java registers) used by the method
-     * @param vars the VariableTable of the variables for the method,
+     * @param vars the array of the variables for the method,
      *        or null if none
      */
-    public void stopMethod(short maxLocals, VariableTable vars) {
+    public void stopMethod(short maxLocals, JavaVariable[] vars) {
         if (DEBUG) {
             if (itsCurrentMethod == null)
                 throw new RuntimeException("No method to stop");
         }
 
-        for (int i = 0; i < itsLabelTableTop; i++)
-            itsLabelTable[i].fixGotos(itsCodeBuffer);
+        itsLabels.fixLabelGotos(itsCodeBuffer);
 
         itsMaxLocals = maxLocals;
 
@@ -253,13 +252,13 @@ public class ClassFileWriter extends LabelTable {
             // 4 bytes for each entry
             lineNumberTableLength = 6 + 2 + (itsLineNumberTableTop * 4);
         }
-        
+
         int variableTableLength = 0;
         if (vars != null) {
             // 6 bytes for the attribute header
             // 2 bytes for the variable count
             // 10 bytes for each entry
-            variableTableLength = 6 + 2 + (vars.size() * 10);
+            variableTableLength = 6 + 2 + (vars.length * 10);
         }
 
         int attrLength = 2 +                    // attribute_name_index
@@ -269,7 +268,7 @@ public class ClassFileWriter extends LabelTable {
                          4 +                    // code_length
                          itsCodeBufferTop +
                          2 +                    // exception_table_length
-                         (itsExceptionTableTop * 8) +                      
+                         (itsExceptionTableTop * 8) +
                          2 +                    // attributes_count
                          lineNumberTableLength +
                          variableTableLength;
@@ -292,34 +291,34 @@ public class ClassFileWriter extends LabelTable {
         codeAttribute[index++] = (byte)(itsCodeBufferTop >> 16);
         codeAttribute[index++] = (byte)(itsCodeBufferTop >> 8);
         codeAttribute[index++] = (byte)itsCodeBufferTop;
-        System.arraycopy(itsCodeBuffer, 0, codeAttribute, index, 
+        System.arraycopy(itsCodeBuffer, 0, codeAttribute, index,
                          itsCodeBufferTop);
         index += itsCodeBufferTop;
-        
+
 
         if (itsExceptionTableTop > 0) {
             codeAttribute[index++] = (byte)(itsExceptionTableTop >> 8);
-            codeAttribute[index++] = (byte)(itsExceptionTableTop);            
+            codeAttribute[index++] = (byte)(itsExceptionTableTop);
             for (int i = 0; i < itsExceptionTableTop; i++) {
-                short startPC = itsExceptionTable[i].getStartPC(itsLabelTable);
+                short startPC = itsExceptionTable[i].getStartPC(itsLabels);
                 codeAttribute[index++] = (byte)(startPC >> 8);
                 codeAttribute[index++] = (byte)(startPC);
-                short endPC = itsExceptionTable[i].getEndPC(itsLabelTable);
+                short endPC = itsExceptionTable[i].getEndPC(itsLabels);
                 codeAttribute[index++] = (byte)(endPC >> 8);
                 codeAttribute[index++] = (byte)(endPC);
-                short handlerPC = itsExceptionTable[i].getHandlerPC(itsLabelTable);
+                short handlerPC = itsExceptionTable[i].getHandlerPC(itsLabels);
                 codeAttribute[index++] = (byte)(handlerPC >> 8);
                 codeAttribute[index++] = (byte)(handlerPC);
                 short catchType = itsExceptionTable[i].getCatchType();
                 codeAttribute[index++] = (byte)(catchType >> 8);
                 codeAttribute[index++] = (byte)(catchType);
-            }            
+            }
         }
         else {
             codeAttribute[index++] = (byte)(0);     // exception table length
             codeAttribute[index++] = (byte)(0);
         }
-        
+
         int attributeCount = 0;
         if (itsLineNumberTable != null)
             attributeCount++;
@@ -327,7 +326,7 @@ public class ClassFileWriter extends LabelTable {
             attributeCount++;
         codeAttribute[index++] = (byte)(0);     // (hibyte) attribute count...
         codeAttribute[index++] = (byte)(attributeCount); // (lobyte) attribute count
-        
+
         if (itsLineNumberTable != null) {
             int lineNumberTableAttrIndex
                     = itsConstantPool.addUtf8("LineNumberTable");
@@ -347,13 +346,13 @@ public class ClassFileWriter extends LabelTable {
                 codeAttribute[index++] = (byte)itsLineNumberTable[i];
             }
         }
-        
+
         if (vars != null) {
             int variableTableAttrIndex
                     = itsConstantPool.addUtf8("LocalVariableTable");
             codeAttribute[index++] = (byte)(variableTableAttrIndex >> 8);
             codeAttribute[index++] = (byte)variableTableAttrIndex;
-            int varCount = vars.size();
+            int varCount = vars.length;
             int tableAttrLength = 2 + (varCount * 10);
             codeAttribute[index++] = (byte)(tableAttrLength >> 24);
             codeAttribute[index++] = (byte)(tableAttrLength >> 16);
@@ -362,65 +361,62 @@ public class ClassFileWriter extends LabelTable {
             codeAttribute[index++] = (byte)(varCount >> 8);
             codeAttribute[index++] = (byte)varCount;
             for (int i = 0; i < varCount; i++) {
-                LocalVariable lvar = vars.getVariable(i);
-                
+                JavaVariable lvar = vars[i];
+
                 // start pc
                 int startPc = lvar.getStartPC();
                 codeAttribute[index++] = (byte)(startPc >> 8);
                 codeAttribute[index++] = (byte)startPc;
-                
+
                 // length
                 int length = itsCodeBufferTop - startPc;
                 codeAttribute[index++] = (byte)(length >> 8);
                 codeAttribute[index++] = (byte)length;
-                
+
                 // name index
-                int nameIndex
-                        = itsConstantPool.addUtf8(lvar.getName());
+                int nameIndex = itsConstantPool.addUtf8(lvar.getName());
                 codeAttribute[index++] = (byte)(nameIndex >> 8);
                 codeAttribute[index++] = (byte)nameIndex;
-                
+
                 // descriptor index
-                int descriptorIndex = itsConstantPool.addUtf8(
-                                        lvar.isNumber() 
-                                        ? "D"
-                                        :  "Ljava/lang/Object;");
+                String descriptor = lvar.getTypeDescriptor();
+                int descriptorIndex = itsConstantPool.addUtf8(descriptor);
                 codeAttribute[index++] = (byte)(descriptorIndex >> 8);
                 codeAttribute[index++] = (byte)descriptorIndex;
-                
+
                 // index
                 int jreg = lvar.getJRegister();
                 codeAttribute[index++] = (byte)(jreg >> 8);
-                codeAttribute[index++] = (byte)jreg;                
-            }            
+                codeAttribute[index++] = (byte)jreg;
+            }
         }
 
         itsCurrentMethod.setCodeAttribute(codeAttribute);
 
         itsExceptionTable = null;
         itsExceptionTableTop = 0;
-        itsLabelTableTop = 0;
         itsLineNumberTable = null;
         itsCodeBufferTop = 0;
         itsCurrentMethod = null;
         itsMaxStack = 0;
         itsStackTop = 0;
+        itsLabels.clearLabels();
     }
 
     /**
      * Add the single-byte opcode to the current method.
-     * 
+     *
      * @param theOpCode the opcode of the bytecode
      */
     public void add(byte theOpCode) {
         if (DEBUGCODE)
             System.out.println("Add " + Integer.toHexString(theOpCode & 0xFF));
         if (DEBUG) {
-            if (ByteCode.opcodeCount[theOpCode & 0xFF] != 0)
-                throw new RuntimeException("Expected operands");
+            if (ByteCode.opcodeCount(theOpCode) != 0)
+                throw new RuntimeException("Unexpected operands");
         }
         addToCodeBuffer(theOpCode);
-        itsStackTop += ByteCode.stackChange[theOpCode & 0xFF];
+        itsStackTop += ByteCode.stackChange(theOpCode);
         if (DEBUGSTACK) {
             System.out.println("After " + Integer.toHexString(theOpCode & 0xFF) + " stack = " + itsStackTop);
         }
@@ -433,14 +429,14 @@ public class ClassFileWriter extends LabelTable {
 
     /**
      * Add a single-operand opcode to the current method.
-     * 
+     *
      * @param theOpCode the opcode of the bytecode
      * @param theOperand the operand of the bytecode
      */
     public void add(byte theOpCode, int theOperand) {
         if (DEBUGCODE)
             System.out.println("Add " + Integer.toHexString(theOpCode & 0xFF) + ", " + Integer.toHexString(theOperand) );
-        itsStackTop += ByteCode.stackChange[theOpCode & 0xFF];
+        itsStackTop += ByteCode.stackChange(theOpCode);
         if (DEBUGSTACK) {
             System.out.println("After " + Integer.toHexString(theOpCode & 0xFF) + " stack = " + itsStackTop);
         }
@@ -480,19 +476,15 @@ public class ClassFileWriter extends LabelTable {
                     addToCodeBuffer(theOpCode);
                     if ((theOperand & 0x80000000) != 0x80000000) {
                             // hard displacement
-                        int temp_Label = acquireLabel();
-                        int theLabel = temp_Label & 0x7FFFFFFF;
-                        itsLabelTable[theLabel].setPC(
-                                            (short)(branchPC + theOperand));
                         addToCodeBuffer((byte)(theOperand >> 8));
                         addToCodeBuffer((byte)theOperand);
                     }
                     else {  // a label
                         int theLabel = theOperand & 0x7FFFFFFF;
-                        int targetPC = itsLabelTable[theLabel].getPC();
+                        int targetPC = itsLabels.getLabelPC(theLabel);
                         if (DEBUGLABELS) {
-                            System.out.println("Fixing branch to " + 
-                                               theLabel + " at " + targetPC + 
+                            System.out.println("Fixing branch to " +
+                                               theLabel + " at " + targetPC +
                                                " from " + branchPC);
                         }
                         if (targetPC != -1) {
@@ -501,7 +493,7 @@ public class ClassFileWriter extends LabelTable {
                             addToCodeBuffer((byte)offset);
                         }
                         else {
-                            itsLabelTable[theLabel].addFixup(branchPC + 1);
+                            itsLabels.addLabelFixup(theLabel, branchPC + 1);
                             addToCodeBuffer((byte)0);
                             addToCodeBuffer((byte)0);
                         }
@@ -602,37 +594,37 @@ public class ClassFileWriter extends LabelTable {
                 throw new RuntimeException("Unexpected opcode for 1 operand");
         }
     }
-    
+
     /**
      * Generate the load constant bytecode for the given integer.
-     * 
+     *
      * @param k the constant
      */
     public void addLoadConstant(int k) {
         add(ByteCode.LDC, itsConstantPool.addConstant(k));
     }
-    
+
     /**
      * Generate the load constant bytecode for the given long.
-     * 
+     *
      * @param k the constant
      */
     public void addLoadConstant(long k) {
         add(ByteCode.LDC2_W, itsConstantPool.addConstant(k));
     }
-    
+
     /**
      * Generate the load constant bytecode for the given float.
-     * 
+     *
      * @param k the constant
      */
     public void addLoadConstant(float k) {
         add(ByteCode.LDC, itsConstantPool.addConstant(k));
     }
-    
+
     /**
      * Generate the load constant bytecode for the given double.
-     * 
+     *
      * @param k the constant
      */
     public void addLoadConstant(double k) {
@@ -641,7 +633,7 @@ public class ClassFileWriter extends LabelTable {
 
     /**
      * Generate the load constant bytecode for the given string.
-     * 
+     *
      * @param k the constant
      */
     public void addLoadConstant(String k) {
@@ -650,7 +642,7 @@ public class ClassFileWriter extends LabelTable {
 
     /**
      * Add the given two-operand bytecode to the current method.
-     * 
+     *
      * @param theOpCode the opcode of the bytecode
      * @param theOperand1 the first operand of the bytecode
      * @param theOperand2 the second operand of the bytecode
@@ -660,7 +652,7 @@ public class ClassFileWriter extends LabelTable {
             System.out.println("Add " + Integer.toHexString(theOpCode & 0xFF)
                                     + ", " + Integer.toHexString(theOperand1)
                                      + ", " + Integer.toHexString(theOperand2));
-        itsStackTop += ByteCode.stackChange[theOpCode & 0xFF];
+        itsStackTop += ByteCode.stackChange(theOpCode);
         if (DEBUGSTACK) {
             System.out.println("After " + Integer.toHexString(theOpCode & 0xFF) + " stack = " + itsStackTop);
         }
@@ -716,7 +708,7 @@ public class ClassFileWriter extends LabelTable {
         if (DEBUGCODE)
             System.out.println("Add " + Integer.toHexString(theOpCode & 0xFF)
                                     + ", " + className);
-        itsStackTop += ByteCode.stackChange[theOpCode & 0xFF];
+        itsStackTop += ByteCode.stackChange(theOpCode);
         if (DEBUGSTACK) {
             System.out.println("After " + Integer.toHexString(theOpCode & 0xFF) + " stack = " + itsStackTop);
         }
@@ -741,15 +733,15 @@ public class ClassFileWriter extends LabelTable {
         }
         if (itsStackTop > itsMaxStack) itsMaxStack = itsStackTop;
     }
-    
 
-    public void add(byte theOpCode, String className, String fieldName, 
+
+    public void add(byte theOpCode, String className, String fieldName,
                     String fieldType)
     {
         if (DEBUGCODE)
             System.out.println("Add " + Integer.toHexString(theOpCode & 0xFF)
                                     + ", " + className + ", " + fieldName + ", " + fieldType);
-        itsStackTop += ByteCode.stackChange[theOpCode & 0xFF];
+        itsStackTop += ByteCode.stackChange(theOpCode);
         if (DEBUG) {
             if (itsStackTop < 0)
                 throw new RuntimeException("After " + Integer.toHexString(theOpCode & 0xFF) + " Stack underflow");
@@ -780,7 +772,7 @@ public class ClassFileWriter extends LabelTable {
             System.out.println("After " + Integer.toHexString(theOpCode & 0xFF) + " stack = " + itsStackTop);
         }
     }
-    
+
     public void add(byte theOpCode, String className, String methodName,
                     String parametersType, String returnType)
     {
@@ -789,7 +781,7 @@ public class ClassFileWriter extends LabelTable {
                                     + ", " + className + ", " + methodName + ", " + parametersType + ", " + returnType);
         int parameterInfo = sizeOfParameters(parametersType);
         itsStackTop -= (parameterInfo & 0xFFFF);
-        itsStackTop += ByteCode.stackChange[theOpCode & 0xFF];     // adjusts for 'this'
+        itsStackTop += ByteCode.stackChange(theOpCode);     // adjusts for 'this'
         if (DEBUG) {
             if (itsStackTop < 0)
                 throw new RuntimeException("After " + Integer.toHexString(theOpCode & 0xFF) + " Stack underflow");
@@ -836,24 +828,34 @@ public class ClassFileWriter extends LabelTable {
             System.out.println("After " + Integer.toHexString(theOpCode & 0xFF) + " stack = " + itsStackTop);
         }
     }
-    
-    public int markLabel(int theLabel) {
-        return super.markLabel(theLabel, (short)itsCodeBufferTop);
+
+    public int acquireLabel() {
+        return itsLabels.acquireLabel() | 0x80000000;
     }
 
-    public int markLabel(int theLabel, short stackTop) {
+    public void markLabel(int label) {
+        if ((label & 0x80000000) != 0x80000000)
+            throw new RuntimeException("Bad label, no biscuit");
+
+        itsLabels.markLabel(label & 0x7FFFFFFF, itsCodeBufferTop);
+    }
+
+    public void markLabel(int label, short stackTop) {
+        if ((label & 0x80000000) != 0x80000000)
+            throw new RuntimeException("Bad label, no biscuit");
+
         itsStackTop = stackTop;
-        return super.markLabel(theLabel, (short)itsCodeBufferTop);
+        itsLabels.markLabel(label & 0x7FFFFFFF, itsCodeBufferTop);
     }
 
-    public int markHandler(int theLabel) {
+    public void markHandler(int theLabel) {
         itsStackTop = 1;
-        return markLabel(theLabel);
+        markLabel(theLabel);
     }
 
     /**
      * Get the current offset into the code of the current method.
-     * 
+     *
      * @return an integer representing the offset
      */
     public int getCurrentCodeOffset() {
@@ -897,7 +899,7 @@ public class ClassFileWriter extends LabelTable {
             itsCodeBuffer[itsCodeBufferTop++] = b;
         }
     }
-        
+
     public void addExceptionHandler(int startLabel, int endLabel,
                                     int handlerLabel, String catchClassName)
     {
@@ -907,9 +909,9 @@ public class ClassFileWriter extends LabelTable {
             throw new RuntimeException("Bad endLabel");
         if ((handlerLabel & 0x80000000) != 0x80000000)
             throw new RuntimeException("Bad handlerLabel");
-        
+
         /*
-         * If catchClassName is null, use 0 for the catch_type_index; which 
+         * If catchClassName is null, use 0 for the catch_type_index; which
          * means catch everything.  (Even when the verifier has let you throw
          * something other than a Throwable.)
          */
@@ -921,7 +923,7 @@ public class ClassFileWriter extends LabelTable {
                                     catchClassName == null
                                         ? 0
                                         : itsConstantPool.addClass(catchClassName));
-        
+
         if (itsExceptionTable == null) {
             itsExceptionTable = new ExceptionTableEntry[ExceptionTableSize];
             itsExceptionTable[0] = newEntry;
@@ -937,7 +939,7 @@ public class ClassFileWriter extends LabelTable {
             }
             itsExceptionTable[itsExceptionTableTop++] = newEntry;
         }
-    
+
     }
 
     public void addLineNumberEntry(short lineNumber) {
@@ -965,15 +967,15 @@ public class ClassFileWriter extends LabelTable {
 
     /**
      * Write the class file to the OutputStream.
-     * 
+     *
      * @param oStream the stream to write to
      * @throws IOException if writing to the stream produces an exception
      */
-    public void write(OutputStream oStream) 
+    public void write(OutputStream oStream)
         throws IOException
     {
-    	DataOutputStream out = new DataOutputStream(oStream);
-        
+        DataOutputStream out = new DataOutputStream(oStream);
+
         short sourceFileAttributeNameIndex = 0;
         if (itsSourceFileNameIndex != 0)
             sourceFileAttributeNameIndex
@@ -983,7 +985,7 @@ public class ClassFileWriter extends LabelTable {
         itsConstantPool.write(out);
         out.writeShort(itsFlags);
         out.writeShort(itsThisClassIndex);
-        out.writeShort(itsSuperClassIndex);     
+        out.writeShort(itsSuperClassIndex);
         out.writeShort(itsInterfaces.size());
         for (int i = 0; i < itsInterfaces.size(); i++) {
             out.writeShort(((Short)(itsInterfaces.elementAt(i))).shortValue());
@@ -1005,7 +1007,66 @@ public class ClassFileWriter extends LabelTable {
         else
             out.writeShort(0);      // no attributes
     }
-    
+
+    private int getWriteSize()
+    {
+        int size = 0;
+
+        if (itsSourceFileNameIndex != 0) {
+            itsConstantPool.addUtf8("SourceFile");
+        }
+
+        size += 8; //writeLong(FileHeaderConstant);
+        size += itsConstantPool.getWriteSize();
+        size += 2; //writeShort(itsFlags);
+        size += 2; //writeShort(itsThisClassIndex);
+        size += 2; //writeShort(itsSuperClassIndex);
+        size += 2; //writeShort(itsInterfaces.size());
+        size += 2 * itsInterfaces.size();
+
+        size += 2; //writeShort(itsFields.size());
+        for (int i = 0; i < itsFields.size(); i++) {
+            size += ((ClassFileField)(itsFields.elementAt(i))).getWriteSize();
+        }
+
+        size += 2; //writeShort(itsMethods.size());
+        for (int i = 0; i < itsMethods.size(); i++) {
+            size += ((ClassFileMethod)(itsMethods.elementAt(i))).getWriteSize();
+        }
+
+        if (itsSourceFileNameIndex != 0) {
+            size += 2; //writeShort(1);  attributes count
+            size += 2; //writeShort(sourceFileAttributeNameIndex);
+            size += 4; //writeInt(2);
+            size += 2; //writeShort(itsSourceFileNameIndex);
+        }else {
+            size += 2; //out.writeShort(0);  no attributes
+        }
+
+        return size;
+    }
+
+    /**
+     * Get the class file as array of bytesto the OutputStream.
+     */
+    public byte[] toByteArray()
+    {
+        int size = (DEBUG) ? getWriteSize() : 0;
+        ByteArrayOutputStream bos = new ByteArrayOutputStream(size);
+        try {
+            write(bos);
+        }
+        catch (IOException ioe) {
+            throw new RuntimeException(); // Unexpected
+        }
+        byte[] classBytes = bos.toByteArray();
+        if (DEBUG && classBytes.length != size) {
+            // Check getWriteSize is consistent with write!
+            throw new RuntimeException();
+        }
+        return classBytes;
+    }
+
     /*
         Really weird. Returns an int with # parameters in hi 16 bits, and
         # slots occupied by parameters in the low 16 bits. If Java really
@@ -1062,7 +1123,7 @@ public class ClassFileWriter extends LabelTable {
 
     private final static long FileHeaderConstant = 0xCAFEBABE0003002DL;
     // Set DEBUG flags to true to get better checking and progress info.
-    private static final boolean DEBUG = false;
+    private static final boolean DEBUG = true;
     private static final boolean DEBUGSTACK = false;
     private static final boolean DEBUGLABELS = false;
     private static final boolean DEBUGCODE = false;
@@ -1076,7 +1137,7 @@ public class ClassFileWriter extends LabelTable {
 
     private byte itsCodeBuffer[];
     private int itsCodeBufferTop;
-    
+
     private ConstantPool itsConstantPool;
 
     private short itsSourceFileAttributeIndex;
@@ -1086,7 +1147,7 @@ public class ClassFileWriter extends LabelTable {
 
     private short itsMaxStack;
     private short itsMaxLocals;
-    
+
     private Vector itsMethods = new Vector();
     private Vector itsFields = new Vector();
     private Vector itsInterfaces = new Vector();
@@ -1096,11 +1157,13 @@ public class ClassFileWriter extends LabelTable {
     private short itsSuperClassIndex;
     private short itsSourceFileNameIndex;
 
+    private LabelTable itsLabels = new LabelTable();
+
 }
 
 class ExceptionTableEntry {
-    
-    ExceptionTableEntry(int startLabel, int endLabel, 
+
+    ExceptionTableEntry(int startLabel, int endLabel,
                             int handlerLabel, short catchType)
     {
         itsStartLabel = startLabel;
@@ -1108,36 +1171,36 @@ class ExceptionTableEntry {
         itsHandlerLabel = handlerLabel;
         itsCatchType = catchType;
     }
-    
-    short getStartPC(Label labelTable[])
+
+    short getStartPC(LabelTable table)
     {
-        short pc = labelTable[itsStartLabel & 0x7FFFFFFF].getPC();
+        short pc = (short)table.getLabelPC(itsStartLabel & 0x7FFFFFFF);
         if (pc == -1)
             throw new RuntimeException("start label not defined");
         return pc;
     }
-    
-    short getEndPC(Label labelTable[])
+
+    short getEndPC(LabelTable table)
     {
-        short pc = labelTable[itsEndLabel & 0x7FFFFFFF].getPC();
+        short pc = (short)table.getLabelPC(itsEndLabel & 0x7FFFFFFF);
         if (pc == -1)
             throw new RuntimeException("end label not defined");
         return pc;
     }
-    
-    short getHandlerPC(Label labelTable[])
+
+    short getHandlerPC(LabelTable table)
     {
-        short pc = labelTable[itsHandlerLabel & 0x7FFFFFFF].getPC();
+        short pc = (short)table.getLabelPC(itsHandlerLabel & 0x7FFFFFFF);
         if (pc == -1)
             throw new RuntimeException("handler label not defined");
         return pc;
     }
-    
+
     short getCatchType()
     {
         return itsCatchType;
     }
-    
+
     private int itsStartLabel;
     private int itsEndLabel;
     private int itsHandlerLabel;
@@ -1177,6 +1240,17 @@ class ClassFileField {
         }
     }
 
+    int getWriteSize()
+    {
+        int size = 2 * 3;
+        if (itsAttr == null) {
+            size += 2;
+        }else {
+            size += 2 + 2 * 4;
+        }
+        return size;
+    }
+
     private short itsNameIndex;
     private short itsTypeIndex;
     private short itsFlags;
@@ -1191,12 +1265,12 @@ class ClassFileMethod {
         itsTypeIndex = typeIndex;
         itsFlags = flags;
     }
-    
+
     void setCodeAttribute(byte codeAttribute[])
     {
         itsCodeAttribute = codeAttribute;
     }
-    
+
     void write(DataOutputStream out) throws IOException
     {
         out.writeShort(itsFlags);
@@ -1204,6 +1278,11 @@ class ClassFileMethod {
         out.writeShort(itsTypeIndex);
         out.writeShort(1);              // Code attribute only
         out.write(itsCodeAttribute, 0, itsCodeAttribute.length);
+    }
+
+    int getWriteSize()
+    {
+        return 2 * 4 + itsCodeAttribute.length;
     }
 
     private short itsNameIndex;
@@ -1242,6 +1321,11 @@ class ConstantPool {
         out.write(itsPool, 0, itsTop);
     }
 
+    int getWriteSize()
+    {
+        return 2 + itsTop;
+    }
+
     short addConstant(int k)
     {
         ensure(5);
@@ -1252,7 +1336,7 @@ class ConstantPool {
         itsPool[itsTop++] = (byte)k;
         return (short)(itsTopIndex++);
     }
-    
+
     short addConstant(long k)
     {
         ensure(9);
@@ -1269,7 +1353,7 @@ class ConstantPool {
         itsTopIndex += 2;
         return index;
     }
-    
+
     short addConstant(float k)
     {
         ensure(5);
@@ -1281,7 +1365,7 @@ class ConstantPool {
         itsPool[itsTop++] = (byte)bits;
         return (short)(itsTopIndex++);
     }
-    
+
     short addConstant(double k)
     {
         ensure(9);
@@ -1299,7 +1383,7 @@ class ConstantPool {
         itsTopIndex += 2;
         return index;
     }
-    
+
     short addConstant(String k)
     {
         Utf8StringIndexPair theIndex = (Utf8StringIndexPair)(itsUtf8Hash.get(k));
@@ -1316,7 +1400,7 @@ class ConstantPool {
         }
         return theIndex.itsStringIndex;
     }
-    
+
     short addUtf8(String contents)
     {
         Utf8StringIndexPair theIndex = (Utf8StringIndexPair)(itsUtf8Hash.get(contents));
@@ -1445,20 +1529,20 @@ class ConstantPool {
     private Hashtable itsFieldRefHash = new Hashtable();
     private Hashtable itsMethodRefHash = new Hashtable();
     private Hashtable itsClassHash = new Hashtable();
-    
+
     private int itsTop;
     private int itsTopIndex;
     private byte itsPool[];
 }
 
 class Utf8StringIndexPair {
-    
+
     Utf8StringIndexPair(short utf8Index, short stringIndex)
     {
         itsUtf8Index = utf8Index;
         itsStringIndex = stringIndex;
     }
-    
+
     short itsUtf8Index;
     short itsStringIndex;
 }

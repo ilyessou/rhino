@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -18,7 +18,7 @@
  * Copyright (C) 1997-1999 Netscape Communications Corporation. All
  * Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  * Norris Boyd
  * Roger Lawrence
  * Mike McCabe
@@ -45,6 +45,26 @@ package org.mozilla.javascript;
  */
 
 public class Node implements Cloneable {
+
+    private static class NumberNode extends Node {
+
+        NumberNode(double number) {
+            super(TokenStream.NUMBER);
+            this.number = number;
+        }
+
+        double number;
+    }
+
+    private static class StringNode extends Node {
+
+        StringNode(int type, String str) {
+            super(type);
+            this.str = str;
+        }
+
+        String str;
+    }
 
     public Node(int nodeType) {
         type = nodeType;
@@ -75,46 +95,34 @@ public class Node implements Cloneable {
 
     public Node(int nodeType, int value) {
         type = nodeType;
-        this.datum = new Integer(value);
-    }
-
-    public Node(int nodeType, double value) {
-        type = nodeType;
-        int ivalue = (int)value;
-        if (ivalue == value) {
-            if ((byte)ivalue == ivalue) {
-                this.datum = new Byte((byte)ivalue);
-            }
-            else if ((short)ivalue == ivalue) {
-                this.datum = new Short((short)ivalue);
-            }
-            else {
-                this.datum = new Integer(ivalue);
-            }
-        }
-        else {
-            this.datum = new Double(value);
-        }
-    }
-
-    public Node(int nodeType, String str) {
-        type = nodeType;
-        this.datum = str;
+        intDatum = value;
     }
 
     public Node(int nodeType, Node child, int value) {
         this(nodeType, child);
-        this.datum = new Integer(value);
+        intDatum = value;
     }
 
-    public Node(int nodeType, Node child, Object datum) {
-        this(nodeType, child);
-        this.datum = datum;
-    }
-
-    public Node(int nodeType, Node left, Node right, Object datum) {
+    public Node(int nodeType, Node left, Node right, int value) {
         this(nodeType, left, right);
-        this.datum = datum;
+        intDatum = value;
+    }
+
+    public Node(int nodeType, Node left, Node mid, Node right, int value) {
+        this(nodeType, left, mid, right);
+        intDatum = value;
+    }
+
+    public static Node newNumber(double number) {
+        return new NumberNode(number);
+    }
+
+    public static Node newString(String str) {
+        return new StringNode(TokenStream.STRING, str);
+    }
+
+    public static Node newString(int type, String str) {
+        return new StringNode(type, str);
     }
 
     public int getType() {
@@ -137,7 +145,7 @@ public class Node implements Cloneable {
         return last;
     }
 
-    public Node getNextSibling() {
+    public Node getNext() {
         return next;
     }
 
@@ -159,10 +167,6 @@ public class Node implements Cloneable {
             n = n.next;
         }
         return n;
-    }
-
-    public PreorderNodeIterator getPreorderIterator() {
-        return new PreorderNodeIterator(this);
     }
 
     public void addChildToFront(Node child) {
@@ -273,19 +277,15 @@ public class Node implements Cloneable {
         LOCAL_PROP        =  7,
         CODEOFFSET_PROP   =  8,
         FIXUPS_PROP       =  9,
-        VARS_PROP         = 10,
-        USES_PROP         = 11,
-        REGEXP_PROP       = 12,
-        CASES_PROP        = 13,
-        DEFAULT_PROP      = 14,
-        CASEARRAY_PROP    = 15,
-        SOURCENAME_PROP   = 16,
-        SOURCE_PROP       = 17,
-        TYPE_PROP         = 18,
-        SPECIAL_PROP_PROP = 19,
-        LABEL_PROP        = 20,
-        FINALLY_PROP      = 21,
-        LOCALCOUNT_PROP   = 22,
+        USES_PROP         = 10,
+        REGEXP_PROP       = 11,
+        CASES_PROP        = 12,
+        DEFAULT_PROP      = 13,
+        CASEARRAY_PROP    = 14,
+        TYPE_PROP         = 15,
+        SPECIAL_PROP_PROP = 16,
+        LABEL_PROP        = 17,
+        FINALLY_PROP      = 18,
     /*
         the following properties are defined and manipulated by the
         optimizer -
@@ -300,63 +300,55 @@ public class Node implements Cloneable {
                           matches.
     */
 
-        TARGETBLOCK_PROP  = 23,
-        VARIABLE_PROP     = 24,
-        LASTUSE_PROP      = 25,
-        ISNUMBER_PROP     = 26,
-        DIRECTCALL_PROP   = 27,
+        TARGETBLOCK_PROP  = 19,
+        VARIABLE_PROP     = 20,
+        LASTUSE_PROP      = 21,
+        ISNUMBER_PROP     = 22,
+        DIRECTCALL_PROP   = 23,
 
-        BASE_LINENO_PROP  = 28,
-        END_LINENO_PROP   = 29,
-        SPECIALCALL_PROP  = 30,
-        DEBUGSOURCE_PROP  = 31;
+        SPECIALCALL_PROP  = 24;
 
     public static final int    // this value of the ISNUMBER_PROP specifies
         BOTH = 0,               // which of the children are Number types
         LEFT = 1,
         RIGHT = 2;
 
-    private static String propNames[];
-    
     private static final String propToString(int propType) {
-        if (Context.printTrees && propNames == null) {
+        if (Context.printTrees) {
             // If Context.printTrees is false, the compiler
             // can remove all these strings.
-            String[] a = {
-                "target",
-                "break",
-                "continue",
-                "enum",
-                "function",
-                "temp",
-                "local",
-                "codeoffset",
-                "fixups",
-                "vars",
-                "uses",
-                "regexp",
-                "cases",
-                "default",
-                "casearray",
-                "sourcename",
-                "source",
-                "type",
-                "special_prop",
-                "label",
-                "finally",
-                "localcount",
-                "targetblock",
-                "variable",
-                "lastuse",
-                "isnumber",
-                "directcall",
-                "base_lineno",
-                "end_lineno",
-                "specialcall"
-            };
-            propNames = a;
+            switch (propType) {
+                case TARGET_PROP:        return "target";
+                case BREAK_PROP:         return "break";
+                case CONTINUE_PROP:      return "continue";
+                case ENUM_PROP:          return "enum";
+                case FUNCTION_PROP:      return "function";
+                case TEMP_PROP:          return "temp";
+                case LOCAL_PROP:         return "local";
+                case CODEOFFSET_PROP:    return "codeoffset";
+                case FIXUPS_PROP:        return "fixups";
+                case USES_PROP:          return "uses";
+                case REGEXP_PROP:        return "regexp";
+                case CASES_PROP:         return "cases";
+                case DEFAULT_PROP:       return "default";
+                case CASEARRAY_PROP:     return "casearray";
+                case TYPE_PROP:          return "type";
+                case SPECIAL_PROP_PROP:  return "special_prop";
+                case LABEL_PROP:         return "label";
+                case FINALLY_PROP:       return "finally";
+
+                case TARGETBLOCK_PROP:   return "targetblock";
+                case VARIABLE_PROP:      return "variable";
+                case LASTUSE_PROP:       return "lastuse";
+                case ISNUMBER_PROP:      return "isnumber";
+                case DIRECTCALL_PROP:    return "directcall";
+
+                case SPECIALCALL_PROP:   return "specialcall";
+
+                default: Context.codeBug();
+            }
         }
-        return propNames[propType-1];
+        return null;
     }
 
     public Object getProp(int propType) {
@@ -392,39 +384,44 @@ public class Node implements Cloneable {
             props = new UintMap(2);
         props.put(propType, prop);
     }
-    
+
     public void removeProp(int propType) {
         if (props != null) {
             props.remove(propType);
         }
     }
 
-    public Object getDatum() {
-        return datum;
+    public int getOperation() {
+        switch (type) {
+            case TokenStream.EQOP:
+            case TokenStream.RELOP:
+            case TokenStream.UNARYOP:
+            case TokenStream.PRIMARY:
+                return intDatum;
+        }
+        Context.codeBug();
+        return 0;
     }
 
-    public void setDatum(Object datum) {
-        this.datum = datum;
+    public int getLineno() {
+        switch (type) {
+            case TokenStream.EQOP:
+            case TokenStream.RELOP:
+            case TokenStream.UNARYOP:
+            case TokenStream.PRIMARY:
+                Context.codeBug();
+        }
+        return intDatum;
     }
 
-    public Number getNumber() {
-        return (Number)datum;
-    }
-
-    public int getInt() {
-        return ((Number) datum).intValue();
-    }
-
+    /** Can only be called when <tt>getType() == TokenStream.NUMBER</tt> */
     public double getDouble() {
-        return ((Number) datum).doubleValue();
+        return ((NumberNode)this).number;
     }
 
-    public long getLong() {
-        return ((Number) datum).longValue();
-    }
-
+    /** Can only be called when node has String context. */
     public String getString() {
-        return (String) datum;
+        return ((StringNode)this).str;
     }
 
     public Node cloneNode() {
@@ -444,13 +441,36 @@ public class Node implements Cloneable {
     public String toString() {
         if (Context.printTrees) {
             StringBuffer sb = new StringBuffer(TokenStream.tokenToName(type));
-            if (type == TokenStream.TARGET) {
+            if (this instanceof StringNode) {
+                sb.append(' ');
+                sb.append(getString());
+            } else if (this instanceof ScriptOrFnNode) {
+                ScriptOrFnNode sof = (ScriptOrFnNode)this;
+                if (this instanceof FunctionNode) {
+                    FunctionNode fn = (FunctionNode)this;
+                    sb.append(' ');
+                    sb.append(fn.getFunctionName());
+                }
+                sb.append(" [source name: ");
+                sb.append(sof.getSourceName());
+                sb.append("] [encoded source length: ");
+                String encodedSource = sof.getEncodedSource();
+                sb.append(encodedSource != null ? encodedSource.length() : 0);
+                sb.append("] [base line: ");
+                sb.append(sof.getBaseLineno());
+                sb.append("] [end line: ");
+                sb.append(sof.getEndLineno());
+                sb.append(']');
+            } else if (type == TokenStream.TARGET) {
                 sb.append(' ');
                 sb.append(hashCode());
-            }
-            if (datum != null) {
+            } else if (type == TokenStream.NUMBER) {
                 sb.append(' ');
-                sb.append(datum.toString());
+                sb.append(getDouble());
+            }
+            if (intDatum != -1) {
+                sb.append(' ');
+                sb.append(intDatum);
             }
             if (props == null)
                 return sb.toString();
@@ -462,11 +482,8 @@ public class Node implements Cloneable {
                 sb.append(propToString(key));
                 sb.append(": ");
                 switch (key) {
-                    case FIXUPS_PROP :      // can't add this as it recurses
+                    case FIXUPS_PROP : // can't add this as it recurses
                         sb.append("fixups property");
-                        break;
-                    case SOURCE_PROP :      // can't add this as it has unprintables
-                        sb.append("source property");
                         break;
                     case TARGETBLOCK_PROP : // can't add this as it recurses
                         sb.append("target block property");
@@ -475,10 +492,10 @@ public class Node implements Cloneable {
                         sb.append("last use property");
                         break;
                     default :
-                        if (props.isObjectType(key)) {
-                            sb.append(props.getObject(key).toString());
-                        }
-                        else {
+                        Object obj = props.getObject(key);
+                        if (obj != null) {
+                            sb.append(obj.toString());
+                        } else {
                             sb.append(props.getExistingInt(key));
                         }
                         break;
@@ -493,7 +510,7 @@ public class Node implements Cloneable {
     public String toStringTree() {
         return toStringTreeHelper(0);
     }
-    
+
 
     private String toStringTreeHelper(int level) {
         if (Context.printTrees) {
@@ -504,7 +521,7 @@ public class Node implements Cloneable {
             s.append(toString());
             s.append('\n');
             for (Node cursor = getFirstChild(); cursor != null;
-                 cursor = cursor.getNextSibling()) 
+                 cursor = cursor.getNext())
             {
                 Node n = cursor;
                 if (cursor.getType() == TokenStream.FUNCTION) {
@@ -519,14 +536,11 @@ public class Node implements Cloneable {
         return "";
     }
 
-    public Node getFirst()  { return first; }
-    public Node getNext()   { return next; }
-
-    protected int type;         // type of the node; TokenStream.NAME for example
-    protected Node next;        // next sibling
-    protected Node first;       // first element of a linked list of children
-    protected Node last;        // last element of a linked list of children
-    protected UintMap props;
-    protected Object datum;     // encapsulated data; depends on type
+    int type;              // type of the node; TokenStream.NAME for example
+    Node next;             // next sibling
+    private Node first;    // first element of a linked list of children
+    private Node last;     // last element of a linked list of children
+    private int intDatum = -1;    // encapsulated int data; depends on type
+    private UintMap props;
 }
 

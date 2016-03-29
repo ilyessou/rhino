@@ -7,7 +7,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -19,7 +19,7 @@
  * Copyright (C) 1997-1999 Netscape Communications Corporation. All
  * Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  * Waldemar Horwat
  *
  * Alternatively, the contents of this file may be used under the
@@ -36,12 +36,12 @@
 package org.mozilla.javascript;
 
 final class BinaryDigitReader {
-    int lgBase;			// Logarithm of base of number
-    int digit;			// Current digit value in radix given by base
-    int digitPos;		// Bit position of last bit extracted from digit
-    String digits;		// String containing the digits
-    int start;			// Index of the first remaining digit
-    int end;			// Index past the last remaining digit
+    int lgBase;         // Logarithm of base of number
+    int digit;          // Current digit value in radix given by base
+    int digitPos;       // Bit position of last bit extracted from digit
+    String digits;      // String containing the digits
+    int start;          // Index of the first remaining digit
+    int end;            // Index past the last remaining digit
 
     BinaryDigitReader(int base, String digits, int start, int end) {
         lgBase = 0;
@@ -61,7 +61,7 @@ final class BinaryDigitReader {
         if (digitPos == 0) {
             if (start == end)
                 return -1;
-    
+
             char c = digits.charAt(start++);
             if ('0' <= c && c <= '9')
                 digit = c - '0';

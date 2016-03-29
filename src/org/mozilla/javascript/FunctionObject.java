@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -18,7 +18,7 @@
  * Copyright (C) 1997-2000 Netscape Communications Corporation. All
  * Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  * Norris Boyd
  * Igor Bukanov
  * David C. Navas
@@ -40,14 +40,17 @@
 
 package org.mozilla.javascript;
 
-import java.util.Vector;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Member;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.InvocationTargetException;
+import java.io.Serializable;
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 
-public class FunctionObject extends NativeFunction {
+public class FunctionObject extends BaseFunction {
 
     static final long serialVersionUID = -4074285335521944312L;
 
@@ -60,9 +63,9 @@ public class FunctionObject extends NativeFunction {
      * The first form is a member with zero or more parameters
      * of the following types: Object, String, boolean, Scriptable,
      * byte, short, int, float, or double. The Long type is not supported
-     * because the double representation of a long (which is the 
+     * because the double representation of a long (which is the
      * EMCA-mandated storage type for Numbers) may lose precision.
-     * If the member is a Method, the return value must be void or one 
+     * If the member is a Method, the return value must be void or one
      * of the types allowed for parameters.<p>
      *
      * The runtime will perform appropriate conversions based
@@ -131,7 +134,6 @@ public class FunctionObject extends NativeFunction {
             methodName = method.getName();
         }
         this.functionName = name;
-        int length;
         if (types.length == 4 && (types[1].isArray() || types[2].isArray())) {
             // Either variable args or an error.
             if (types[1].isArray()) {
@@ -158,9 +160,8 @@ public class FunctionObject extends NativeFunction {
                 parmsLength = VARARGS_METHOD;
             }
             // XXX check return type
-            length = 1;
         } else {
-            parmsLength = (short) types.length;
+            parmsLength = types.length;
             for (int i=0; i < parmsLength; i++) {
                 Class type = types[i];
                 if (type != ScriptRuntime.ObjectClass &&
@@ -172,59 +173,38 @@ public class FunctionObject extends NativeFunction {
                     type != Byte.TYPE &&
                     type != Short.TYPE &&
                     type != Integer.TYPE &&
-                    type != Float.TYPE && 
+                    type != Float.TYPE &&
                     type != Double.TYPE)
                 {
                     // Note that long is not supported.
-                    throw Context.reportRuntimeError1("msg.bad.parms", 
+                    throw Context.reportRuntimeError1("msg.bad.parms",
                                                       methodName);
                 }
             }
-            length = parmsLength;
         }
 
-        // Initialize length property
-        lengthPropertyValue = (short) length;
-
         hasVoidReturn = method != null && method.getReturnType() == Void.TYPE;
-        this.argCount = (short) length;
 
-        setParentScope(scope);
-        setPrototype(getFunctionPrototype(scope));
+        ScriptRuntime.setFunctionProtoAndParent(scope, this);
         Context cx = Context.getCurrentContext();
-        useDynamicScope = cx != null && 
+        useDynamicScope = cx != null &&
                           cx.hasCompileFunctionsWithDynamicScope();
     }
 
     /**
      * Return the value defined by  the method used to construct the object
      * (number of parameters of the method, or 1 if the method is a "varargs"
-     * form), unless setLength has been called with a new value.
-     * Overrides getLength in BaseFunction.
-     *
-     * @see org.mozilla.javascript.FunctionObject#setLength
-     * @see org.mozilla.javascript.BaseFunction#getLength
+     * form).
      */
-    public int getLength() {
-        return lengthPropertyValue;
+    public int getArity() {
+        return parmsLength < 0 ? 1 : parmsLength;
     }
 
     /**
-     * Set the value of the "length" property.
-     *
-     * <p>Changing the value of the "length" property of a FunctionObject only
-     * affects the value retrieved from get() and does not affect the way
-     * the method itself is called. <p>
-     *
-     * The "length" property will be defined by default as the number
-     * of parameters of the method used to construct the FunctionObject,
-     * unless the method is a "varargs" form, in which case the "length"
-     * property will be defined to 1.
-     *
-     * @param length the new length
+     * Return the same value as {@link #getArity()}.
      */
-    public void setLength(short length) {
-        lengthPropertyValue = length;
+    public int getLength() {
+        return getArity();
     }
 
     // TODO: Make not public
@@ -244,11 +224,11 @@ public class FunctionObject extends NativeFunction {
     public static Method[] findMethods(Class clazz, String name) {
         return findMethods(getMethodList(clazz), name);
     }
-    
+
     static Method[] findMethods(Method[] methods, String name) {
         // Usually we're just looking for a single method, so optimize
         // for that case.
-        Vector v = null;
+        ObjArray v = null;
         Method first = null;
         for (int i=0; i < methods.length; i++) {
             if (methods[i] == null)
@@ -258,10 +238,10 @@ public class FunctionObject extends NativeFunction {
                     first = methods[i];
                 } else {
                     if (v == null) {
-                        v = new Vector(5);
-                        v.addElement(first);
+                        v = new ObjArray(5);
+                        v.add(first);
                     }
-                    v.addElement(methods[i]);
+                    v.add(methods[i]);
                 }
             }
         }
@@ -272,7 +252,7 @@ public class FunctionObject extends NativeFunction {
             return single;
         }
         Method[] result = new Method[v.size()];
-        v.copyInto(result);
+        v.toArray(result);
         return result;
     }
 
@@ -284,7 +264,7 @@ public class FunctionObject extends NativeFunction {
         try {
             // getDeclaredMethods may be rejected by the security manager
             // but getMethods is more expensive
-            if (!sawSecurityException) 
+            if (!sawSecurityException)
                 methods = clazz.getDeclaredMethods();
         } catch (SecurityException e) {
             // If we get an exception once, give up on getDeclaredMethods
@@ -295,7 +275,7 @@ public class FunctionObject extends NativeFunction {
         }
         int count = 0;
         for (int i=0; i < methods.length; i++) {
-            if (sawSecurityException 
+            if (sawSecurityException
                 ? methods[i].getDeclaringClass() != clazz
                 : !Modifier.isPublic(methods[i].getModifiers()))
             {
@@ -332,12 +312,11 @@ public class FunctionObject extends NativeFunction {
      * @see org.mozilla.javascript.Scriptable#getClassName
      */
     public void addAsConstructor(Scriptable scope, Scriptable prototype) {
-        setParentScope(scope);
-        setPrototype(getFunctionPrototype(scope));
+        ScriptRuntime.setFunctionProtoAndParent(scope, this);
         setImmunePrototypeProperty(prototype);
 
         prototype.setParentScope(this);
-        
+
         final int attr = ScriptableObject.DONTENUM  |
                          ScriptableObject.PERMANENT |
                          ScriptableObject.READONLY;
@@ -349,32 +328,32 @@ public class FunctionObject extends NativeFunction {
         setParentScope(scope);
     }
 
-    static public Object convertArg(Scriptable scope,
+    static public Object convertArg(Context cx, Scriptable scope,
                                     Object arg, Class desired)
     {
-        if (desired == ScriptRuntime.StringClass) 
+        if (desired == ScriptRuntime.StringClass)
             return ScriptRuntime.toString(arg);
-        if (desired == ScriptRuntime.IntegerClass || 
+        if (desired == ScriptRuntime.IntegerClass ||
             desired == Integer.TYPE)
         {
             return new Integer(ScriptRuntime.toInt32(arg));
         }
-        if (desired == ScriptRuntime.BooleanClass || 
+        if (desired == ScriptRuntime.BooleanClass ||
             desired == Boolean.TYPE)
         {
-            return ScriptRuntime.toBoolean(arg) ? Boolean.TRUE 
+            return ScriptRuntime.toBoolean(arg) ? Boolean.TRUE
                                                 : Boolean.FALSE;
         }
-        if (desired == ScriptRuntime.DoubleClass || 
+        if (desired == ScriptRuntime.DoubleClass ||
             desired == Double.TYPE)
         {
             return new Double(ScriptRuntime.toNumber(arg));
         }
         if (desired == ScriptRuntime.ScriptableClass)
-            return ScriptRuntime.toObject(scope, arg);
+            return ScriptRuntime.toObject(cx, scope, arg);
         if (desired == ScriptRuntime.ObjectClass)
             return arg;
-        
+
         // Note that the long type is not supported; see the javadoc for
         // the constructor for this class
         throw Context.reportRuntimeError1
@@ -388,7 +367,7 @@ public class FunctionObject extends NativeFunction {
      * Implements Function.call.
      *
      * @see org.mozilla.javascript.Function#call
-     * @exception JavaScriptException if the underlying Java method or 
+     * @exception JavaScriptException if the underlying Java method or
      *            constructor threw an exception
      */
     public Object call(Context cx, Scriptable scope, Scriptable thisObj,
@@ -426,17 +405,17 @@ public class FunctionObject extends NativeFunction {
                          ? args[i]
                          : Undefined.instance;
             if (types != null) {
-                arg = convertArg(this, arg, types[i]);
+                arg = convertArg(cx, this, arg, types[i]);
             }
             invokeArgs[i] = arg;
         }
         try {
             Object result = method == null ? ctor.newInstance(invokeArgs)
-                                           : doInvoke(thisObj, invokeArgs);
+                                           : doInvoke(cx, thisObj, invokeArgs);
             return hasVoidReturn ? Undefined.instance : result;
         }
         catch (InvocationTargetException e) {
-            throw JavaScriptException.wrapException(scope, e);
+            throw JavaScriptException.wrapException(cx, scope, e);
         }
         catch (IllegalAccessException e) {
             throw WrappedException.wrapException(e);
@@ -506,21 +485,21 @@ public class FunctionObject extends NativeFunction {
 
         return super.construct(cx, scope, args);
     }
-        
-    private final Object doInvoke(Object thisObj, Object[] args) 
+
+    private final Object doInvoke(Context cx, Object thisObj, Object[] args)
         throws IllegalAccessException, InvocationTargetException
     {
         Invoker master = invokerMaster;
         if (master != null) {
             if (invoker == null) {
-                invoker = master.createInvoker(method, types);
+                invoker = master.createInvoker(cx, method, types);
             }
             try {
                 return invoker.invoke(thisObj, args);
             } catch (Exception e) {
                 throw new InvocationTargetException(e);
             }
-        } 
+        }
         return method.invoke(thisObj, args);
     }
 
@@ -531,14 +510,14 @@ public class FunctionObject extends NativeFunction {
         try {
             if (parmsLength == VARARGS_METHOD) {
                 Object[] invokeArgs = { cx, thisObj, args, this };
-                Object result = doInvoke(null, invokeArgs);
+                Object result = doInvoke(cx, null, invokeArgs);
                 return hasVoidReturn ? Undefined.instance : result;
             } else {
                 Boolean b = inNewExpr ? Boolean.TRUE : Boolean.FALSE;
                 Object[] invokeArgs = { cx, args, this, b };
                 return (method == null)
                        ? ctor.newInstance(invokeArgs)
-                       : doInvoke(null, invokeArgs);
+                       : doInvoke(cx, null, invokeArgs);
             }
         }
         catch (InvocationTargetException e) {
@@ -548,7 +527,7 @@ public class FunctionObject extends NativeFunction {
             if (target instanceof EcmaError)
                 throw (EcmaError) target;
             Scriptable scope = thisObj == null ? this : thisObj;
-            throw JavaScriptException.wrapException(scope, target);
+            throw JavaScriptException.wrapException(cx, scope, target);
         }
         catch (IllegalAccessException e) {
             throw WrappedException.wrapException(e);
@@ -557,15 +536,15 @@ public class FunctionObject extends NativeFunction {
             throw WrappedException.wrapException(e);
         }
     }
-    
-    boolean isVarArgsMethod() { 
+
+    boolean isVarArgsMethod() {
         return parmsLength == VARARGS_METHOD;
     }
 
-    boolean isVarArgsConstructor() { 
+    boolean isVarArgsConstructor() {
         return parmsLength == VARARGS_CTOR;
     }
-    
+
     static void setCachingEnabled(boolean enabled) {
         if (!enabled) {
             methodsCache = null;
@@ -575,10 +554,141 @@ public class FunctionObject extends NativeFunction {
         }
     }
 
+    private void writeObject(ObjectOutputStream out)
+        throws IOException
+    {
+        out.defaultWriteObject();
+        boolean hasConstructor = ctor != null;
+        Member member = hasConstructor ? (Member)ctor : (Member)method;
+        writeMember(out, member);
+    }
+
+    private void readObject(ObjectInputStream in)
+        throws IOException, ClassNotFoundException
+    {
+        in.defaultReadObject();
+        Member member = readMember(in);
+        if (member instanceof Method) {
+            method = (Method) member;
+            types = method.getParameterTypes();
+        } else {
+            ctor = (Constructor) member;
+            types = ctor.getParameterTypes();
+        }
+    }
+
+    /**
+     * Writes a Constructor or Method object.
+     *
+     * Methods and Constructors are not serializable, so we must serialize
+     * information about the class, the name, and the parameters and
+     * recreate upon deserialization.
+     */
+    static void writeMember(ObjectOutputStream out, Member member)
+        throws IOException
+    {
+        if (member == null) {
+            out.writeBoolean(false);
+            return;
+        }
+        out.writeBoolean(true);
+        if (!(member instanceof Method || member instanceof Constructor))
+            throw new IllegalArgumentException("not Method or Constructor");
+        out.writeBoolean(member instanceof Method);
+        out.writeObject(member.getName());
+        out.writeObject(member.getDeclaringClass());
+        if (member instanceof Method) {
+            writeParameters(out, ((Method) member).getParameterTypes());
+        } else {
+            writeParameters(out, ((Constructor) member).getParameterTypes());
+        }
+    }
+
+    /**
+     * Reads a Method or a Constructor from the stream.
+     */
+    static Member readMember(ObjectInputStream in)
+        throws IOException, ClassNotFoundException
+    {
+        if (!in.readBoolean())
+            return null;
+        boolean isMethod = in.readBoolean();
+        String name = (String) in.readObject();
+        Class declaring = (Class) in.readObject();
+        Class[] parms = readParameters(in);
+        try {
+            if (isMethod) {
+                return declaring.getMethod(name, parms);
+            } else {
+                return declaring.getConstructor(parms);
+            }
+        } catch (NoSuchMethodException e) {
+            throw new IOException("Cannot find member: " + e);
+        }
+    }
+
+    private static final Class[] primitives = {
+        Boolean.TYPE,
+        Byte.TYPE,
+        Character.TYPE,
+        Double.TYPE,
+        Float.TYPE,
+        Integer.TYPE,
+        Long.TYPE,
+        Short.TYPE,
+        Void.TYPE
+    };
+
+    /**
+     * Writes an array of parameter types to the stream.
+     *
+     * Requires special handling because primitive types cannot be
+     * found upon deserialization by the default Java implementation.
+     */
+    static void writeParameters(ObjectOutputStream out, Class[] parms)
+        throws IOException
+    {
+        out.writeShort(parms.length);
+    outer:
+        for (int i=0; i < parms.length; i++) {
+            Class parm = parms[i];
+            out.writeBoolean(parm.isPrimitive());
+            if (!parm.isPrimitive()) {
+                out.writeObject(parm);
+                continue;
+            }
+            for (int j=0; j < primitives.length; j++) {
+                if (parm.equals(primitives[j])) {
+                    out.writeByte(j);
+                    continue outer;
+                }
+            }
+            throw new IllegalArgumentException("Primitive " + parm +
+                                               " not found");
+        }
+    }
+
+    /**
+     * Reads an array of parameter types from the stream.
+     */
+    static Class[] readParameters(ObjectInputStream in)
+        throws IOException, ClassNotFoundException
+    {
+        Class[] result = new Class[in.readShort()];
+        for (int i=0; i < result.length; i++) {
+            if (!in.readBoolean()) {
+                result[i] = (Class) in.readObject();
+                continue;
+            }
+            result[i] = primitives[in.readByte()];
+        }
+        return result;
+    }
+
     /** Get default master implementation or null if not available */
     private static Invoker newInvokerMaster() {
         try {
-            Class cl = ScriptRuntime.loadClassName(INVOKER_MASTER_CLASS);
+            Class cl = Class.forName(INVOKER_MASTER_CLASS);
             return (Invoker)cl.newInstance();
         }
         catch (ClassNotFoundException ex) {}
@@ -588,24 +698,23 @@ public class FunctionObject extends NativeFunction {
         return null;
     }
 
-    private static final String 
+    private static final String
         INVOKER_MASTER_CLASS = "org.mozilla.javascript.optimizer.InvokerImpl";
 
     static Invoker invokerMaster = newInvokerMaster();
-    
+
     private static final short VARARGS_METHOD = -1;
     private static final short VARARGS_CTOR =   -2;
-    
+
     private static boolean sawSecurityException;
 
     static Method[] methodsCache;
 
-    Method method;
-    Constructor ctor;
-    private Class[] types;
-    Invoker invoker;
-    private short parmsLength;
-    private short lengthPropertyValue;
+    transient Method method;
+    transient Constructor ctor;
+    transient Invoker invoker;
+    transient private Class[] types;
+    private int parmsLength;
     private boolean hasVoidReturn;
     private boolean isStatic;
     private boolean useDynamicScope;

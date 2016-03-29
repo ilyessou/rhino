@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -18,7 +18,7 @@
  * Copyright (C) 1997-2000 Netscape Communications Corporation. All
  * Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  * Marshall Cline
  *
  * Alternatively, the contents of this file may be used under the
@@ -38,31 +38,15 @@
 package org.mozilla.javascript;
 
 /**
- * Embeddings that wish to provide their own custom wrappings for Java
- * objects may implement this interface and call Context.setWrapHandler.
- * @see org.mozilla.javascript.Context#setWrapHandler
- */
+@deprecated  As of Rhino 1.5 Release 4, use {@link WrapFactory}.
+Note that when extending {@link WrapFactory} you should call
+<code>super.wrap(...)</code> instead of returning null to get default behavior.
+You should also take into account that
+{@link WrapFactory#wrap(Context cx, Scriptable scope, Object obj, Class cls)}
+can be called when <code>obj == null</code>
+*/
 public interface WrapHandler {
 
-    /**
-     * Wrap the object.
-     * <p>
-     * The value returned must be one of 
-     * <UL>
-     * <LI>java.lang.Boolean</LI>
-     * <LI>java.lang.String</LI>
-     * <LI>java.lang.Number</LI>
-     * <LI>org.mozilla.javascript.Scriptable objects</LI>
-     * <LI>The value returned by Context.getUndefinedValue()</LI>
-     * <LI>null</LI>
-     * <p>
-     * If null is returned, the value obj will be wrapped as if 
-     * no WrapHandler had been called.
-     * </UL>
-     * @param scope the scope of the executing script
-     * @param obj the object to be wrapped
-     * @staticType the static type of the object to be wrapped
-     * @return the wrapped value.
-     */
     public Object wrap(Scriptable scope, Object obj, Class staticType);
+
 }

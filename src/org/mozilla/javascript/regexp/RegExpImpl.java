@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -18,7 +18,7 @@
  * Copyright (C) 1997-1999 Netscape Communications Corporation. All
  * Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the
  * terms of the GNU Public License (the "GPL"), in which case the
@@ -35,28 +35,27 @@
 package org.mozilla.javascript.regexp;
 
 import org.mozilla.javascript.*;
-import java.util.Vector;
 
 /**
- * 
+ *
  */
 public class RegExpImpl implements RegExpProxy {
-    
+
     public RegExpImpl() {
-        parens = new Vector(9);
+        parens = new ObjArray();
     }
-    
+
     public boolean isRegExp(Object obj) {
         return obj instanceof NativeRegExp;
     }
 
-    public Object newRegExp(Context cx, Scriptable scope, String source, 
+    public Object newRegExp(Context cx, Scriptable scope, String source,
                                                 String global, boolean flat)
     {
         return new NativeRegExp(cx, scope, source, global, flat);
     }
-    
-    public Object match(Context cx, Scriptable scope, 
+
+    public Object match(Context cx, Scriptable scope,
                         Scriptable thisObj, Object[] args)
         throws JavaScriptException
     {
@@ -80,7 +79,7 @@ public class RegExpImpl implements RegExpProxy {
         return matchOrReplace(cx, scope, thisObj, args, this, mdata, false);
     }
 
-    public Object replace(Context cx, Scriptable scope, 
+    public Object replace(Context cx, Scriptable scope,
                           Scriptable thisObj, Object[] args)
         throws JavaScriptException
     {
@@ -138,7 +137,7 @@ public class RegExpImpl implements RegExpProxy {
      * Analog of C match_or_replace.
      */
     private static Object matchOrReplace(Context cx, Scriptable scope,
-                                         Scriptable thisObj, Object[] args, 
+                                         Scriptable thisObj, Object[] args,
                                          RegExpImpl reImpl,
                                          GlobData data, boolean forceFlat)
         throws JavaScriptException
@@ -148,7 +147,7 @@ public class RegExpImpl implements RegExpProxy {
         String str = ScriptRuntime.toString(thisObj);
         data.str = str;
         Scriptable topScope = ScriptableObject.getTopLevelScope(scope);
-        
+
         if (args.length == 0)
             re = new NativeRegExp(cx, topScope, "", "", false);
         else
@@ -162,12 +161,12 @@ public class RegExpImpl implements RegExpProxy {
                     opt = ScriptRuntime.toString(args[data.optarg]);
                 } else {
                     opt = null;
-                }                
+                }
                 re = new NativeRegExp(cx, topScope, src, opt, forceFlat);
             }
         data.regexp = re;
 
-        data.global = (re.getFlags() & NativeRegExp.GLOB) != 0;
+        data.global = (re.getFlags() & NativeRegExp.JSREG_GLOB) != 0;
         int[] indexp = { 0 };
         Object result = null;
         if (data.mode == GlobData.GLOB_SEARCH) {
@@ -193,25 +192,25 @@ public class RegExpImpl implements RegExpProxy {
             }
         } else {
             result = re.executeRegExp(cx, scope, reImpl, str, indexp,
-                                      ((data.mode == GlobData.GLOB_REPLACE) 
-                                       ? NativeRegExp.TEST 
+                                      ((data.mode == GlobData.GLOB_REPLACE)
+                                       ? NativeRegExp.TEST
                                        : NativeRegExp.MATCH));
         }
 
         return result;
-    } 
-    
-    
-    
-    public int find_split(Scriptable scope, String target, String separator, 
-                          Object reObj, int[] ip, int[] matchlen, 
+    }
+
+
+
+    public int find_split(Scriptable scope, String target, String separator,
+                          Object reObj, int[] ip, int[] matchlen,
                           boolean[] matched, String[][] parensp)
     {
         int i = ip[0];
         int length = target.length();
         int result;
         Context cx = Context.getCurrentContext();
- 
+
         int version = cx.getLanguageVersion();
         NativeRegExp re = (NativeRegExp) reObj;
         again:
@@ -273,7 +272,7 @@ public class RegExpImpl implements RegExpProxy {
         }
         return result;
     }
-    
+
     /**
      * Analog of REGEXP_PAREN_SUBSTRING in C jsregexp.h.
      * Assumes zero-based; i.e., for $3, i==2
@@ -281,12 +280,12 @@ public class RegExpImpl implements RegExpProxy {
     SubString getParenSubString(int i) {
         if (i >= parens.size())
             return SubString.emptySubString;
-        return (SubString) parens.elementAt(i);
+        return (SubString) parens.get(i);
     }
 
     String          input;         /* input string to match (perl $_, GC root) */
     boolean         multiline;     /* whether input contains newlines (perl $*) */
-    Vector          parens;        /* Vector of SubString; last set of parens
+    ObjArray        parens;        /* Vector of SubString; last set of parens
                                       matched (perl $1, $2) */
     SubString       lastMatch;     /* last string matched (perl $&) */
     SubString       lastParen;     /* last paren matched (perl $+) */
@@ -300,8 +299,8 @@ abstract class GlobData {
     static final int GLOB_REPLACE =    2;
     static final int GLOB_SEARCH =     3;
 
-    abstract void doGlobal(Context cx, Scriptable scope, int count, 
-                           RegExpImpl reImpl) 
+    abstract void doGlobal(Context cx, Scriptable scope, int count,
+                           RegExpImpl reImpl)
         throws JavaScriptException;
 
     byte     mode;      /* input: return index, match object, or void */
@@ -318,8 +317,8 @@ class MatchData extends GlobData {
     /*
      * Analog of match_glob() in jsstr.c
      */
-    void doGlobal(Context cx, Scriptable scope, int count, RegExpImpl reImpl) 
-        throws JavaScriptException 
+    void doGlobal(Context cx, Scriptable scope, int count, RegExpImpl reImpl)
+        throws JavaScriptException
     {
         MatchData mdata;
         Object v;
@@ -347,7 +346,7 @@ class ReplaceData extends GlobData {
     /*
      * Analog of replace_glob() in jsstr.c
      */
-    void doGlobal(Context cx, Scriptable scope, int count, RegExpImpl reImpl) 
+    void doGlobal(Context cx, Scriptable scope, int count, RegExpImpl reImpl)
         throws JavaScriptException
     {
         ReplaceData rdata = this;
@@ -356,7 +355,7 @@ class ReplaceData extends GlobData {
 
         char[] leftArray = lc.charArray;
         int leftIndex = rdata.leftIndex;
-        
+
         int leftlen = reImpl.lastMatch.index - leftIndex;
         rdata.leftIndex = reImpl.lastMatch.index + reImpl.lastMatch.length;
         int replen = findReplen(cx, reImpl);
@@ -380,7 +379,7 @@ class ReplaceData extends GlobData {
 
     static SubString dollarStr = new SubString("$");
 
-    static SubString interpretDollar(Context cx, RegExpImpl res, 
+    static SubString interpretDollar(Context cx, RegExpImpl res,
                                      char[] da, int dp, int bp, int[] skip)
     {
         char[] ca;
@@ -417,13 +416,19 @@ class ReplaceData extends GlobData {
                 }
             }
             else {  /* ECMA 3, 1-9 or 01-99 */
+                int parenCount = res.parens.size();
                 num = NativeRegExp.unDigit(dc);
+                if (num > parenCount)
+                    return null;
                 cp = dp + 2;
                 if ((dp + 2) < da.length) {
                     dc = da[dp + 2];
                     if (NativeRegExp.isDigit(dc)) {
-                        num = 10 * num + NativeRegExp.unDigit(dc);
-                        cp++;
+                        tmp = 10 * num + NativeRegExp.unDigit(dc);
+                        if (tmp <= parenCount) {
+                            cp++;
+                            num = tmp;
+                        }
                     }
                 }
                 if (num == 0) return null;  /* $0 or $00 is not valid */
@@ -472,12 +477,12 @@ class ReplaceData extends GlobData {
         if (lambda != null) {
             // invoke lambda function with args lastMatch, $1, $2, ... $n,
             // leftContext.length, whole string.
-            Vector parens = reImpl.parens;
+            ObjArray parens = reImpl.parens;
             int parenCount = parens.size();
             Object[] args = new Object[parenCount + 3];
             args[0] = reImpl.lastMatch.toString();
             for (int i=0; i < parenCount; i++) {
-                SubString sub = (SubString) parens.elementAt(i);
+                SubString sub = (SubString) parens.get(i);
                 args[i+1] = sub.toString();
             }
             args[parenCount+1] = new Integer(reImpl.leftContext.length);

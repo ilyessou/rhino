@@ -86,7 +86,7 @@ import org.mozilla.javascript.debug.*;
 public class Context {
     public static final String languageVersionProperty = "language version";
     public static final String errorReporterProperty   = "error reporter";
-    
+
     /**
      * Create a new Context.
      *
@@ -96,22 +96,6 @@ public class Context {
      * @see org.mozilla.javascript.Context#enter
      */
     public Context() {
-        init();
-    }
-    
-    /**
-     * Create a new context with the associated security support.
-     * 
-     * @param securitySupport an encapsulation of the functionality 
-     *        needed to support security for scripts.
-     * @see org.mozilla.javascript.SecuritySupport
-     */
-    public Context(SecuritySupport securitySupport) {
-        this.securitySupport = securitySupport;
-        init();
-    }
-    
-    private void init() {
         setLanguageVersion(VERSION_DEFAULT);
         optimizationLevel = codegenClass != null ? 0 : -1;
         Object[] array = contextListeners;
@@ -121,7 +105,15 @@ public class Context {
             }
         }
     }
-        
+
+/**
+@deprecated The {@link SecuritySupport} class is deprecated. See its documentation for the upgrade path.
+*/
+    public Context(SecuritySupport x) {
+        this();
+        setClassShutter(x);
+    }
+
     /**
      * Get a context associated with the current thread, creating
      * one if need be.
@@ -134,14 +126,16 @@ public class Context {
      * <p>
      * Calling <code>enter()</code> will
      * return either the Context currently associated with the
-     * thread, or will create a new context and associate it 
+     * thread, or will create a new context and associate it
      * with the current thread. Each call to <code>enter()</code>
      * must have a matching call to <code>exit()</code>. For example,
      * <pre>
      *      Context cx = Context.enter();
-     *      ...
-     *      cx.evaluateString(...);
-     *      Context.exit();
+     *      try {
+     *          ...
+     *          cx.evaluateString(...);
+     *      }
+     *      finally { Context.exit(); }
      * </pre>
      * @return a Context associated with the current thread
      * @see org.mozilla.javascript.Context#getCurrentContext
@@ -150,59 +144,63 @@ public class Context {
     public static Context enter() {
         return enter(null);
     }
-    
+
     /**
      * Get a Context associated with the current thread, using
      * the given Context if need be.
      * <p>
      * The same as <code>enter()</code> except that <code>cx</code>
-     * is associated with the current thread and returned if 
+     * is associated with the current thread and returned if
      * the current thread has no associated context and <code>cx</code>
      * is not associated with any other thread.
      * @param cx a Context to associate with the thread if possible
      * @return a Context associated with the current thread
      */
     public static Context enter(Context cx) {
-        // There's some duplication of code in this method to avoid
-        // unnecessary synchronizations.
-        Thread t = Thread.currentThread();
-        Context current = (Context) threadContexts.get(t);
-        if (current != null) {
-            synchronized (current) {
-                current.enterCount++;
+
+        Context old = getCurrentContext();
+
+        if (cx == null) {
+            if (old != null) {
+                cx = old;
+            } else {
+                cx = new Context();
+                setThreadContext(cx);
             }
-        }
-        else if (cx != null) {
-            synchronized (cx) {
-                if (cx.currentThread == null) {
-                    cx.currentThread = t;
-                    threadContexts.put(t, cx);
-                    cx.enterCount++;
+        } else {
+            if (cx.enterCount != 0) {
+                // The suplied context must be the context for
+                // the current thread if it is already entered
+                if (cx != old) {
+                    throw new RuntimeException
+                        ("Cannot enter Context active on another thread");
+                }
+            } else {
+                if (old != null) {
+                    cx = old;
+                } else {
+                    setThreadContext(cx);
                 }
             }
-            current = cx;
         }
-        else {
-        current = new Context();
-        current.currentThread = t;
-        threadContexts.put(t, current);
-        current.enterCount = 1;
-        }
-        Object[] array = contextListeners;
-        if (array != null) {
-            for (int i = array.length; i-- != 0;) {
-                ((ContextListener)array[i]).contextEntered(current);
+
+        ++cx.enterCount;
+
+        Object[] listeners = contextListeners;
+        if (listeners != null) {
+            for (int i = listeners.length; i-- != 0;) {
+                ((ContextListener)listeners[i]).contextEntered(cx);
             }
         }
-        return current;
+        return cx;
      }
-        
+
     /**
      * Exit a block of code requiring a Context.
      *
      * Calling <code>exit()</code> will remove the association between
-     * the current thread and a Context if the prior call to 
-     * <code>enter()</code> on this thread newly associated a Context 
+     * the current thread and a Context if the prior call to
+     * <code>enter()</code> on this thread newly associated a Context
      * with this thread.
      * Once the current thread no longer has an associated Context,
      * it cannot be used to execute JavaScript until it is again associated
@@ -211,24 +209,48 @@ public class Context {
      * @see org.mozilla.javascript.Context#enter
      */
     public static void exit() {
-        Context cx = getCurrentContext();
         boolean released = false;
-        if (cx != null) {
-            synchronized (cx) {
-                if (--cx.enterCount == 0) {
-                    threadContexts.remove(cx.currentThread);
-                    cx.currentThread = null;
-                    released = true;
+        Context cx = getCurrentContext();
+        if (cx == null) {
+            throw new RuntimeException
+                ("Calling Context.exit without previous Context.enter");
+        }
+        if (Context.check && cx.enterCount < 1) Context.codeBug();
+        --cx.enterCount;
+        if (cx.enterCount == 0) {
+            released = true;
+            setThreadContext(null);
+        }
+
+        Object[] listeners = contextListeners;
+        if (listeners != null) {
+            for (int i = listeners.length; i-- != 0;) {
+                ((ContextListener)listeners[i]).contextExited(cx);
+            }
+            if (released) {
+                for (int i = listeners.length; i-- != 0;) {
+                    ((ContextListener)listeners[i]).contextReleased(cx);
                 }
             }
-            Object[] array = contextListeners;
-            if (array != null) {
-                for (int i = array.length; i-- != 0;) {
-                    ContextListener l = (ContextListener)array[i];
-                    l.contextExited(cx);
-                    if (released) { l.contextReleased(cx); }
-                }
-            }
+        }
+    }
+
+    /**
+     * Add a Context listener.
+     */
+    public static void addContextListener(ContextListener listener) {
+        synchronized (contextListenersLock) {
+            contextListeners = ListenerArray.add(contextListeners, listener);
+        }
+    }
+
+    /**
+     * Remove a Context listener.
+     * @param listener the listener to remove.
+     */
+    public static void removeContextListener(ContextListener listener) {
+        synchronized (contextListenersLock) {
+            contextListeners = ListenerArray.remove(contextListeners, listener);
         }
     }
 
@@ -239,16 +261,36 @@ public class Context {
      * the Context associated with the current thread. <p>
      *
      * @return the Context associated with the current thread, or
-     *         null if no context is associated with the current 
+     *         null if no context is associated with the current
      *         thread.
      * @see org.mozilla.javascript.Context#enter
      * @see org.mozilla.javascript.Context#exit
      */
     public static Context getCurrentContext() {
+        if (threadLocalCx != null) {
+            try {
+                return (Context)threadLocalGet.invoke(threadLocalCx, null);
+            } catch (Exception ex) { }
+        }
         Thread t = Thread.currentThread();
         return (Context) threadContexts.get(t);
     }
-    
+
+    private static void setThreadContext(Context cx) {
+        if (threadLocalCx != null) {
+            try {
+                threadLocalSet.invoke(threadLocalCx, new Object[] { cx });
+                return;
+            } catch (Exception ex) { }
+        }
+        Thread t = Thread.currentThread();
+        if (cx != null) {
+            threadContexts.put(t, cx);
+        } else {
+            threadContexts.remove(t);
+        }
+    }
+
     /**
      * Language versions
      *
@@ -321,7 +363,7 @@ public class Context {
         Object[] array = listeners;
         if (array != null && version != this.version) {
             firePropertyChangeImpl(array, languageVersionProperty,
-                               new Integer(this.version), 
+                               new Integer(this.version),
                                new Integer(version));
         }
         this.version = version;
@@ -331,20 +373,20 @@ public class Context {
      * Get the implementation version.
      *
      * <p>
-     * The implementation version is of the form 
+     * The implementation version is of the form
      * <pre>
      *    "<i>name langVer</i> <code>release</code> <i>relNum date</i>"
      * </pre>
-     * where <i>name</i> is the name of the product, <i>langVer</i> is 
-     * the language version, <i>relNum</i> is the release number, and 
-     * <i>date</i> is the release date for that specific 
-     * release in the form "yyyy mm dd". 
+     * where <i>name</i> is the name of the product, <i>langVer</i> is
+     * the language version, <i>relNum</i> is the release number, and
+     * <i>date</i> is the release date for that specific
+     * release in the form "yyyy mm dd".
      *
-     * @return a string that encodes the product, language version, release 
+     * @return a string that encodes the product, language version, release
      *         number, and date.
      */
      public String getImplementationVersion() {
-        return "Rhino 1.5 release 3 2002 01 27";
+        return "Rhino 1.5 release 4.1 2003 04 21";
      }
 
     /**
@@ -399,7 +441,7 @@ public class Context {
         locale = loc;
         return result;
     }
-    
+
     /**
      * Register an object to receive notifications when a bound property
      * has changed
@@ -410,11 +452,11 @@ public class Context {
     public void addPropertyChangeListener(PropertyChangeListener listener) {
         synchronized (this) {
             listeners = ListenerArray.add(listeners, listener);
-        }    
+        }
     }
-    
+
     /**
-     * Remove an object from the list of objects registered to receive 
+     * Remove an object from the list of objects registered to receive
      * notification of changes to a bounded property
      * @see java.beans.PropertyChangeEvent
      * @see #addPropertyChangeListener(java.beans.PropertyChangeListener)
@@ -425,7 +467,7 @@ public class Context {
             listeners = ListenerArray.remove(listeners, listener);
         }
     }
-    
+
     /**
      * Notify any registered listeners that a bounded property has changed
      * @see #addPropertyChangeListener(java.beans.PropertyChangeListener)
@@ -457,7 +499,7 @@ public class Context {
             }
     }
     }
-                                    
+
     /**
      * Report a warning using the error reporter for the current thread.
      *
@@ -559,19 +601,19 @@ public class Context {
     }
 
     static EvaluatorException reportRuntimeError1
-        (String messageId, Object arg1) 
+        (String messageId, Object arg1)
     {
         return reportRuntimeError(getMessage1(messageId, arg1));
     }
 
     static EvaluatorException reportRuntimeError2
-        (String messageId, Object arg1, Object arg2) 
+        (String messageId, Object arg1, Object arg2)
     {
         return reportRuntimeError(getMessage2(messageId, arg1, arg2));
     }
 
     static EvaluatorException reportRuntimeError3
-        (String messageId, Object arg1, Object arg2, Object arg3) 
+        (String messageId, Object arg1, Object arg2, Object arg3)
     {
         return reportRuntimeError(getMessage3(messageId, arg1, arg2, arg3));
     }
@@ -607,7 +649,7 @@ public class Context {
     public Scriptable initStandardObjects(ScriptableObject scope) {
         return initStandardObjects(scope, false);
     }
-    
+
     /**
      * Initialize the standard objects.
      *
@@ -619,10 +661,10 @@ public class Context {
      * can be evaluated in that scope.<p>
      *
      * This method does not affect the Context it is called upon.<p>
-     * 
+     *
      * This form of the method also allows for creating "sealed" standard
      * objects. An object that is sealed cannot have properties added or
-     * removed. This is useful to create a "superglobal" that can be shared 
+     * removed. This is useful to create a "superglobal" that can be shared
      * among several top-level objects. Note that sealing is not allowed in
      * the current ECMA/ISO language specification, but is likely for
      * the next version.
@@ -630,7 +672,7 @@ public class Context {
      * @param scope the scope to initialize, or null, in which case a new
      *        object will be created to serve as the scope
      * @param sealed whether or not to create sealed standard objects that
-     *        cannot be modified. 
+     *        cannot be modified.
      * @return the initialized scope
      * @since 1.4R3
      */
@@ -668,25 +710,25 @@ public class Context {
         NativeCall.init(this, scope, sealed);
         NativeScript.init(this, scope, sealed);
 
-        new LazilyLoadedCtor(scope, 
+        new LazilyLoadedCtor(scope,
                              "RegExp",
                              "org.mozilla.javascript.regexp.NativeRegExp",
                              sealed);
 
         // This creates the Packages and java package roots.
-        new LazilyLoadedCtor(scope, 
+        new LazilyLoadedCtor(scope,
                              "Packages",
                              "org.mozilla.javascript.NativeJavaPackage",
                              sealed);
-        new LazilyLoadedCtor(scope, 
-                             "java", 
+        new LazilyLoadedCtor(scope,
+                             "java",
                              "org.mozilla.javascript.NativeJavaPackage",
                              sealed);
-        new LazilyLoadedCtor(scope, 
+        new LazilyLoadedCtor(scope,
                              "getClass",
                              "org.mozilla.javascript.NativeJavaPackage",
                              sealed);
- 
+
         // Define the JavaAdapter class, allowing it to be overridden.
         String adapterClass = "org.mozilla.javascript.JavaAdapter";
         String adapterProperty = "JavaAdapter";
@@ -705,14 +747,14 @@ public class Context {
 
         return scope;
     }
-    
+
     /**
      * Get the singleton object that represents the JavaScript Undefined value.
      */
     public static Object getUndefinedValue() {
         return Undefined.instance;
     }
-    
+
     /**
      * Evaluate a JavaScript source string.
      *
@@ -723,9 +765,9 @@ public class Context {
      * @param source the JavaScript source
      * @param sourceName a string describing the source, such as a filename
      * @param lineno the starting line number
-     * @param securityDomain an arbitrary object that specifies security 
-     *        information about the origin or owner of the script. For 
-     *        implementations that don't care about security, this value 
+     * @param securityDomain an arbitrary object that specifies security
+     *        information about the origin or owner of the script. For
+     *        implementations that don't care about security, this value
      *        may be null.
      * @return the result of evaluating the string
      * @exception JavaScriptException if an uncaught JavaScript exception
@@ -739,7 +781,7 @@ public class Context {
     {
         try {
             Reader in = new StringReader(source);
-            return evaluateReader(scope, in, sourceName, lineno, 
+            return evaluateReader(scope, in, sourceName, lineno,
                                   securityDomain);
         }
         catch (IOException ioe) {
@@ -757,9 +799,9 @@ public class Context {
      * @param in the Reader to get JavaScript source from
      * @param sourceName a string describing the source, such as a filename
      * @param lineno the starting line number
-     * @param securityDomain an arbitrary object that specifies security 
-     *        information about the origin or owner of the script. For 
-     *        implementations that don't care about security, this value 
+     * @param securityDomain an arbitrary object that specifies security
+     *        information about the origin or owner of the script. For
+     *        implementations that don't care about security, this value
      *        may be null.
      * @return the result of evaluating the source
      *
@@ -772,7 +814,7 @@ public class Context {
                                  Object securityDomain)
         throws IOException, JavaScriptException
     {
-        Script script = compileReader(scope, in, sourceName, lineno, 
+        Script script = compileReader(scope, in, sourceName, lineno,
                                       securityDomain);
         if (script != null)
             return script.exec(this, scope);
@@ -805,7 +847,7 @@ public class Context {
 
         // Temporarily set error reporter to always be the exception-throwing
         // DefaultErrorReporter.  (This is why the method is synchronized...)
-        ErrorReporter currentReporter = 
+        ErrorReporter currentReporter =
             setErrorReporter(new DefaultErrorReporter());
 
         boolean errorseen = false;
@@ -826,7 +868,7 @@ public class Context {
         // appending more source.
         if (errorseen && ts.eof())
             return false;
-        else 
+        else
             return true;
     }
 
@@ -842,9 +884,9 @@ public class Context {
      * @param in the input reader
      * @param sourceName a string describing the source, such as a filename
      * @param lineno the starting line number for reporting errors
-     * @param securityDomain an arbitrary object that specifies security 
-     *        information about the origin or owner of the script. For 
-     *        implementations that don't care about security, this value 
+     * @param securityDomain an arbitrary object that specifies security
+     *        information about the origin or owner of the script. For
+     *        implementations that don't care about security, this value
      *        may be null.
      * @return a script that may later be executed
      * @see org.mozilla.javascript.Script#exec
@@ -854,7 +896,7 @@ public class Context {
                                 int lineno, Object securityDomain)
         throws IOException
     {
-        return (Script) compile(scope, in, sourceName, lineno, securityDomain, 
+        return (Script) compile(scope, in, sourceName, lineno, securityDomain,
                                 false);
     }
 
@@ -863,15 +905,15 @@ public class Context {
      * Compile a JavaScript function.
      * <p>
      * The function source must be a function definition as defined by
-     * ECMA (e.g., "function f(a) { return a; }"). 
+     * ECMA (e.g., "function f(a) { return a; }").
      *
      * @param scope the scope to compile relative to
      * @param source the function definition source
      * @param sourceName a string describing the source, such as a filename
      * @param lineno the starting line number
-     * @param securityDomain an arbitrary object that specifies security 
-     *        information about the origin or owner of the script. For 
-     *        implementations that don't care about security, this value 
+     * @param securityDomain an arbitrary object that specifies security
+     *        information about the origin or owner of the script. For
+     *        implementations that don't care about security, this value
      *        may be null.
      * @return a Function that may later be called
      * @see org.mozilla.javascript.Function
@@ -882,7 +924,7 @@ public class Context {
     {
         Reader in = new StringReader(source);
         try {
-            return (Function) compile(scope, in, sourceName, lineno, 
+            return (Function) compile(scope, in, sourceName, lineno,
                                       securityDomain, true);
         }
         catch (IOException ioe) {
@@ -1030,18 +1072,20 @@ public class Context {
                NotAFunctionException,
                JavaScriptException
     {
-        Object ctorVal = ScriptRuntime.getTopLevelProp(scope, constructorName);
+        scope = ScriptableObject.getTopLevelScope(scope);
+        Object ctorVal = ScriptableObject.getProperty(scope, constructorName);
+        if (ctorVal instanceof Function) {
+            Function ctor = (Function) ctorVal;
+            if (args == null) { args = ScriptRuntime.emptyArgs; }
+            return ctor.construct(this, scope, args);
+        }
         if (ctorVal == Scriptable.NOT_FOUND) {
             String message = getMessage1("msg.ctor.not.found", constructorName);
             throw new PropertyException(message);
-        }
-        if (!(ctorVal instanceof Function)) {
+        } else {
             String message = getMessage1("msg.not.ctor", constructorName);
             throw new NotAFunctionException(message);
         }
-        Function ctor = (Function) ctorVal;
-        return ctor.construct(this, ctor.getParentScope(),
-                              (args == null) ? ScriptRuntime.emptyArgs : args);
     }
 
     /**
@@ -1071,33 +1115,42 @@ public class Context {
         newArrayHelper(scope, result);
         return result;
     }
-    
+
     /**
      * Get the elements of a JavaScript array.
      * <p>
-     * If the object defines a length property, a Java array with that
-     * length is created and initialized with the values obtained by
+     * If the object defines a length property which can be converted to
+     * a number a Java array with length given by
+     * {@link ScriptRuntime#toUint32(double)} is created and initialized with
+     * the values obtained by
      * calling get() on object for each value of i in [0,length-1]. If
      * there is not a defined value for a property the Undefined value
      * is used to initialize the corresponding element in the array. The
      * Java array is then returned.
-     * If the object doesn't define a length property, null is returned.
+     * If the object doesn't define a length property or it is not a number,
+     * empty array is returned.
      * @param object the JavaScript array or array-like object
      * @return a Java array of objects
      * @since 1.4 release 2
      */
     public Object[] getElements(Scriptable object) {
-        double doubleLen = NativeArray.getLengthProperty(object);
-        if (doubleLen != doubleLen)
-            return null;
-        int len = (int) doubleLen;
-        Object[] result = new Object[len];
-        for (int i=0; i < len; i++) {
-            Object elem = object.get(i, object);
-            result[i] = elem == Scriptable.NOT_FOUND ? Undefined.instance 
-                                                     : elem;
+        long longLen = NativeArray.getLengthProperty(object);
+        if (longLen > Integer.MAX_VALUE) {
+            // arrays beyond  MAX_INT is not in Java in any case
+            throw new IllegalArgumentException();
         }
-        return result;
+        int len = (int) longLen;
+        if (len == 0) {
+            return ScriptRuntime.emptyArgs;
+        } else {
+            Object[] result = new Object[len];
+            for (int i=0; i < len; i++) {
+                Object elem = ScriptableObject.getProperty(object, i);
+                result[i] = (elem == Scriptable.NOT_FOUND) ? Undefined.instance
+                                                           : elem;
+            }
+            return result;
+        }
     }
 
     /**
@@ -1161,7 +1214,7 @@ public class Context {
     public static Scriptable toObject(Object value, Scriptable scope) {
         return ScriptRuntime.toObject(scope, value, null);
     }
-    
+
     /**
      * Convert the value to an JavaScript object value.
      * <p>
@@ -1172,7 +1225,7 @@ public class Context {
      * <p>
      * Additionally, arbitrary Java objects and classes will be
      * wrapped in a Scriptable object with its Java fields and methods
-     * reflected as JavaScript properties of the object. If the 
+     * reflected as JavaScript properties of the object. If the
      * "staticType" parameter is provided, it will be used as the static
      * type of the Java value to create.
      *
@@ -1182,11 +1235,28 @@ public class Context {
      * @param staticType the static type of the Java value to create
      * @return new JavaScript object
      */
-    public static Scriptable toObject(Object value, Scriptable scope, 
+    public static Scriptable toObject(Object value, Scriptable scope,
                                       Class staticType) {
         if (value == null && staticType != null)
             return null;
         return ScriptRuntime.toObject(scope, value, staticType);
+    }
+
+    /**
+     * Convert a JavaScript value into the desired type.
+     * Uses the semantics defined with LiveConnect3 and throws an
+     * Illegal argument exception if the conversion cannot be performed.
+     * @param value the JavaScript value to convert
+     * @param desired type the Java type to convert to. Primitive Java
+     *        types are represented using the TYPE fields in the corresponding
+     *        wrapper class in java.lang.
+     * @return the converted value
+     * @throws IllegalArgumentException if the conversion cannot be performed
+     */
+    public static Object toType(Object value, Class desiredType)
+        throws IllegalArgumentException
+    {
+        return NativeJavaObject.coerceType(desiredType, value, false);
     }
 
     /**
@@ -1206,7 +1276,7 @@ public class Context {
      */
     public void setGeneratingDebug(boolean generatingDebug) {
         generatingDebugChanged = true;
-        if (generatingDebug)
+        if (generatingDebug && getOptimizationLevel() > 0)
             setOptimizationLevel(0);
         this.generatingDebug = generatingDebug;
     }
@@ -1252,7 +1322,7 @@ public class Context {
      * 9. Any negative values will be interpreted as -1, and any values
      * greater than 9 will be interpreted as 9.
      * An optimization level of -1 indicates that interpretive mode will
-     * always be used. Levels 0 through 9 indicate that class files may 
+     * always be used. Levels 0 through 9 indicate that class files may
      * be generated. Higher optimization levels trade off compile time
      * performance for runtime performance.
      * The optimizer level can't be set greater than -1 if the optimizer
@@ -1272,244 +1342,202 @@ public class Context {
             optimizationLevel = -1;
         this.optimizationLevel = optimizationLevel;
     }
-    
+
     /**
-     * Get the current class name.
-     * 
-     * @since 30/10/01 tip + patch (Kemal Bayram)
+     * @deprecated Use <tt>ClassNameHelper.get(cx).getClassName()</tt> instead.
+     * @see ClassNameHelper#getClassName
      */
     public String getClassName() {
+        ClassNameHelper nameHelper = ClassNameHelper.get(this);
         return nameHelper != null ? nameHelper.getClassName() : null;
     }
 
     /**
-     * Set the current class name.
-     * 
-     * @since 30/10/01 tip + patch (Kemal Bayram)
+     * @deprecated Use <tt>ClassNameHelper.get(cx).setClassName(className)</tt> instead.
+     * @see ClassNameHelper#setClassName
      */
     public void setClassName(String className) {
-        if (nameHelper != null) 
-	      nameHelper.setClassName(className);
+        ClassNameHelper nameHelper = ClassNameHelper.get(this);
+        if (nameHelper != null)
+              nameHelper.setClassName(className);
     }
-    
+
     /**
-     * Get the current target class file name.
-     * <p>
-     * If nonnull, requests to compile source will result in one or
-     * more class files being generated.
-     * @since 1.3
+     * @deprecated Use
+     * <tt>ClassNameHelper.get(cx).getTargetClassFileName()</tt> instead.
+     * @see ClassNameHelper#getTargetClassFileName
      */
     public String getTargetClassFileName() {
+        ClassNameHelper nameHelper = ClassNameHelper.get(this);
         if (nameHelper != null) {
-	  	ClassRepository repository = nameHelper.getClassRepository();
-		if (repository instanceof FileClassRepository)
-		    return ((FileClassRepository)repository).getTargetClassFileName(nameHelper.getClassName());
-	  }
-	  return null;
-    }
-    
-    /**
-     * Set the current target class file name.
-     * <p>
-     * If nonnull, requests to compile source will result in one or
-     * more class files being generated. If null, classes will only
-     * be generated in memory.
-     *
-     * @since 1.3
-     */
-    public void setTargetClassFileName(String classFileName) {
-        if (nameHelper != null)
-	      if (classFileName != null)
-                nameHelper.setClassRepository(new FileClassRepository(classFileName));
-		else
-		    nameHelper.setClassName(null);
-    }
-
-    /**
-     * Get the current package to generate classes into.
-     *
-     * @since 1.3
-     */
-    public String getTargetPackage() {
-        return nameHelper != null ? nameHelper.getTargetPackage() : null;
-    }
-
-    /**
-     * Set the package to generate classes into.
-     *
-     * @since 1.3
-     */
-    public void setTargetPackage(String targetPackage) {
-        if (nameHelper != null)
-            nameHelper.setTargetPackage(targetPackage);
-    }
-    
-    /**
-     * Get the current class repository.
-     * 
-     * @see ClassRepository
-     * @since 30/10/01 tip + patch (Kemal Bayram)
-     */
-    public ClassRepository getClassRepository() {
-        return nameHelper != null ? nameHelper.getClassRepository() : null;
-    }
-
-    /**
-     * Set the current class repository.
-     * 
-     * @see ClassRepository
-     * @since 30/10/01 tip + patch (Kemal Bayram)
-     */
-    public void setClassRepository(ClassRepository classRepository) {
-        if (nameHelper != null)
-            nameHelper.setClassRepository(classRepository);
-    }
-
-    /**
-     * Get the current interface to write class bytes into.
-     *
-     * @see ClassOutput
-     * @since 1.5 Release 2
-     */
-    public ClassOutput getClassOutput() {
-        if (nameHelper != null) {
-            ClassRepository repository = nameHelper.getClassRepository();
-            if ((repository != null) && 
-                (repository instanceof ClassOutputWrapper)) 
-            {
-                return ((ClassOutputWrapper)repository).classOutput;
-            }
+            return nameHelper.getTargetClassFileName();
         }
         return null;
     }
 
     /**
-     * Set the interface to write class bytes into.
-     * Unless setTargetClassFileName() has been called classOutput will be
-     * used each time the javascript compiler has generated the bytecode for a
-     * script class.
-     *
-     * @see ClassOutput
-     * @since 1.5 Release 2
+     * @deprecated Use
+     * <tt>ClassNameHelper.get(cx).setTargetClassFileName(classFileName)</tt> instead.
+     * @see ClassNameHelper#setTargetClassFileName
      */
-    public void setClassOutput(ClassOutput classOutput) {
+    public void setTargetClassFileName(String classFileName) {
+        ClassNameHelper nameHelper = ClassNameHelper.get(this);
         if (nameHelper != null) {
-            if (classOutput != null) 
-                nameHelper.setClassRepository(new ClassOutputWrapper(classOutput));
-            else
-                nameHelper.setClassRepository(null);
-        }
-    }
-    
-    /**
-     * Add a Context listener.
-     */
-    public static void addContextListener(ContextListener listener) {
-        synchronized (staticDataLock) {
-            contextListeners = ListenerArray.add(contextListeners, listener);
-        }
-    }
-    
-    /**
-     * Remove a Context listener.
-     * @param listener the listener to remove.
-     */
-    public static void removeContextListener(ContextListener listener) {
-        synchronized (staticDataLock) {
-            contextListeners = ListenerArray.remove(contextListeners, listener);
+            nameHelper.setTargetClassFileName(classFileName);
         }
     }
 
     /**
-     * Set the security support for this context. 
-     * <p> SecuritySupport may only be set if it is currently null.
+     * @deprecated Use <tt>ClassNameHelper.get(cx).getTargetPackage()</tt> instead.
+     * @see ClassNameHelper#getTargetPackage
+     */
+    public String getTargetPackage() {
+        ClassNameHelper nameHelper = ClassNameHelper.get(this);
+        return nameHelper != null ? nameHelper.getTargetPackage() : null;
+    }
+
+    /**
+     * @deprecated Use <tt>ClassNameHelper.get(cx).setTargetPackage(targetPackage)</tt>
+     * instead.
+     * @see ClassNameHelper#setTargetPackage
+     */
+    public void setTargetPackage(String targetPackage) {
+        ClassNameHelper nameHelper = ClassNameHelper.get(this);
+        if (nameHelper != null)
+            nameHelper.setTargetPackage(targetPackage);
+    }
+
+    /**
+     * @deprecated Use <tt>ClassNameHelper.get(cx).getClassRepository()</tt> instead.
+     * @see ClassNameHelper#getClassRepository
+     */
+    public ClassRepository getClassRepository() {
+        ClassNameHelper nameHelper = ClassNameHelper.get(this);
+        return nameHelper != null ? nameHelper.getClassRepository() : null;
+    }
+
+    /**
+     * @deprecated Use
+     * <tt>ClassNameHelper.get(cx).setClassRepository(classRepository)</tt> instead.
+     * @see ClassNameHelper#setClassRepository
+     */
+    public void setClassRepository(ClassRepository classRepository) {
+        ClassNameHelper nameHelper = ClassNameHelper.get(this);
+        if (nameHelper != null)
+            nameHelper.setClassRepository(classRepository);
+    }
+
+    /**
+     * @deprecated Use
+     * <tt>ClassNameHelper.get(cx).getClassOutput()</tt> instead.
+     * @see ClassNameHelper#getClassOutput
+     */
+    public ClassOutput getClassOutput() {
+        ClassNameHelper nameHelper = ClassNameHelper.get(this);
+        if (nameHelper != null) {
+            return nameHelper.getClassOutput();
+        }
+        return null;
+    }
+
+    /**
+     * @deprecated Use
+     * <tt>ClassNameHelper.get(cx).setClassOutput(classOutput)</tt> instead.
+     * @see ClassNameHelper#setClassOutput
+     */
+    public void setClassOutput(ClassOutput classOutput) {
+        ClassNameHelper nameHelper = ClassNameHelper.get(this);
+        if (nameHelper != null) {
+            nameHelper.setClassOutput(classOutput);
+        }
+    }
+
+    /**
+     * Set the security controller for this context.
+     * <p> SecurityController may only be set if it is currently null.
      * Otherwise a SecurityException is thrown.
-     * @param supportObj a SecuritySupport object
-     * @throws SecurityException if there is already a SecuritySupport
+     * @param controller a SecurityController object
+     * @throws SecurityException if there is already a SecurityController
      *         object for this Context
      */
-    public synchronized void setSecuritySupport(SecuritySupport supportObj) {
-        if (securitySupport != null) {
+    public void setSecurityController(SecurityController controller) {
+        if (controller == null) throw new IllegalArgumentException();
+        if (securityController != null) {
             throw new SecurityException("Cannot overwrite existing " +
-                                        "SecuritySupport object");
+                                        "SecurityController object");
         }
-        securitySupport = supportObj;
+        securityController = controller;
     }
-        
+
+/**
+@deprecated The {@link SecuritySupport} class is deprecated. See its documentation for the upgrade path.
+*/
+    public void setSecuritySupport(SecuritySupport x) {
+        setClassShutter(x);
+    }
+
     /**
-     * Return true if a security domain is required on calls to
-     * compile and evaluate scripts.
-     *
-     * @since 1.4 Release 2
+     * Set the LiveConnect access filter for this context.
+     * <p> {@link ClassShutter} may only be set if it is currently null.
+     * Otherwise a SecurityException is thrown.
+     * @param shutter a ClassShutter object
+     * @throws SecurityException if there is already a ClassShutter
+     *         object for this Context
      */
-    public static boolean isSecurityDomainRequired() { 
-        return requireSecurityDomain;
+    public void setClassShutter(ClassShutter shutter) {
+        if (shutter == null) throw new IllegalArgumentException();
+        if (classShutter != null) {
+            throw new SecurityException("Cannot overwrite existing " +
+                                        "ClassShutter object");
+        }
+        classShutter = shutter;
     }
-    
-    /**
-     * Returns the security context associated with the innermost
-     * script or function being executed by the interpreter.
-     * @since 1.4 release 2
-     */
-    public Object getInterpreterSecurityDomain() {
-        return interpreterSecurityDomain;
+
+    final ClassShutter getClassShutter() {
+        return classShutter;
     }
-    
+
     /**
-     * Returns true if the class parameter is a class in the 
-     * interpreter. Typically used by embeddings that get a class
-     * context to check security. These embeddings must know 
-     * whether to get the security context associated with the
-     * interpreter or not.
-     * 
-     * @param cl a class to test whether or not it is an interpreter
-     *           class
-     * @return true if cl is an interpreter class
-     * @since 1.4 release 2
-     */
-    public boolean isInterpreterClass(Class cl) {
-        return cl == Interpreter.class;
-    }
-    
-    /**
-     * Set the class that the generated target will extend.
-     * 
-     * @param extendsClass the class it extends
+     * @deprecated Use
+     * <tt>ClassNameHelper.get(cx).setTargetExtends(extendsClass)</tt> instead.
+     * @see ClassNameHelper#setTargetExtends
      */
     public void setTargetExtends(Class extendsClass) {
+        ClassNameHelper nameHelper = ClassNameHelper.get(this);
         if (nameHelper != null) {
             nameHelper.setTargetExtends(extendsClass);
         }
     }
-       
+
     /**
-     * Set the interfaces that the generated target will implement.
-     * 
-     * @param implementsClasses an array of Class objects, one for each
-     *                          interface the target will extend
+     * @deprecated Use
+     * <tt>ClassNameHelper.get(cx).setTargetImplements(implementsClasses)</tt>
+     * instead.
+     * @see ClassNameHelper#setTargetImplements
      */
     public void setTargetImplements(Class[] implementsClasses) {
+        ClassNameHelper nameHelper = ClassNameHelper.get(this);
         if (nameHelper != null) {
             nameHelper.setTargetImplements(implementsClasses);
         }
     }
-        
+
     /**
      * Get a value corresponding to a key.
      * <p>
-     * Since the Context is associated with a thread it can be 
-     * used to maintain values that can be later retrieved using 
-     * the current thread. 
+     * Since the Context is associated with a thread it can be
+     * used to maintain values that can be later retrieved using
+     * the current thread.
      * <p>
      * Note that the values are maintained with the Context, so
      * if the Context is disassociated from the thread the values
      * cannot be retreived. Also, if private data is to be maintained
-     * in this manner the key should be a java.lang.Object 
+     * in this manner the key should be a java.lang.Object
      * whose reference is not divulged to untrusted code.
      * @param key the key used to lookup the value
      * @return a value previously stored using putThreadLocal.
      */
-    public Object getThreadLocal(Object key) {
+    public final Object getThreadLocal(Object key) {
         if (hashtable == null)
             return null;
         return hashtable.get(key);
@@ -1526,7 +1554,7 @@ public class Context {
             hashtable = new Hashtable();
         hashtable.put(key, value);
     }
-    
+
     /**
      * Remove values from thread-local storage.
      * @param key the key for the entry to remove.
@@ -1536,8 +1564,8 @@ public class Context {
         if (hashtable == null)
             return;
         hashtable.remove(key);
-    }    
-    
+    }
+
     /**
      * Return whether functions are compiled by this context using
      * dynamic scope.
@@ -1547,10 +1575,10 @@ public class Context {
      * This is useful for sharing functions across multiple scopes.
      * @since 1.5 Release 1
      */
-    public boolean hasCompileFunctionsWithDynamicScope() {
+    public final boolean hasCompileFunctionsWithDynamicScope() {
         return compileFunctionsWithDynamicScopeFlag;
     }
-    
+
     /**
      * Set whether functions compiled by this context should use
      * dynamic scope.
@@ -1561,95 +1589,189 @@ public class Context {
     public void setCompileFunctionsWithDynamicScope(boolean flag) {
         compileFunctionsWithDynamicScopeFlag = flag;
     }
-    
+
     /**
      * Set whether to cache some values statically.
      * <p>
-     * By default, the engine will cache some values statically 
+     * By default, the engine will cache some values statically
      * (reflected Java classes, for instance). This can speed
      * execution dramatically, but increases the memory footprint.
-     * Also, with caching enabled, references may be held to 
-     * objects past the lifetime of any real usage. 
+     * Also, with caching enabled, references may be held to
+     * objects past the lifetime of any real usage.
      * <p>
-     * If caching is enabled and this method is called with a 
+     * If caching is enabled and this method is called with a
      * <code>false</code> argument, the caches will be emptied.
      * So one strategy could be to clear the caches at times
      * appropriate to the application.
      * <p>
      * Caching is enabled by default.
-     * 
+     *
      * @param cachingEnabled if true, caching is enabled
-     * @since 1.5 Release 1 
+     * @since 1.5 Release 1
      */
     public static void setCachingEnabled(boolean cachingEnabled) {
         if (isCachingEnabled && !cachingEnabled) {
             // Caching is being turned off. Empty caches.
             JavaMembers.classTable = new Hashtable();
-            nameHelper.reset();
+            ClassNameHelper.clearCache();
         }
         isCachingEnabled = cachingEnabled;
         FunctionObject.setCachingEnabled(cachingEnabled);
     }
-    
+
+    // Proxy to allow to use deprecated WrapHandler in place of WrapFactory
+    private static class WrapHandlerProxy extends WrapFactory {
+        WrapHandler _handler;
+
+        WrapHandlerProxy(WrapHandler handler) {
+            _handler = handler;
+        }
+
+        public Object wrap(Context cx, Scriptable scope,
+                           Object obj, Class staticType)
+        {
+            if (obj == null) { return obj; }
+            Object result = _handler.wrap(scope, obj, staticType);
+            if (result == null) {
+                result = super.wrap(cx, scope, obj, staticType);
+            }
+            return result;
+        }
+
+        public Scriptable wrapNewObject(Context cx, Scriptable scope,
+                                        Object obj)
+        {
+            Object wrap = _handler.wrap(scope, obj, obj.getClass());
+            if (wrap instanceof Scriptable) {
+                return (Scriptable)wrap;
+            }
+            if (wrap == null) {
+                return super.wrapNewObject(cx, scope, obj);
+            }
+            throw new RuntimeException
+                ("Please upgrade from WrapHandler to WrapFactory");
+        }
+    }
+
     /**
-     * Set a WrapHandler for this Context.
-     * <p>
-     * The WrapHandler allows custom object wrapping behavior for 
-     * Java object manipulated with JavaScript.
-     * @see org.mozilla.javascript.WrapHandler
-     * @since 1.5 Release 2 
+     * @deprecated  As of Rhino 1.5 Release 4, use
+     * {@link WrapFactory} and {@link #setWrapFactory(WrapFactory)}
      */
     public void setWrapHandler(WrapHandler wrapHandler) {
-        this.wrapHandler = wrapHandler;
+        if (wrapHandler == null) {
+            setWrapFactory(new WrapFactory());
+        } else {
+            setWrapFactory(new WrapHandlerProxy(wrapHandler));
+        }
     }
-    
+
+    /**
+     * @deprecated  As of Rhino 1.5 Release 4, use
+     * {@link WrapFactory} and {@link #getWrapFactory()}
+     */
+    public WrapHandler getWrapHandler() {
+        WrapFactory f = getWrapFactory();
+        if (f instanceof WrapHandlerProxy) {
+            return ((WrapHandlerProxy)f)._handler;
+        }
+        return null;
+    }
+
+    /**
+     * Set a WrapFactory for this Context.
+     * <p>
+     * The WrapFactory allows custom object wrapping behavior for
+     * Java object manipulated with JavaScript.
+     * @see org.mozilla.javascript.WrapFactory
+     * @since 1.5 Release 4
+     */
+    public void setWrapFactory(WrapFactory wrapFactory) {
+        if (wrapFactory == null) throw new IllegalArgumentException();
+        this.wrapFactory = wrapFactory;
+    }
+
     /**
      * Return the current WrapHandler, or null if none is defined.
      * @see org.mozilla.javascript.WrapHandler
-     * @since 1.5 Release 2 
+     * @since 1.5 Release 4
      */
-    public WrapHandler getWrapHandler() {
-        return wrapHandler;
+    public final WrapFactory getWrapFactory() {
+        if (wrapFactory == null) {
+            wrapFactory = new WrapFactory();
+        }
+        return wrapFactory;
     }
-    
-    public DebuggableEngine getDebuggableEngine() {
-        if (debuggableEngine == null)
-            debuggableEngine = new DebuggableEngineImpl(this);
-        return debuggableEngine;
+
+    /**
+     * Return the current debugger.
+     * @return the debugger, or null if none is attached.
+     */
+    public final Debugger getDebugger() {
+        return debugger;
     }
-    
-    
+
+    /**
+     * Return the debugger context data associated with current context.
+     * @return the debugger data, or null if debugger is not attached
+     */
+    public final Object getDebuggerContextData() {
+        return debuggerData;
+    }
+
+    /**
+     * Set the associated debugger.
+     * @param debugger the debugger to be used on callbacks from
+     * the engine.
+     * @param contextData arbitrary object that debugger can use to store
+     *        per Context data.
+     */
+    public void setDebugger(Debugger debugger, Object contextData) {
+        this.debugger = debugger;
+        debuggerData = contextData;
+    }
+
     /**
      * if hasFeature(FEATURE_NON_ECMA_GET_YEAR) returns true,
      * Date.prototype.getYear subtructs 1900 only if 1900 <= date < 2000
      * in deviation with Ecma B.2.4
      */
     public static final int FEATURE_NON_ECMA_GET_YEAR = 1;
-    
+
     /**
      * if hasFeature(FEATURE_MEMBER_EXPR_AS_FUNCTION_NAME) returns true,
-     * allow 'function <MemberExpression>(...) { ... }' to be syntax sugar for 
-     * '<MemberExpression> = function(...) { ... }', when <MemberExpression> 
-     * is not simply identifier. 
+     * allow 'function <MemberExpression>(...) { ... }' to be syntax sugar for
+     * '<MemberExpression> = function(...) { ... }', when <MemberExpression>
+     * is not simply identifier.
      * See Ecma-262, section 11.2 for definition of <MemberExpression>
      */
     public static final int FEATURE_MEMBER_EXPR_AS_FUNCTION_NAME = 2;
-    
+
     /**
      * if hasFeature(RESERVED_KEYWORD_AS_IDENTIFIER) returns true,
      * treat future reserved keyword (see  Ecma-262, section 7.5.3) as ordinary
      * identifiers but warn about this usage
      */
     public static final int FEATURE_RESERVED_KEYWORD_AS_IDENTIFIER = 3;
-    
+
     /**
-     * Controls certain aspects of script semantics. 
+     * if hasFeature(FEATURE_TO_STRING_AS_SOURCE) returns true,
+     * calling toString on JS objects gives JS source with code to create an
+     * object with all enumeratable fields of the original object instead of
+     * printing "[object <object-type>]".
+     * By default {@link #hasFeature(int)} returns true only if
+     * the current JS version is set to {@link #VERSION_1_2}.
+     */
+    public static final int FEATURE_TO_STRING_AS_SOURCE = 4;
+
+    /**
+     * Controls certain aspects of script semantics.
      * Should be overwritten to alter default behavior.
      * @param featureIndex feature index to check
      * @return true if the <code>featureIndex</code> feature is turned on
      * @see #FEATURE_NON_ECMA_GET_YEAR
      * @see #FEATURE_MEMBER_EXPR_AS_FUNCTION_NAME
      * @see #FEATURE_RESERVED_KEYWORD_AS_IDENTIFIER
+     * @see #FEATURE_TO_STRING_AS_SOURCE
      */
     public boolean hasFeature(int featureIndex) {
         switch (featureIndex) {
@@ -1665,15 +1787,18 @@ public class Context {
                 * we try to protect existing scripts that have specified a
                 * version...
                 */
-                return (version == Context.VERSION_1_0 
+                return (version == Context.VERSION_1_0
                         || version == Context.VERSION_1_1
                         || version == Context.VERSION_1_2);
 
             case FEATURE_MEMBER_EXPR_AS_FUNCTION_NAME:
                 return false;
-            
+
             case FEATURE_RESERVED_KEYWORD_AS_IDENTIFIER:
                 return false;
+
+            case FEATURE_TO_STRING_AS_SOURCE:
+                return version == VERSION_1_2;
         }
         // It is a bug to call the method with unknown featureIndex
         throw new IllegalArgumentException();
@@ -1682,45 +1807,96 @@ public class Context {
     /**
      * Get/Set threshold of executed instructions counter that triggers call to
      * <code>observeInstructionCount()</code>.
-     * When the threshold is zero, instruction counting is disabled, 
+     * When the threshold is zero, instruction counting is disabled,
      * otherwise each time the run-time executes at least the threshold value
-     * of script instructions, <code>observeInstructionCount()</code> will 
+     * of script instructions, <code>observeInstructionCount()</code> will
      * be called.
      */
     public int getInstructionObserverThreshold() {
         return instructionThreshold;
     }
-    
+
     public void setInstructionObserverThreshold(int threshold) {
         instructionThreshold = threshold;
     }
-    
-    /** 
+
+    /**
      * Allow application to monitor counter of executed script instructions
      * in Context subclasses.
      * Run-time calls this when instruction counting is enabled and the counter
      * reaches limit set by <code>setInstructionObserverThreshold()</code>.
      * The method is useful to observe long running scripts and if necessary
      * to terminate them.
-     * @param instructionCount amount of script instruction executed since 
-     * last call to <code>observeInstructionCount</code> 
+     * @param instructionCount amount of script instruction executed since
+     * last call to <code>observeInstructionCount</code>
      * @throws Error to terminate the script
      */
     protected void observeInstructionCount(int instructionCount) {}
-    
-    /********** end of API **********/
-    
-    void pushFrame(DebugFrame frame) {
-        if (frameStack == null)
-            frameStack = new java.util.Stack();
-        frameStack.push(frame);
-    }
-    
-    void popFrame() {
-        frameStack.pop();
-    }
-    
 
+    public GeneratedClassLoader createClassLoader(ClassLoader parent) {
+        return new DefiningClassLoader(parent);
+    }
+
+    public final ClassLoader getApplicationClassLoader()
+    {
+        if (applicationClassLoader != null) {
+            return applicationClassLoader;
+        }
+        ClassLoader loader = null;
+        if (method_getContextClassLoader != null) {
+            Thread thread = Thread.currentThread();
+            try {
+                loader = (ClassLoader)method_getContextClassLoader.invoke(
+                             thread, ScriptRuntime.emptyArgs);
+            } catch (Exception ex) { }
+        }
+        if (loader != null && !testIfCanUseLoader(loader)) {
+            loader = null;
+        }
+        if (loader == null) {
+            // If Context was subclassed, the following gets the loader
+            // for the subclass which can be different from Rhino loader,
+            // but then proper Rhino classes should be accessible through it
+            // in any case or JVM class loading is severely broken
+            loader = this.getClass().getClassLoader();
+        }
+        // The result is not cached since caching
+        // Thread.getContextClassLoader prevents it from GC which
+        // may lead to a memory leak.
+        return loader;
+    }
+
+    public void setApplicationClassLoader(ClassLoader loader)
+    {
+        if (loader == null) {
+            // restore default behaviour
+            applicationClassLoader = null;
+            return;
+        }
+        if (!testIfCanUseLoader(loader)) {
+            throw new IllegalArgumentException(
+                "Loader can not resolve Rhino classes");
+        }
+        applicationClassLoader = loader;
+    }
+
+    private boolean testIfCanUseLoader(ClassLoader loader)
+    {
+        // If Context was subclussed, cxClass != Context.class
+        Class cxClass = this.getClass();
+        // Check that Context or its suclass is accesible from this loader
+        Class x = ScriptRuntime.getClassOrNull(loader, cxClass.getName());
+        if (x != cxClass) {
+            // The check covers the case when x == null =>
+            // threadLoader does not know about Rhino or the case
+            // when x != null && x != cxClass =>
+            // threadLoader loads unrelated Rhino instance
+            return false;
+        }
+        return true;
+    }
+
+    /********** end of API **********/
 
     static String getMessage0(String messageId) {
         return getMessage(messageId, null);
@@ -1746,8 +1922,7 @@ public class Context {
      * enter().
      */
     static Context getContext() {
-        Thread t = Thread.currentThread();
-        Context cx = (Context) threadContexts.get(t);
+        Context cx = getCurrentContext();
         if (cx == null) {
             throw new RuntimeException(
                 "No Context associated with current Thread");
@@ -1759,7 +1934,7 @@ public class Context {
      * make sense to use a ListResourceBundle instead of a properties
      * file to avoid (synchronized) text parsing.
      */
-    static final String defaultResource = 
+    static final String defaultResource =
         "org.mozilla.javascript.resources.Messages";
 
     static String getMessage(String messageId, Object[] arguments) {
@@ -1789,7 +1964,8 @@ public class Context {
 
     // debug flags
     static final boolean printTrees = false;
-    
+    static final boolean printICode = false;
+
     /**
      * Compile a script.
      *
@@ -1802,9 +1978,9 @@ public class Context {
      * @param sourceName the name of the origin of the source (usually
      *                   a file or URL)
      * @param lineno the line number of the start of the source
-     * @param securityDomain an arbitrary object that specifies security 
-     *        information about the origin or owner of the script. For 
-     *        implementations that don't care about security, this value 
+     * @param securityDomain an arbitrary object that specifies security
+     *        information about the origin or owner of the script. For
+     *        implementations that don't care about security, this value
      *        may be null.
      * @param returnFunction if true, will expect the source to contain
      *                        a function; return value is assumed to
@@ -1812,43 +1988,41 @@ public class Context {
      * @return a class for the script or function
      * @see org.mozilla.javascript.Context#compileReader
      */
-    private Object compile(Scriptable scope, Reader in, String sourceName, 
-                           int lineno, Object securityDomain, 
+    private Object compile(Scriptable scope, Reader in, String sourceName,
+                           int lineno, Object securityDomain,
                            boolean returnFunction)
         throws IOException
     {
+        Object dynamicDoamin = null;
+        if (securityController != null) {
+            dynamicDoamin = securityController.
+                getDynamicSecurityDomain(securityDomain);
+        }
+
         if (debugger != null && in != null) {
             in = new DebugReader(in);
         }
         TokenStream ts = new TokenStream(in, scope, sourceName, lineno);
-        return compile(scope, ts, securityDomain, in, returnFunction);
+        return compile(scope, ts, dynamicDoamin, in, returnFunction);
     }
 
     private static Class codegenClass;
-    private static ClassNameHelper nameHelper;
     static {
         try {
             codegenClass = Class.forName(
                 "org.mozilla.javascript.optimizer.Codegen");
-            Class nameHelperClass = Class.forName(
-                "org.mozilla.javascript.optimizer.OptClassNameHelper");
-            nameHelper = (ClassNameHelper)nameHelperClass.newInstance();
         } catch (ClassNotFoundException x) {
             // ...must be running lite, that's ok
             codegenClass = null;
-        } catch (IllegalAccessException x) {
-            codegenClass = null;
-        } catch (InstantiationException x) {
-            codegenClass = null;
         }
     }
-    
+
     private Interpreter getCompiler() {
         if (codegenClass != null) {
             try {
                 return (Interpreter) codegenClass.newInstance();
             }
-            catch (SecurityException x) {   
+            catch (SecurityException x) {
             }
             catch (IllegalArgumentException x) {
             }
@@ -1860,28 +2034,31 @@ public class Context {
         }
         return new Interpreter();
     }
-    
-    private Object compile(Scriptable scope, TokenStream ts, 
-                           Object securityDomain, Reader in,
+
+    private Object compile(Scriptable scope, TokenStream ts,
+                           Object dynamicSecurityDomain, Reader in,
                            boolean returnFunction)
         throws IOException
     {
-        Interpreter compiler = optimizationLevel == -1 
+        Interpreter compiler = optimizationLevel == -1
                                ? new Interpreter()
                                : getCompiler();
-        
+        ClassNameHelper nameHelper = optimizationLevel == -1
+                                     ? null
+                                     : ClassNameHelper.get(this);
+
         errorCount = 0;
         IRFactory irf = compiler.createIRFactory(ts, nameHelper, scope);
         Parser p = new Parser(irf);
         Node tree = (Node) p.parse(ts);
-        if (tree == null) 
+        if (tree == null)
             return null;
 
         tree = compiler.transform(tree, ts, scope);
 
         if (printTrees)
             System.out.println(tree.toStringTree());
-        
+
         if (returnFunction) {
             Node first = tree.getFirstChild();
             if (first == null)
@@ -1890,14 +2067,16 @@ public class Context {
             if (tree == null)
                 return null;
         }
-        
+
         if (in instanceof DebugReader) {
             DebugReader dr = (DebugReader) in;
             tree.putProp(Node.DEBUGSOURCE_PROP, dr.getSaved());
         }
 
-        Object result = compiler.compile(this, scope, tree, securityDomain,
-                                         securitySupport, nameHelper);
+        Object result = compiler.compile(this, scope, tree,
+                                         dynamicSecurityDomain,
+                                         securityController,
+                                         nameHelper);
 
         return errorCount == 0 ? result : null;
     }
@@ -1929,8 +2108,8 @@ public class Context {
                 open = i;
             else if (c == ')')
                 close = i;
-            else if (c == '\n' && open != -1 && close != -1 && colon != -1 && 
-                     open < colon && colon < close) 
+            else if (c == '\n' && open != -1 && close != -1 && colon != -1 &&
+                     open < colon && colon < close)
             {
                 String fileStr = s.substring(open + 1, colon);
                 if (!fileStr.endsWith(".java")) {
@@ -1973,85 +2152,19 @@ public class Context {
             array.setPrototype((Scriptable) s.get("prototype", s));
         }
     }
-    
+
     final boolean isVersionECMA1() {
         return version == VERSION_DEFAULT || version >= VERSION_1_3;
     }
 
-    /**
-     * Get the security context from the given class.
-     * <p>
-     * When some form of security check needs to be done, the class context
-     * must retrieved from the security manager to determine what class is
-     * requesting some form of privileged access. 
-     * @since 1.4 release 2
-     */
-    Object getSecurityDomainFromClass(Class cl) {
-        if (cl == Interpreter.class)
-            return interpreterSecurityDomain;
-        return securitySupport.getSecurityDomain(cl);
-    }
-    
-    SecuritySupport getSecuritySupport() {
-        return securitySupport;
-    }
-    
-    Object getSecurityDomainForStackDepth(int depth) {
-        Object result = null;
-        if (securitySupport != null) {
-            Class[] classes = securitySupport.getClassContext();
-            if (classes != null) {
-                if (depth != -1) {
-                    int depth1 = depth + 1;
-                    result = getSecurityDomainFromClass(classes[depth1]);
-                } else {
-                    for (int i=1; i < classes.length; i++) {
-                        result = getSecurityDomainFromClass(classes[i]);
-                        if (result != null)
-                            break;
-                    }
-                }
-            }
-        }
-        if (result != null)
-            return result;
-        if (requireSecurityDomain) 
-            checkSecurityDomainRequired();
-        return null;
-    }
-
-    private static boolean requireSecurityDomain = true;
-    private static boolean resourceMissing = false;
-    final static String securityResourceName = 
-        "org.mozilla.javascript.resources.Security";
-    static {
-        try {
-            ResourceBundle rb = ResourceBundle.getBundle(securityResourceName);
-            String s = rb.getString("security.requireSecurityDomain");
-            requireSecurityDomain = s.equals("true");
-        } catch (java.util.MissingResourceException mre) {
-            requireSecurityDomain = true;
-            resourceMissing = true;
-        } catch (SecurityException se) {
-            requireSecurityDomain = true;
-        }   
-    }
-    
-    final public static void checkSecurityDomainRequired() {
-        if (requireSecurityDomain) {
-            String msg = "Required security context not found";
-            if (resourceMissing) {
-                msg += ". Didn't find properties file at " + 
-                       securityResourceName;
-            }
-            throw new SecurityException(msg);
-        }
+// Should not be public
+    SecurityController getSecurityController() {
+        return securityController;
     }
 
     public boolean isGeneratingDebugChanged() {
         return generatingDebugChanged;
     }
-    
 
     /**
      * Add a name to the list of names forcing the creation of real
@@ -2060,7 +2173,7 @@ public class Context {
      * @param name the name of the object to add to the list
      */
     public void addActivationName(String name) {
-        if (activationNames == null) 
+        if (activationNames == null)
             activationNames = new Hashtable(5);
         activationNames.put(name, name);
     }
@@ -2097,27 +2210,62 @@ public class Context {
 
     static final boolean check = true;
 
-    static final boolean useJSObject = false;
+    static boolean isCachingEnabled = true;
 
-    /** 
-     * The activation of the currently executing function or script. 
+    private static Hashtable threadContexts = new Hashtable(11);
+    private static Object threadLocalCx;
+    private static Method threadLocalGet;
+    private static Method threadLocalSet;
+
+    static {
+        try {
+            Class cl = Class.forName("java.lang.ThreadLocal");
+            threadLocalGet = cl.getMethod("get", null);
+            threadLocalSet = cl.getMethod("set",
+                new Class[] { ScriptRuntime.ObjectClass });
+            threadLocalCx = cl.newInstance();
+        } catch (Exception ex) { }
+    }
+
+    // We'd like to use "Thread.getContextClassLoader", but
+    // that's only available on Java2.
+    private static Method method_getContextClassLoader;
+
+    static {
+        // Don't use "Thread.class": that performs the lookup
+        // in the class initializer, which doesn't allow us to
+        // catch possible security exceptions.
+        Class threadClass = ScriptRuntime.getClassOrNull("java.lang.Thread");
+        if (threadClass != null) {
+            try {
+                method_getContextClassLoader =
+                    threadClass.getDeclaredMethod("getContextClassLoader",
+                                                   new Class[0]);
+            } catch (Exception ex) { }
+        }
+    }
+
+    private static final Object contextListenersLock = new Object();
+    private static Object[] contextListeners;
+
+    /**
+     * The activation of the currently executing function or script.
      */
     NativeCall currentActivation;
 
     // for Objects, Arrays to tag themselves as being printed out,
     // so they don't print themselves out recursively.
-    Hashtable iterating;
-            
+    // Use ObjToIntMap instead of java.util.HashSet for JDK 1.1 compatibility
+    ObjToIntMap iterating;
+
     Object interpreterSecurityDomain;
 
     int version;
     int errorCount;
-    static boolean isCachingEnabled = true;
-    
-    private SecuritySupport securitySupport;
+
+    private SecurityController securityController;
+    private ClassShutter classShutter;
     private ErrorReporter errorReporter;
-    private Thread currentThread;
-    private static Hashtable threadContexts = new Hashtable(11);
     private RegExpProxy regExpProxy;
     private Locale locale;
     private boolean generatingDebug;
@@ -2125,25 +2273,19 @@ public class Context {
     private boolean generatingSource=true;
     private boolean compileFunctionsWithDynamicScopeFlag;
     private int optimizationLevel;
-    WrapHandler wrapHandler;
+    private WrapFactory wrapFactory;
     Debugger debugger;
-    DebuggableEngine debuggableEngine;
-    boolean inLineStepMode;
-    java.util.Stack frameStack;    
+    private Object debuggerData;
     private int enterCount;
     private Object[] listeners;
     private Hashtable hashtable;
+    private ClassLoader applicationClassLoader;
 
     /**
      * This is the list of names of objects forcing the creation of
      * function activation records.
      */
     private Hashtable activationNames;
-
-    // Private lock for static fields to avoid a possibility of denial
-    // of service via synchronized (Context.class) { while (true) {} }
-    private static final Object staticDataLock = new Object();
-    private static Object[] contextListeners;
 
     // For the interpreter to indicate line/source for error reports.
     int interpreterLine;
@@ -2152,74 +2294,4 @@ public class Context {
     // For instruction counting (interpreter only)
     int instructionCount;
     int instructionThreshold;
-    
-    // Implement class file saving here instead of inside codegen.
-    private class FileClassRepository implements ClassRepository {
-    
-        FileClassRepository(String classFileName) {
-            int lastSeparator = classFileName.lastIndexOf(File.separatorChar);
-            String initialName;
-            if (lastSeparator == -1) {
-                generatingDirectory = null;
-                initialName = classFileName;
-            } else {
-                generatingDirectory = classFileName.substring(0, lastSeparator);
-                initialName = classFileName.substring(lastSeparator+1);
-            }
-            if (initialName.endsWith(".class"))
-                initialName = initialName.substring(0, initialName.length()-6);
-            nameHelper.setClassName(initialName);
-        }
-    
-        public boolean storeClass(String className, byte[] bytes, boolean tl) 
-            throws IOException 
-        {
-            // no "elegant" way of getting file name from fully 
-            // qualified class name.
-            String targetPackage = nameHelper.getTargetPackage();
-            if ((targetPackage != null) && (targetPackage.length()>0) && 
-                className.startsWith(targetPackage+".")) 
-            {
-                className = className.substring(targetPackage.length()+1);
-            }
-
-            FileOutputStream out = new FileOutputStream(getTargetClassFileName(className));
-            out.write(bytes);
-            out.close();
-
-            return false;
-        }
-
-        String getTargetClassFileName(String className) {
-            StringBuffer sb = new StringBuffer();
-            if (generatingDirectory != null) {
-            sb.append(generatingDirectory);
-            sb.append(File.separator);
-            }
-            sb.append(className);
-            sb.append(".class");
-            return sb.toString();
-        }
-      
-        String generatingDirectory;
-    };
-    
-    private static class ClassOutputWrapper implements ClassRepository {
-
-        ClassOutputWrapper(ClassOutput classOutput) {
-            this.classOutput = classOutput;
-        }
-
-        public boolean storeClass(String name, byte[] bytes, boolean tl) 
-            throws IOException 
-        {
-            OutputStream out = classOutput.getOutputStream(name, tl);
-            out.write(bytes);
-            out.close();
-
-            return true;
-        }
-
-        ClassOutput classOutput;
-    }
 }

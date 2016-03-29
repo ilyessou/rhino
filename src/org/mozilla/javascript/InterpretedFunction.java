@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -18,7 +18,7 @@
  * Copyright (C) 1997-2000 Netscape Communications Corporation. All
  * Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  * Roger Lawrence
  *
  * Alternatively, the contents of this file may be used under the
@@ -36,94 +36,35 @@
 package org.mozilla.javascript;
 
 import java.io.Serializable;
-import org.mozilla.javascript.debug.DebuggableScript;
 
-class InterpretedFunction extends NativeFunction 
-                          implements DebuggableScript, Serializable 
+final class InterpretedFunction extends NativeFunction
+    implements Serializable
 {
 
     static final long serialVersionUID = -6235150451107527319L;
-    
-    InterpretedFunction(Context cx,
-                        InterpreterData theData, 
-                        String[] argNames, short argCount)
-    {
+
+    InterpretedFunction(Context cx, InterpreterData theData) {
         itsData = theData;
-        this.argNames = argNames;
-        this.argCount = argCount;
-        init(cx);
-    }
-    
-    void init(Context cx)
-    {
         functionName = itsData.itsName;
-        source = itsData.itsSource;
-        nestedFunctions = itsData.itsNestedFunctions;
-        if (cx != null)
-            version = (short)cx.getLanguageVersion();
+        version = (short)cx.getLanguageVersion();
+        argNames = itsData.argNames;
+        argCount = (short)itsData.argCount;
     }
-    
-    InterpretedFunction(InterpretedFunction theOther,
-                        Scriptable theScope, Context cx)
-    {
-        itsData = theOther.itsData;
-        this.argNames = theOther.argNames;
-        this.argCount = theOther.argCount;
-        itsClosure = theScope;
-        init(cx);
-    }
-    
+
     public Object call(Context cx, Scriptable scope, Scriptable thisObj,
                        Object[] args)
         throws JavaScriptException
-    {            
-        if (itsClosure != null)
-            scope = itsClosure;
-        else if (!itsData.itsUseDynamicScope)
-            scope = getParentScope();
+    {
+        return Interpreter.interpret(cx, scope, thisObj,
+                                     args, null, 0, args.length,
+                                     this, itsData);
+    }
 
-        if (itsData.itsCheckThis) 
-            thisObj = ScriptRuntime.getThis(thisObj);
-        
-        if (itsData.itsNeedsActivation) {
-            scope = ScriptRuntime.initVarObj(cx, scope, this, thisObj, args);
-        }
-        try {
-            return Interpreter.interpret(cx, scope, thisObj, args, this,
-                                         itsData);
-        }
-        finally {
-            if (itsData.itsNeedsActivation) {
-                ScriptRuntime.popActivation(cx);
-            }
-        }
+    protected Object getSourcesTree() {
+        return Interpreter.getSourcesTree(itsData);
     }
-    
-    public boolean isFunction() {
-        return true;
-    }
-    
-    public Scriptable getScriptable() {
-        return this;
-    }
-    
-    public String getSourceName() {
-        return itsData.itsSourceFile;
-    }
-    
-    public int[] getLineNumbers() { 
-        return itsData.itsLineNumberTable.getKeys();
-    }
-    
-    public boolean placeBreakpoint(int line) { // XXX throw exn?
-        return itsData.placeBreakpoint(line);
-    }
-    
-    public boolean removeBreakpoint(int line) {
-        return itsData.removeBreakpoint(line);
-    }
-    
+
     InterpreterData itsData;
-    Scriptable itsClosure;
+    boolean itsUseDynamicScope;
 }
- 
+
