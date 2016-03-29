@@ -38,32 +38,27 @@
 
 package org.mozilla.javascript;
 
+import org.mozilla.javascript.debug.DebuggableScript;
+
 /**
  * This class implements the Function native object.
  * See ECMA 15.3.
  * @author Norris Boyd
  */
-public class NativeFunction extends BaseFunction
+public abstract class NativeFunction extends BaseFunction
 {
 
-    public final void initScriptFunction(int version, String functionName,
-                                         String[] argNames, int argCount)
+    public final void initScriptFunction(Context cx, Scriptable scope,
+                                         String functionName)
     {
-        if (!(argNames != null
-              && 0 <= argCount && argCount <= argNames.length))
-        {
-            throw new IllegalArgumentException();
-        }
-
-        if (!(this.argNames == null)) {
-            // Initialization can only be done once
-            throw new IllegalStateException();
-        }
-
         this.functionName = functionName;
-        this.argNames = argNames;
-        this.argCount = argCount;
-        this.version = version;
+
+        ScriptRuntime.setFunctionProtoAndParent(this, scope);
+    }
+
+    public final void initScriptObject()
+    {
+        this.functionName = "";
     }
 
     /**
@@ -85,17 +80,21 @@ public class NativeFunction extends BaseFunction
 
     public int getLength()
     {
-        if (version != Context.VERSION_1_2)
-            return argCount;
-        NativeCall activation = getActivation(Context.getContext());
-        if (activation == null)
-            return argCount;
-        return activation.getOriginalArguments().length;
+        int paramCount = getParamCount();
+        if (getLanguageVersion() != Context.VERSION_1_2) {
+            return paramCount;
+        }
+        Context cx = Context.getContext();
+        NativeCall activation = ScriptRuntime.findFunctionActivation(cx, this);
+        if (activation == null) {
+            return paramCount;
+        }
+        return activation.originalArgs.length;
     }
 
     public int getArity()
     {
-        return argCount;
+        return getParamCount();
     }
 
     /**
@@ -116,15 +115,29 @@ public class NativeFunction extends BaseFunction
         return null;
     }
 
-    /**
-     * The "argsNames" array has the following information:
-     * argNames[0] through argNames[argCount - 1]: the names of the parameters
-     * argNames[argCount] through argNames[args.length-1]: the names of the
-     * variables declared in var statements
-     */
-    String[] argNames;
-    int argCount;
+    public DebuggableScript getDebuggableView()
+    {
+        return null;
+    }
 
-    int version;
+    protected abstract int getLanguageVersion();
+
+    /**
+     * Get number of declared parameters. It should be 0 for scripts.
+     */
+    protected abstract int getParamCount();
+
+    /**
+     * Get number of declared parameters and variables defined through var
+     * statements.
+     */
+    protected abstract int getParamAndVarCount();
+
+    /**
+     * Get parameter or variable name.
+     * If <tt>index < {@link #getParamCount()}</tt>, then return the name of the
+     * corresponding parameter. Otherwise returm the name of variable.
+     */
+    protected abstract String getParamOrVarName(int index);
 }
 

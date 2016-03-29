@@ -46,249 +46,92 @@ public final class OptRuntime extends ScriptRuntime
     public static final Double oneObj = new Double(1.0);
     public static final Double minusOneObj = new Double(-1.0);
 
-    public static Object getElem(Object obj, double dblIndex, Scriptable scope)
+    /**
+     * Implement ....() call shrinking optimizer code.
+     */
+    public static Object call0(Function fun, Scriptable thisObj,
+                               Context cx, Scriptable scope)
     {
-        int index = (int) dblIndex;
-        Scriptable start = obj instanceof Scriptable
-                           ? (Scriptable) obj
-                           : toObject(scope, obj);
-        Scriptable m = start;
-        if (((double) index) != dblIndex) {
-            String s = toString(dblIndex);
-            while (m != null) {
-                Object result = m.get(s, start);
-                if (result != Scriptable.NOT_FOUND)
-                    return result;
-                m = m.getPrototype();
-            }
-        } else {
-            while (m != null) {
-                Object result = m.get(index, start);
-                if (result != Scriptable.NOT_FOUND)
-                    return result;
-                m = m.getPrototype();
-            }
-        }
-        return Undefined.instance;
+        return fun.call(cx, scope, thisObj, ScriptRuntime.emptyArgs);
     }
 
-    public static Object setElem(Object obj, double dblIndex, Object value,
-                                 Scriptable scope)
+    /**
+     * Implement ....(arg) call shrinking optimizer code.
+     */
+    public static Object call1(Function fun, Scriptable thisObj, Object arg0,                                   Context cx, Scriptable scope)
     {
-        int index = (int) dblIndex;
-        Scriptable start = obj instanceof Scriptable
-                     ? (Scriptable) obj
-                     : toObject(scope, obj);
-        Scriptable m = start;
-        if (((double) index) != dblIndex) {
-            String s = toString(dblIndex);
-            do {
-                if (m.has(s, start)) {
-                    m.put(s, start, value);
-                    return value;
-                }
-                m = m.getPrototype();
-            } while (m != null);
-            start.put(s, start, value);
-       } else {
-            do {
-                if (m.has(index, start)) {
-                    m.put(index, start, value);
-                    return value;
-                }
-                m = m.getPrototype();
-            } while (m != null);
-            start.put(index, start, value);
-        }
-        return value;
+        return fun.call(cx, scope, thisObj, new Object[] { arg0 } );
     }
 
-    public static Object add(Object val1, double val2) {
+    /**
+     * Implement ....(arg0, arg1) call shrinking optimizer code.
+     */
+    public static Object call2(Function fun, Scriptable thisObj,
+                               Object arg0, Object arg1,
+                               Context cx, Scriptable scope)
+    {
+        return fun.call(cx, scope, thisObj, new Object[] { arg0, arg1 });
+    }
+
+    /**
+     * Implement ....(arg0, arg1, ...) call shrinking optimizer code.
+     */
+    public static Object callN(Function fun, Scriptable thisObj,
+                               Object[] args,
+                               Context cx, Scriptable scope)
+    {
+        return fun.call(cx, scope, thisObj, args);
+    }
+
+    /**
+     * Implement name(args) call shrinking optimizer code.
+     */
+    public static Object callName(Object[] args, String name,
+                                  Context cx, Scriptable scope)
+    {
+        Function f = getNameFunctionAndThis(name, cx, scope);
+        Scriptable thisObj = lastStoredScriptable(cx);
+        return f.call(cx, scope, thisObj, args);
+    }
+
+    /**
+     * Implement name() call shrinking optimizer code.
+     */
+    public static Object callName0(String name,
+                                   Context cx, Scriptable scope)
+    {
+        Function f = getNameFunctionAndThis(name, cx, scope);
+        Scriptable thisObj = lastStoredScriptable(cx);
+        return f.call(cx, scope, thisObj, ScriptRuntime.emptyArgs);
+    }
+
+    /**
+     * Implement x.property() call shrinking optimizer code.
+     */
+    public static Object callProp0(Object value, String property,
+                                   Context cx, Scriptable scope)
+    {
+        Function f = getPropFunctionAndThis(value, property, cx);
+        Scriptable thisObj = lastStoredScriptable(cx);
+        return f.call(cx, scope, thisObj, ScriptRuntime.emptyArgs);
+    }
+
+    public static Object add(Object val1, double val2)
+    {
         if (val1 instanceof Scriptable)
             val1 = ((Scriptable) val1).getDefaultValue(null);
         if (!(val1 instanceof String))
-            return new Double(toNumber(val1) + val2);
-        return toString(val1).concat(toString(val2));
+            return wrapDouble(toNumber(val1) + val2);
+        return ((String)val1).concat(toString(val2));
     }
 
-    public static Object add(double val1, Object val2) {
+    public static Object add(double val1, Object val2)
+    {
         if (val2 instanceof Scriptable)
             val2 = ((Scriptable) val2).getDefaultValue(null);
         if (!(val2 instanceof String))
-            return new Double(toNumber(val2) + val1);
-        return toString(val1).concat(toString(val2));
-    }
-
-    public static boolean neq(Object x, Object y) {
-        return !eq(x, y);
-    }
-
-    public static boolean shallowNeq(Object x, Object y) {
-        return !shallowEq(x, y);
-    }
-
-    public static Boolean cmp_LTB(double d1, Object val2) {
-        if (cmp_LT(d1, val2) == 1)
-            return Boolean.TRUE;
-        else
-            return Boolean.FALSE;
-    }
-
-    public static int cmp_LT(double d1, Object val2) {
-        if (val2 instanceof Scriptable)
-            val2 = ((Scriptable) val2).getDefaultValue(NumberClass);
-        if (!(val2 instanceof String)) {
-            if (d1 != d1)
-                return 0;
-            double d2 = toNumber(val2);
-            if (d2 != d2)
-                return 0;
-            return d1 < d2 ? 1 : 0;
-        }
-        return toString(d1).compareTo(toString(val2)) < 0 ? 1 : 0;
-    }
-
-    public static Boolean cmp_LTB(Object val1, double d2) {
-        if (cmp_LT(val1, d2) == 1)
-            return Boolean.TRUE;
-        else
-            return Boolean.FALSE;
-    }
-
-    public static int cmp_LT(Object val1, double d2) {
-        if (val1 instanceof Scriptable)
-            val1 = ((Scriptable) val1).getDefaultValue(NumberClass);
-        if (!(val1 instanceof String)) {
-            double d1 = toNumber(val1);
-            if (d1 != d1)
-                return 0;
-            if (d2 != d2)
-                return 0;
-            return d1 < d2 ? 1 : 0;
-        }
-        return toString(val1).compareTo(toString(d2)) < 0 ? 1 : 0;
-    }
-
-    public static Boolean cmp_LEB(double d1, Object val2) {
-        if (cmp_LE(d1, val2) == 1)
-            return Boolean.TRUE;
-        else
-            return Boolean.FALSE;
-    }
-
-    public static int cmp_LE(double d1, Object val2) {
-        if (val2 instanceof Scriptable)
-            val2 = ((Scriptable) val2).getDefaultValue(NumberClass);
-        if (!(val2 instanceof String)) {
-            if (d1 != d1)
-                return 0;
-            double d2 = toNumber(val2);
-            if (d2 != d2)
-                return 0;
-            return d1 <= d2 ? 1 : 0;
-        }
-        return toString(d1).compareTo(toString(val2)) <= 0 ? 1 : 0;
-    }
-
-    public static Boolean cmp_LEB(Object val1, double d2) {
-        if (cmp_LE(val1, d2) == 1)
-            return Boolean.TRUE;
-        else
-            return Boolean.FALSE;
-    }
-
-    public static int cmp_LE(Object val1, double d2) {
-        if (val1 instanceof Scriptable)
-            val1 = ((Scriptable) val1).getDefaultValue(NumberClass);
-        if (!(val1 instanceof String)) {
-            double d1 = toNumber(val1);
-            if (d1 != d1)
-                return 0;
-            if (d2 != d2)
-                return 0;
-            return d1 <= d2 ? 1 : 0;
-        }
-        return toString(val1).compareTo(toString(d2)) <= 0 ? 1 : 0;
-    }
-
-    public static int cmp(Object val1, Object val2) {
-        if (val1 instanceof Scriptable)
-            val1 = ((Scriptable) val1).getDefaultValue(NumberClass);
-        if (val2 instanceof Scriptable)
-            val2 = ((Scriptable) val2).getDefaultValue(NumberClass);
-        if (!(val1 instanceof String) || !(val2 instanceof String)) {
-            double d1 = toNumber(val1);
-            if (d1 != d1)
-                return -1;
-            double d2 = toNumber(val2);
-            if (d2 != d2)
-                return -1;
-            return d1 < d2 ? 1 : 0;
-        }
-        return toString(val1).compareTo(toString(val2)) < 0 ? 1 : 0;
-    }
-
-    public static Object callSimple(Context cx, String id, Scriptable scope,
-                                    Object[] args)
-        throws JavaScriptException
-    {
-        Scriptable obj = scope;
-        Object prop = null;
-        Scriptable thisArg = null;
- search:
-        while (obj != null) {
-            Scriptable m = obj;
-            do {
-                prop = m.get(id, obj);
-                if (prop != Scriptable.NOT_FOUND) {
-                    thisArg = obj;
-                    break search;
-                }
-                m = m.getPrototype();
-            } while (m != null);
-            obj = obj.getParentScope();
-        }
-        if ((prop == null) || (prop == Scriptable.NOT_FOUND)) {
-            String msg = ScriptRuntime.getMessage1("msg.is.not.defined", id);
-            throw ScriptRuntime.constructError("ReferenceError", msg);
-        }
-
-        while (thisArg instanceof NativeWith)
-            thisArg = thisArg.getPrototype();
-        if (thisArg instanceof NativeCall)
-            thisArg = ScriptableObject.getTopLevelScope(thisArg);
-
-        if (!(prop instanceof Function)) {
-            Object[] errorArgs = { toString(prop)  };
-            throw cx.reportRuntimeError(
-                getMessage("msg.isnt.function", errorArgs));
-        }
-
-        Function function = (Function)prop;
-        return function.call(cx, scope, thisArg, args);
-    }
-
-    public static Object thisGet(Scriptable thisObj, String id,
-                                 Scriptable scope)
-    {
-        if (thisObj == null) {
-            throw Context.reportRuntimeError(
-                getMessage("msg.null.to.object", null));
-        }
-
-        Object result = thisObj.get(id, thisObj);
-        if (result != Scriptable.NOT_FOUND)
-            return result;
-
-        Scriptable m = thisObj.getPrototype();
-        while (m != null) {
-            result = m.get(id, thisObj);
-            if (result != Scriptable.NOT_FOUND)
-                return result;
-
-            m = m.getPrototype();
-        }
-        return Undefined.instance;
+            return wrapDouble(toNumber(val2) + val1);
+        return toString(val1).concat((String)val2);
     }
 
     public static Object[] padStart(Object[] currentArgs, int count) {
@@ -303,14 +146,13 @@ public final class OptRuntime extends ScriptRuntime
         ScriptRuntime.initFunction(cx, scope, fn, functionType, false);
     }
 
-    public static Object callSpecial(Context cx, Object fun,
-                                     Object thisObj, Object[] args,
+    public static Object callSpecial(Context cx, Function fun,
+                                     Scriptable thisObj, Object[] args,
                                      Scriptable scope,
                                      Scriptable callerThis, int callType,
                                      String fileName, int lineNumber)
-        throws JavaScriptException
     {
-        return ScriptRuntime.callSpecial(cx, fun, false, thisObj, args, scope,
+        return ScriptRuntime.callSpecial(cx, fun, thisObj, args, scope,
                                          callerThis, callType,
                                          fileName, lineNumber);
     }
@@ -318,11 +160,8 @@ public final class OptRuntime extends ScriptRuntime
     public static Object newObjectSpecial(Context cx, Object fun,
                                           Object[] args, Scriptable scope,
                                           Scriptable callerThis, int callType)
-        throws JavaScriptException
     {
-        return ScriptRuntime.callSpecial(cx, fun, true, null, args, scope,
-                                         callerThis, callType,
-                                         "", -1);
+        return ScriptRuntime.newSpecial(cx, fun, args, scope, callType);
     }
 
     public static Double wrapDouble(double num)
@@ -340,6 +179,70 @@ public final class OptRuntime extends ScriptRuntime
             return NaNobj;
         }
         return new Double(num);
+    }
+
+    static String encodeIntArray(int[] array)
+    {
+        // XXX: this extremely inefficient for small integers
+        if (array == null) { return null; }
+        int n = array.length;
+        char[] buffer = new char[1 + n * 2];
+        buffer[0] = 1;
+        for (int i = 0; i != n; ++i) {
+            int value = array[i];
+            int shift = 1 + i * 2;
+            buffer[shift] = (char)(value >>> 16);
+            buffer[shift + 1] = (char)value;
+        }
+        return new String(buffer);
+    }
+
+    private static int[] decodeIntArray(String str, int arraySize)
+    {
+        // XXX: this extremely inefficient for small integers
+        if (arraySize == 0) {
+            if (str != null) throw new IllegalArgumentException();
+            return null;
+        }
+        if (str.length() != 1 + arraySize * 2 && str.charAt(0) != 1) {
+            throw new IllegalArgumentException();
+        }
+        int[] array = new int[arraySize];
+        for (int i = 0; i != arraySize; ++i) {
+            int shift = 1 + i * 2;
+            array[i] = (str.charAt(shift) << 16) | str.charAt(shift + 1);
+        }
+        return array;
+    }
+
+    public static Scriptable newArrayLiteral(Object[] objects,
+                                             String encodedInts,
+                                             int skipCount,
+                                             Context cx,
+                                             Scriptable scope)
+    {
+        int[] skipIndexces = decodeIntArray(encodedInts, skipCount);
+        return newArrayLiteral(objects, skipIndexces, cx, scope);
+    }
+
+    public static void main(final Script script, final String[] args)
+    {
+        Context.call(new ContextAction() {
+            public Object run(Context cx)
+            {
+                ScriptableObject global = getGlobal(cx);
+
+                // get the command line arguments and define "arguments"
+                // array in the top-level object
+                Object[] argsCopy = new Object[args.length];
+                System.arraycopy(args, 0, argsCopy, 0, args.length);
+                Scriptable argsObj = cx.newArray(global, argsCopy);
+                global.defineProperty("arguments", argsObj,
+                                      ScriptableObject.DONTENUM);
+                script.exec(cx, global);
+                return null;
+            }
+        });
     }
 
 }

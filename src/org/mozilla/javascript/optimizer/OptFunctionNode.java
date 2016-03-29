@@ -44,13 +44,6 @@ final class OptFunctionNode
     OptFunctionNode(FunctionNode fnode)
     {
         this.fnode = fnode;
-        int N = fnode.getParamAndVarCount();
-        int parameterCount = fnode.getParamCount();
-        optVars = new OptLocalVariable[N];
-        for (int i = 0; i != N; ++i) {
-            String name = fnode.getParamOrVarName(i);
-            optVars[i] = new OptLocalVariable(name, i < parameterCount);
-        }
         fnode.setCompilerData(this);
     }
 
@@ -95,36 +88,57 @@ final class OptFunctionNode
 
     int getVarCount()
     {
-        return optVars.length;
+        return fnode.getParamAndVarCount();
     }
 
-    OptLocalVariable getVar(int index)
+    boolean isParameter(int varIndex)
     {
-        return optVars[index];
+        return varIndex < fnode.getParamCount();
     }
 
-    OptLocalVariable getVar(String name)
+    boolean isNumberVar(int varIndex)
     {
-        int index = fnode.getParamOrVarIndex(name);
-        if (index < 0) { return null; }
-        return optVars[index];
-    }
-
-    void establishVarsIndices()
-    {
-        int N = optVars.length;
-        for (int i = 0; i != N; i++) {
-            optVars[i].setIndex(i);
+        varIndex -= fnode.getParamCount();
+        if (varIndex >= 0 && numberVarFlags != null) {
+            return numberVarFlags[varIndex];
         }
+        return false;
     }
 
-    OptLocalVariable[] getVarsArray()
+    void setIsNumberVar(int varIndex)
     {
-        return optVars;
+        varIndex -= fnode.getParamCount();
+        // Can only be used with non-parameters
+        if (varIndex < 0) Kit.codeBug();
+        if (numberVarFlags == null) {
+            int size = fnode.getParamAndVarCount() - fnode.getParamCount();
+            numberVarFlags = new boolean[size];
+        }
+        numberVarFlags[varIndex] = true;
+    }
+
+    int getVarIndex(Node n)
+    {
+        int index = n.getIntProp(Node.VARIABLE_PROP, -1);
+        if (index == -1) {
+            String name;
+            int type = n.getType();
+            if (type == Token.GETVAR) {
+                name = n.getString();
+            } else if (type == Token.SETVAR) {
+                name = n.getFirstChild().getString();
+            } else {
+                throw Kit.codeBug();
+            }
+            index = fnode.getParamOrVarIndex(name);
+            if (index < 0) throw Kit.codeBug();
+            n.putIntProp(Node.VARIABLE_PROP, index);
+        }
+        return index;
     }
 
     FunctionNode fnode;
-    private OptLocalVariable[] optVars;
+    private boolean[] numberVarFlags;
     private int directTargetIndex = -1;
     private boolean itsParameterNumberContext;
     boolean itsContainsCalls0;

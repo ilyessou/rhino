@@ -46,8 +46,6 @@ import java.io.*;
 public class FunctionObject extends BaseFunction
 {
 
-    static final long serialVersionUID = -4074285335521944312L;
-
     /**
      * Create a JavaScript function object from a Java method.
      *
@@ -173,12 +171,7 @@ public class FunctionObject extends BaseFunction
             if (returnType == Void.TYPE) {
                 hasVoidReturn = true;
             } else {
-                int returnTypeTag = getTypeTag(returnType);
-                if (returnTypeTag == JAVA_UNSUPPORTED_TYPE) {
-                    throw Context.reportRuntimeError2(
-                        "msg.bad.method.return",
-                        returnType.getName(), methodName);
-                }
+                returnTypeTag = getTypeTag(returnType);
             }
             member.prepareInvokerOptimization();
         } else {
@@ -189,7 +182,7 @@ public class FunctionObject extends BaseFunction
             }
         }
 
-        ScriptRuntime.setFunctionProtoAndParent(scope, this);
+        ScriptRuntime.setFunctionProtoAndParent(this, scope);
     }
 
     /**
@@ -238,8 +231,6 @@ public class FunctionObject extends BaseFunction
           case JAVA_DOUBLE_TYPE:
             if (arg instanceof Double)
                 return arg;
-            if (arg instanceof Number)
-                return new Double(((Number)arg).doubleValue());
             return new Double(ScriptRuntime.toNumber(arg));
           case JAVA_SCRIPTABLE_TYPE:
             if (arg instanceof Scriptable)
@@ -347,8 +338,9 @@ public class FunctionObject extends BaseFunction
      * @see org.mozilla.javascript.Scriptable#setPrototype
      * @see org.mozilla.javascript.Scriptable#getClassName
      */
-    public void addAsConstructor(Scriptable scope, Scriptable prototype) {
-        ScriptRuntime.setFunctionProtoAndParent(scope, this);
+    public void addAsConstructor(Scriptable scope, Scriptable prototype)
+    {
+        ScriptRuntime.setFunctionProtoAndParent(this, scope);
         setImmunePrototypeProperty(prototype);
 
         prototype.setParentScope(this);
@@ -386,75 +378,102 @@ public class FunctionObject extends BaseFunction
      * <p>
      * Implements Function.call.
      *
-     * @see org.mozilla.javascript.Function#call
-     * @exception JavaScriptException if the underlying Java method or
-     *            constructor threw an exception
+     * @see org.mozilla.javascript.Function#call(
+     *          Context, Scriptable, Scriptable, Object[])
      */
     public Object call(Context cx, Scriptable scope, Scriptable thisObj,
                        Object[] args)
-        throws JavaScriptException
     {
+        Object result;
+        boolean checkMethodResult = false;
+
         if (parmsLength < 0) {
-            return callVarargs(cx, thisObj, args);
-        }
-        if (!isStatic) {
-            Class clazz = member.getDeclaringClass();
-            if (!clazz.isInstance(thisObj)) {
-                boolean compatible = false;
-                if (thisObj == scope) {
-                    Scriptable parentScope = getParentScope();
-                    if (scope != parentScope) {
-                        // Call with dynamic scope for standalone function,
-                        // use parentScope as thisObj
-                        compatible = clazz.isInstance(parentScope);
-                        if (compatible) {
-                            thisObj = parentScope;
+            if (parmsLength == VARARGS_METHOD) {
+                Object[] invokeArgs = { cx, thisObj, args, this };
+                result = member.invoke(null, invokeArgs);
+                checkMethodResult = true;
+            } else {
+                boolean inNewExpr = (thisObj == null);
+                Boolean b = inNewExpr ? Boolean.TRUE : Boolean.FALSE;
+                Object[] invokeArgs = { cx, args, this, b };
+                result = (member.isCtor())
+                         ? member.newInstance(invokeArgs)
+                         : member.invoke(null, invokeArgs);
+            }
+
+        } else {
+            if (!isStatic) {
+                Class clazz = member.getDeclaringClass();
+                if (!clazz.isInstance(thisObj)) {
+                    boolean compatible = false;
+                    if (thisObj == scope) {
+                        Scriptable parentScope = getParentScope();
+                        if (scope != parentScope) {
+                            // Call with dynamic scope for standalone function,
+                            // use parentScope as thisObj
+                            compatible = clazz.isInstance(parentScope);
+                            if (compatible) {
+                                thisObj = parentScope;
+                            }
                         }
                     }
-                }
-                if (!compatible) {
-                    // Couldn't find an object to call this on.
-                    throw ScriptRuntime.typeError1("msg.incompat.call",
-                                                   functionName);
-                }
-            }
-        }
-
-        Object[] invokeArgs;
-        if (parmsLength == args.length) {
-            // Do not allocate new argument array if java arguments are
-            // the same as the original js ones.
-            invokeArgs = args;
-            for (int i = 0; i != parmsLength; ++i) {
-                Object arg = args[i];
-                Object converted = convertArg(cx, scope, arg, typeTags[i]);
-                if (arg != converted) {
-                    if (invokeArgs == args) {
-                        invokeArgs = (Object[])args.clone();
+                    if (!compatible) {
+                        // Couldn't find an object to call this on.
+                        throw ScriptRuntime.typeError1("msg.incompat.call",
+                                                       functionName);
                     }
-                    invokeArgs[i] = converted;
                 }
             }
-        } else if (parmsLength == 0) {
-            invokeArgs = ScriptRuntime.emptyArgs;
-        } else {
-            invokeArgs = new Object[parmsLength];
-            for (int i = 0; i != parmsLength; ++i) {
-                Object arg = (i < args.length)
-                             ? args[i]
-                             : Undefined.instance;
-                invokeArgs[i] = convertArg(cx, scope, arg, typeTags[i]);
+
+            Object[] invokeArgs;
+            if (parmsLength == args.length) {
+                // Do not allocate new argument array if java arguments are
+                // the same as the original js ones.
+                invokeArgs = args;
+                for (int i = 0; i != parmsLength; ++i) {
+                    Object arg = args[i];
+                    Object converted = convertArg(cx, scope, arg, typeTags[i]);
+                    if (arg != converted) {
+                        if (invokeArgs == args) {
+                            invokeArgs = (Object[])args.clone();
+                        }
+                        invokeArgs[i] = converted;
+                    }
+                }
+            } else if (parmsLength == 0) {
+                invokeArgs = ScriptRuntime.emptyArgs;
+            } else {
+                invokeArgs = new Object[parmsLength];
+                for (int i = 0; i != parmsLength; ++i) {
+                    Object arg = (i < args.length)
+                                 ? args[i]
+                                 : Undefined.instance;
+                    invokeArgs[i] = convertArg(cx, scope, arg, typeTags[i]);
+                }
             }
+
+            if (member.isMethod()) {
+                result = member.invoke(thisObj, invokeArgs);
+                checkMethodResult = true;
+            } else {
+                result = member.newInstance(invokeArgs);
+            }
+
         }
 
-        Object result;
-        if (member.isMethod()) {
-            result = member.invoke(thisObj, invokeArgs);
-        } else {
-            result = member.newInstance(invokeArgs);
+        if (checkMethodResult) {
+            if (hasVoidReturn) {
+                result = Undefined.instance;
+            } else if (returnTypeTag == JAVA_UNSUPPORTED_TYPE) {
+                result = cx.getWrapFactory().wrap(cx, scope, result, null);
+            }
+            // XXX: the code assumes that if returnTypeTag == JAVA_OBJECT_TYPE
+            // then the Java method did a proper job of converting the
+            // result to JS primitive or Scriptable to avoid
+            // potentially costly Context.javaToJS call.
         }
 
-        return hasVoidReturn ? Undefined.instance : result;
+        return result;
     }
 
     /**
@@ -479,22 +498,6 @@ public class FunctionObject extends BaseFunction
         return result;
     }
 
-    private Object callVarargs(Context cx, Scriptable thisObj, Object[] args)
-    {
-        if (parmsLength == VARARGS_METHOD) {
-            Object[] invokeArgs = { cx, thisObj, args, this };
-            Object result = member.invoke(null, invokeArgs);
-            return hasVoidReturn ? Undefined.instance : result;
-        } else {
-            boolean inNewExpr = (thisObj == null);
-            Boolean b = inNewExpr ? Boolean.TRUE : Boolean.FALSE;
-            Object[] invokeArgs = { cx, args, this, b };
-            return (member.isCtor())
-                   ? member.newInstance(invokeArgs)
-                   : member.invoke(null, invokeArgs);
-        }
-    }
-
     boolean isVarArgsMethod() {
         return parmsLength == VARARGS_METHOD;
     }
@@ -514,6 +517,15 @@ public class FunctionObject extends BaseFunction
                 typeTags[i] = (byte)getTypeTag(types[i]);
             }
         }
+        if (member.isMethod()) {
+            Method method = member.method();
+            Class returnType = method.getReturnType();
+            if (returnType == Void.TYPE) {
+                hasVoidReturn = true;
+            } else {
+                returnTypeTag = getTypeTag(returnType);
+            }
+        }
     }
 
     private static final short VARARGS_METHOD = -1;
@@ -530,8 +542,9 @@ public class FunctionObject extends BaseFunction
     public static final int JAVA_OBJECT_TYPE      = 6;
 
     MemberBox member;
-    transient private byte[] typeTags;
+    private transient byte[] typeTags;
     private int parmsLength;
-    private boolean hasVoidReturn;
+    private transient boolean hasVoidReturn;
+    private transient int returnTypeTag;
     private boolean isStatic;
 }

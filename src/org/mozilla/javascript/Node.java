@@ -46,6 +46,59 @@ package org.mozilla.javascript;
 
 public class Node
 {
+    public static final int
+        FUNCTION_PROP      =  1,
+        LOCAL_PROP         =  2,
+        LOCAL_BLOCK_PROP   =  3,
+        REGEXP_PROP        =  4,
+        CASEARRAY_PROP     =  5,
+    /*
+        the following properties are defined and manipulated by the
+        optimizer -
+        TARGETBLOCK_PROP - the block referenced by a branch node
+        VARIABLE_PROP - the variable referenced by a BIND or NAME node
+        ISNUMBER_PROP - this node generates code on Number children and
+                        delivers a Number result (as opposed to Objects)
+        DIRECTCALL_PROP - this call node should emit code to test the function
+                          object against the known class and call diret if it
+                          matches.
+    */
+
+        TARGETBLOCK_PROP   =  6,
+        VARIABLE_PROP      =  7,
+        ISNUMBER_PROP      =  8,
+        DIRECTCALL_PROP    =  9,
+        SPECIALCALL_PROP   = 10,
+        SKIP_INDEXES_PROP  = 11, // array of skipped indexes of array literal
+        OBJECT_IDS_PROP    = 12, // array of properties for object literal
+        INCRDECR_PROP      = 13, // pre or post type of increment/decerement
+        CATCH_SCOPE_PROP   = 14, // index of catch scope block in catch
+        LABEL_ID_PROP      = 15, // label id: code generation uses it
+        MEMBER_TYPE_PROP   = 16, // type of element access operation
+        NAME_PROP          = 17, // property name
+        LAST_PROP          = 17;
+
+    // values of ISNUMBER_PROP to specify
+    // which of the children are Number types
+    public static final int
+        BOTH = 0,
+        LEFT = 1,
+        RIGHT = 2;
+
+    public static final int    // values for SPECIALCALL_PROP
+        NON_SPECIALCALL  = 0,
+        SPECIALCALL_EVAL = 1,
+        SPECIALCALL_WITH = 2;
+
+    public static final int   // flags for INCRDECR_PROP
+        DECR_FLAG = 0x1,
+        POST_FLAG = 0x2;
+
+    public static final int   // flags for MEMBER_TYPE_PROP
+        PROPERTY_FLAG    = 0x1, // property access: element is valid name
+        ATTRIBUTE_FLAG   = 0x2, // x.@y or x..@y
+        DESCENDANTS_FLAG = 0x4; // x..y or x..@i
+
     private static class NumberNode extends Node
     {
         NumberNode(double number)
@@ -89,67 +142,79 @@ public class Node
             super(type, child, lineno);
         }
 
-        public final String getLabel()
+        public final Jump getJumpStatement()
         {
-            if (!(type == Token.BREAK || type == Token.CONTINUE
-                  || type == Token.LABEL))
-            {
-                Kit.codeBug();
-            }
-            return label;
+            if (!(type == Token.BREAK || type == Token.CONTINUE)) Kit.codeBug();
+            return jumpNode;
         }
 
-        public final void setLabel(String label)
+        public final void setJumpStatement(Jump jumpStatement)
         {
-            if (!(type == Token.BREAK || type == Token.CONTINUE
-                  || type == Token.LABEL))
-            {
-                Kit.codeBug();
-            }
-            if (label == null) Kit.codeBug();
-            if (this.label != null) Kit.codeBug(); //only once
-            this.label = label;
+            if (!(type == Token.BREAK || type == Token.CONTINUE)) Kit.codeBug();
+            if (jumpStatement == null) Kit.codeBug();
+            if (this.jumpNode != null) Kit.codeBug(); //only once
+            this.jumpNode = jumpStatement;
         }
 
-        public final Target getFinally()
+        public final Node getDefault()
+        {
+            if (!(type == Token.SWITCH)) Kit.codeBug();
+            return target2;
+        }
+
+        public final void setDefault(Node defaultTarget)
+        {
+            if (!(type == Token.SWITCH)) Kit.codeBug();
+            if (defaultTarget.type != Token.TARGET) Kit.codeBug();
+            if (target2 != null) Kit.codeBug(); //only once
+            target2 = defaultTarget;
+        }
+
+        public final Node getFinally()
         {
             if (!(type == Token.TRY)) Kit.codeBug();
             return target2;
         }
 
-        public final void setFinally(Target finallyTarget)
+        public final void setFinally(Node finallyTarget)
         {
             if (!(type == Token.TRY)) Kit.codeBug();
-            if (finallyTarget == null) Kit.codeBug();
+            if (finallyTarget.type != Token.TARGET) Kit.codeBug();
             if (target2 != null) Kit.codeBug(); //only once
             target2 = finallyTarget;
         }
 
-        public final Target getContinue()
+        public final Jump getLoop()
         {
-            if (!(type == Token.LABEL || type == Token.LOOP)) Kit.codeBug();                return target2;
+            if (!(type == Token.LABEL)) Kit.codeBug();
+            return jumpNode;
         }
 
-        public final void setContinue(Target continueTarget)
+        public final void setLoop(Jump loop)
         {
-            if (!(type == Token.LABEL || type == Token.LOOP)) Kit.codeBug();                if (continueTarget == null) Kit.codeBug();
+            if (!(type == Token.LABEL)) Kit.codeBug();
+            if (loop == null) Kit.codeBug();
+            if (jumpNode != null) Kit.codeBug(); //only once
+            jumpNode = loop;
+        }
+
+        public final Node getContinue()
+        {
+            if (type != Token.LOOP) Kit.codeBug();
+            return target2;
+        }
+
+        public final void setContinue(Node continueTarget)
+        {
+            if (type != Token.LOOP) Kit.codeBug();
+            if (continueTarget.type != Token.TARGET) Kit.codeBug();
             if (target2 != null) Kit.codeBug(); //only once
             target2 = continueTarget;
         }
 
-        public Target target;
-        private Target target2;
-        private String label;
-    }
-
-    public static class Target extends Node
-    {
-        public Target()
-        {
-            super(Token.TARGET);
-        }
-
-        public int labelId = -1;
+        public Node target;
+        private Node target2;
+        private Jump jumpNode;
     }
 
     private static class PropListItem
@@ -362,77 +427,31 @@ public class Node
         child.next = null;
     }
 
-    public static final int
-        FUNCTION_PROP     =  1,
-        TEMP_PROP         =  2,
-        LOCAL_PROP        =  3,
-        LOCAL_BLOCK_PROP  =  4,
-        FIXUPS_PROP       =  5,
-        USES_PROP         =  6,
-        REGEXP_PROP       =  7,
-        CASES_PROP        =  8,
-        DEFAULT_PROP      =  9,
-        CASEARRAY_PROP    = 10,
-        SPECIAL_PROP_PROP = 11,
-    /*
-        the following properties are defined and manipulated by the
-        optimizer -
-        TARGETBLOCK_PROP - the block referenced by a branch node
-        VARIABLE_PROP - the variable referenced by a BIND or NAME node
-        LASTUSE_PROP - that variable node is the last reference before
-                        a new def or the end of the block
-        ISNUMBER_PROP - this node generates code on Number children and
-                        delivers a Number result (as opposed to Objects)
-        DIRECTCALL_PROP - this call node should emit code to test the function
-                          object against the known class and call diret if it
-                          matches.
-    */
-
-        TARGETBLOCK_PROP  = 12,
-        VARIABLE_PROP     = 13,
-        LASTUSE_PROP      = 14,
-        ISNUMBER_PROP     = 15,
-        DIRECTCALL_PROP   = 16,
-        SPECIALCALL_PROP  = 17;
-
-    public static final int    // this value of the SPECIAL_PROP_PROP specifies
-        SPECIAL_PROP_PROTO  = 1,
-        SPECIAL_PROP_PARENT = 2;
-
-    public static final int    // this value of the ISNUMBER_PROP specifies
-        BOTH = 0,               // which of the children are Number types
-        LEFT = 1,
-        RIGHT = 2;
-
-    public static final int    // this value of the SPECIALCALL_PROP specifies
-        NON_SPECIALCALL  = 0,
-        SPECIALCALL_EVAL = 1,
-        SPECIALCALL_WITH = 2;
-
-    private static final String propToString(int propType) {
+    private static final String propToString(int propType)
+    {
         if (Token.printTrees) {
             // If Context.printTrees is false, the compiler
             // can remove all these strings.
             switch (propType) {
                 case FUNCTION_PROP:      return "function";
-                case TEMP_PROP:          return "temp";
                 case LOCAL_PROP:         return "local";
                 case LOCAL_BLOCK_PROP:   return "local_block";
-                case FIXUPS_PROP:        return "fixups";
-                case USES_PROP:          return "uses";
                 case REGEXP_PROP:        return "regexp";
-                case CASES_PROP:         return "cases";
-                case DEFAULT_PROP:       return "default";
                 case CASEARRAY_PROP:     return "casearray";
-                case SPECIAL_PROP_PROP:  return "special_prop";
 
                 case TARGETBLOCK_PROP:   return "targetblock";
                 case VARIABLE_PROP:      return "variable";
-                case LASTUSE_PROP:       return "lastuse";
                 case ISNUMBER_PROP:      return "isnumber";
                 case DIRECTCALL_PROP:    return "directcall";
 
                 case SPECIALCALL_PROP:   return "specialcall";
+                case SKIP_INDEXES_PROP:  return "skip_indexes";
+                case OBJECT_IDS_PROP:    return "object_ids_prop";
+                case INCRDECR_PROP:      return "incrdecr_prop";
+                case CATCH_SCOPE_PROP:   return "catch_scope_prop";
+                case LABEL_ID_PROP:      return "label_id_prop";
+                case MEMBER_TYPE_PROP:   return "member_type_prop";
+                case NAME_PROP:          return "name_prop";
 
                 default: Kit.codeBug();
             }
@@ -540,6 +559,23 @@ public class Node
         ((StringNode)this).str = s;
     }
 
+    public static Node newTarget()
+    {
+        return new Node(Token.TARGET);
+    }
+
+    public final int labelId()
+    {
+        if (type != Token.TARGET) Kit.codeBug();
+        return getIntProp(LABEL_ID_PROP, -1);
+    }
+
+    public void labelId(int labelId)
+    {
+        if (type != Token.TARGET) Kit.codeBug();
+        putIntProp(LABEL_ID_PROP, labelId);
+    }
+
     public String toString() {
         if (Token.printTrees) {
             StringBuffer sb = new StringBuffer(Token.name(type));
@@ -566,15 +602,12 @@ public class Node
             } else if (this instanceof Jump) {
                 Jump jump = (Jump)this;
                 if (type == Token.BREAK || type == Token.CONTINUE) {
-                    String label = jump.getLabel();
-                    if (label != null) {
-                        sb.append(" [label: ");
-                        sb.append(label);
-                        sb.append(']');
-                    }
+                    sb.append(" [label: ");
+                    sb.append(jump.getJumpStatement());
+                    sb.append(']');
                 } else if (type == Token.TRY) {
                     Node catchNode = jump.target;
-                    Node.Target finallyTarget = jump.getFinally();
+                    Node finallyTarget = jump.getFinally();
                     if (catchNode != null) {
                         sb.append(" [catch: ");
                         sb.append(catchNode);
@@ -601,13 +634,6 @@ public class Node
                     sb.append(jump.target);
                     sb.append(']');
                 }
-            } else if (this instanceof Target) {
-                Target target = (Target)this;
-                sb.append(' ');
-                sb.append(hashCode());
-                sb.append(" [labelId: ");
-                sb.append(target.labelId);
-                sb.append(']');
             } else if (type == Token.NUMBER) {
                 sb.append(' ');
                 sb.append(getDouble());
@@ -624,29 +650,11 @@ public class Node
                 sb.append(": ");
                 String value;
                 switch (type) {
-                  case FIXUPS_PROP : // can't add this as it recurses
-                    value = "fixups property";
-                    break;
                   case TARGETBLOCK_PROP : // can't add this as it recurses
                     value = "target block property";
                     break;
-                  case LASTUSE_PROP :     // can't add this as it is dull
-                    value = "last use property";
-                    break;
                   case LOCAL_BLOCK_PROP :     // can't add this as it is dull
                     value = "last local block";
-                    break;
-                  case SPECIAL_PROP_PROP:
-                    switch (x.intValue) {
-                      case SPECIAL_PROP_PROTO:
-                        value = "__proto__";
-                        break;
-                      case SPECIAL_PROP_PARENT:
-                        value = "__parent__";
-                        break;
-                      default:
-                        throw Kit.codeBug();
-                    }
                     break;
                   case ISNUMBER_PROP:
                     switch (x.intValue) {
@@ -690,7 +698,7 @@ public class Node
             }
             return sb.toString();
         }
-        return null;
+        return String.valueOf(type);
     }
 
     public String toStringTree(ScriptOrFnNode treeTop) {

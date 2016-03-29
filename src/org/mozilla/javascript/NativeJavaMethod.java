@@ -70,39 +70,40 @@ public class NativeJavaMethod extends BaseFunction
         this(new MemberBox(method, null), name);
     }
 
-    private static String scriptSignature(Object value)
-    {
-        if (value == null) {
-            return "null";
-        } else if (value instanceof Boolean) {
-            return "boolean";
-        } else if (value instanceof String) {
-            return "string";
-        } else if (value instanceof Number) {
-            return "number";
-        } else if (value instanceof Scriptable) {
-            if (value instanceof Undefined) {
-                return "undefined";
-            } else if (value instanceof Wrapper) {
-                Object wrapped = ((Wrapper)value).unwrap();
-                return wrapped.getClass().getName();
-            } else if (value instanceof Function) {
-                return "function";
-            } else {
-                return "object";
-            }
-        } else {
-            return JavaMembers.javaSignature(value.getClass());
-        }
-    }
-
     static String scriptSignature(Object[] values)
     {
         StringBuffer sig = new StringBuffer();
-        for (int i = 0; i < values.length; i++) {
-            if (i != 0)
+        for (int i = 0; i != values.length; ++i) {
+            Object value = values[i];
+
+            String s;
+            if (value == null) {
+                s = "null";
+            } else if (value instanceof Boolean) {
+                s = "boolean";
+            } else if (value instanceof String) {
+                s = "string";
+            } else if (value instanceof Number) {
+                s = "number";
+            } else if (value instanceof Scriptable) {
+                if (value instanceof Undefined) {
+                    s = "undefined";
+                } else if (value instanceof Wrapper) {
+                    Object wrapped = ((Wrapper)value).unwrap();
+                    s = wrapped.getClass().getName();
+                } else if (value instanceof Function) {
+                    s = "function";
+                } else {
+                    s = "object";
+                }
+            } else {
+                s = JavaMembers.javaSignature(value.getClass());
+            }
+
+            if (i != 0) {
                 sig.append(',');
-            sig.append(scriptSignature(values[i]));
+            }
+            sig.append(s);
         }
         return sig.toString();
     }
@@ -117,7 +118,7 @@ public class NativeJavaMethod extends BaseFunction
             sb.append("() {");
         }
         sb.append("/*\n");
-        toString(sb);
+        sb.append(toString());
         sb.append(justbody ? "*/\n" : "*/}\n");
         return sb.toString();
     }
@@ -125,12 +126,6 @@ public class NativeJavaMethod extends BaseFunction
     public String toString()
     {
         StringBuffer sb = new StringBuffer();
-        toString(sb);
-        return sb.toString();
-    }
-
-    private void toString(StringBuffer sb)
-    {
         for (int i = 0, N = methods.length; i != N; ++i) {
             Method method = methods[i].method();
             sb.append(JavaMembers.javaSignature(method.getReturnType()));
@@ -139,11 +134,11 @@ public class NativeJavaMethod extends BaseFunction
             sb.append(JavaMembers.liveConnectSignature(methods[i].argTypes));
             sb.append('\n');
         }
+        return sb.toString();
     }
 
     public Object call(Context cx, Scriptable scope, Scriptable thisObj,
                        Object[] args)
-        throws JavaScriptException
     {
         // Find a method that matches the types given.
         if (methods.length == 0) {
@@ -254,130 +249,140 @@ public class NativeJavaMethod extends BaseFunction
             return 0;
         }
 
-        int bestFit = -1;
-        Class[] bestFitTypes = null;
+        int firstBestFit = -1;
+        int[] extraBestFits = null;
+        int extraBestFitsCount = 0;
 
-        int[] ambiguousMethods = null;
-        int ambiguousMethodCount = 0;
-
+      search:
         for (int i = 0; i < methodsOrCtors.length; i++) {
             MemberBox member = methodsOrCtors[i];
             Class[] argTypes = member.argTypes;
             if (argTypes.length != args.length) {
-                continue;
+                continue search;
             }
-            if (bestFit < 0) {
-                int j;
-                for (j = 0; j < argTypes.length; j++) {
-                    if (!NativeJavaObject.canConvert(args[j], argTypes[j])) {
-                        if (debug) printDebug("Rejecting (args can't convert) ",
-                                              member, args);
-                        break;
+            for (int j = 0; j < argTypes.length; j++) {
+                if (!NativeJavaObject.canConvert(args[j], argTypes[j])) {
+                    if (debug) printDebug("Rejecting (args can't convert) ",
+                                          member, args);
+                    continue search;
+                }
+            }
+            if (firstBestFit < 0) {
+                if (debug) printDebug("Found first applicable ", member, args);
+                firstBestFit = i;
+            } else {
+                // Compare with all currently fit methods.
+                // The loop starts from -1 denoting firstBestFit and proceed
+                // until extraBestFitsCount to avoid extraBestFits allocation
+                // in the most common case of no ambiguity
+                int betterCount = 0; // number of times member was prefered over
+                                     // best fits
+                int worseCount = 0;  // number of times best fits were prefered
+                                     // over member
+                for (int j = -1; j != extraBestFitsCount; ++j) {
+                    int bestFitIndex;
+                    if (j == -1) {
+                        bestFitIndex = firstBestFit;
+                    } else {
+                        bestFitIndex = extraBestFits[j];
                     }
-                }
-                if (j == argTypes.length) {
-                    if (debug) printDebug("Found ", member, args);
-                    bestFit = i;
-                    bestFitTypes = argTypes;
-                }
-            }
-            else {
-                int preference = preferSignature(args, argTypes,
-                                                 bestFitTypes);
-                if (preference == PREFERENCE_AMBIGUOUS) {
-                    if (debug) printDebug("Deferring ", member, args);
-                    // add to "ambiguity list"
-                    if (ambiguousMethods == null)
-                        ambiguousMethods = new int[methodsOrCtors.length];
-                    ambiguousMethods[ambiguousMethodCount++] = i;
-                } else if (preference == PREFERENCE_FIRST_ARG) {
-                    if (debug) printDebug("Substituting ", member, args);
-                    bestFit = i;
-                    bestFitTypes = argTypes;
-                } else if (preference == PREFERENCE_SECOND_ARG) {
-                    if (debug) printDebug("Rejecting ", member, args);
-                } else {
-                    if (preference != PREFERENCE_EQUAL) Kit.codeBug();
-                    MemberBox best = methodsOrCtors[bestFit];
-                    if (best.isStatic()
-                        && best.getDeclaringClass().isAssignableFrom(
-                               member.getDeclaringClass()))
-                    {
-                        // On some JVMs, Class.getMethods will return all
+                    MemberBox bestFit = methodsOrCtors[bestFitIndex];
+                    int preference = preferSignature(args, argTypes,
+                                                     bestFit.argTypes);
+                    if (preference == PREFERENCE_AMBIGUOUS) {
+                        break;
+                    } else if (preference == PREFERENCE_FIRST_ARG) {
+                        ++betterCount;
+                    } else if (preference == PREFERENCE_SECOND_ARG) {
+                        ++worseCount;
+                    } else {
+                        if (preference != PREFERENCE_EQUAL) Kit.codeBug();
+                        // This should not happen in theory
+                        // but on some JVMs, Class.getMethods will return all
                         // static methods of the class heirarchy, even if
                         // a derived class's parameters match exactly.
                         // We want to call the dervied class's method.
-                        if (debug) printDebug(
-                            "Substituting (overridden static)", member, args);
-                        bestFit = i;
-                        bestFitTypes = argTypes;
-                    } else {
-                        if (debug) printDebug(
-                            "Ignoring same signature member ", member, args);
+                        if (bestFit.isStatic()
+                            && bestFit.getDeclaringClass().isAssignableFrom(
+                                   member.getDeclaringClass()))
+                        {
+                            // On some JVMs, Class.getMethods will return all
+                            // static methods of the class heirarchy, even if
+                            // a derived class's parameters match exactly.
+                            // We want to call the dervied class's method.
+                            if (debug) printDebug(
+                                "Substituting (overridden static)",
+                                member, args);
+                            if (j == -1) {
+                                firstBestFit = i;
+                            } else {
+                                extraBestFits[j] = i;
+                            }
+                        } else {
+                            if (debug) printDebug(
+                                "Ignoring same signature member ",
+                                member, args);
+                        }
+                        continue search;
                     }
+                }
+                if (betterCount == 1 + extraBestFitsCount) {
+                    // member was prefered over all best fits
+                    if (debug) printDebug(
+                        "New first applicable ", member, args);
+                    firstBestFit = i;
+                    extraBestFitsCount = 0;
+                } else if (worseCount == 1 + extraBestFitsCount) {
+                    // all best fits were prefered over member, ignore it
+                    if (debug) printDebug(
+                        "Rejecting (all current bests better) ", member, args);
+                } else {
+                    // some ambiguity was present, add member to best fit set
+                    if (debug) printDebug(
+                        "Added to best fit set ", member, args);
+                    if (extraBestFits == null) {
+                        // Allocate maximum possible array
+                        extraBestFits = new int[methodsOrCtors.length - 1];
+                    }
+                    extraBestFits[extraBestFitsCount] = i;
+                    ++extraBestFitsCount;
                 }
             }
         }
 
-        if (ambiguousMethodCount == 0)
-            return bestFit;
-
-        // Compare ambiguous methods with best fit, in case
-        // the current best fit removes the ambiguities.
-        int removedCount = 0;
-        for (int k = 0; k != ambiguousMethodCount; ++k) {
-            int i = ambiguousMethods[k];
-            MemberBox member = methodsOrCtors[i];
-            Class[] argTypes = member.argTypes;
-            int preference = preferSignature(args, argTypes,
-                                             bestFitTypes);
-
-            if (preference == PREFERENCE_FIRST_ARG) {
-                if (debug) printDebug("Substituting ", member, args);
-                bestFit = i;
-                bestFitTypes = argTypes;
-                ambiguousMethods[k] = -1;
-                ++removedCount;
-            }
-            else if (preference == PREFERENCE_SECOND_ARG) {
-                if (debug) printDebug("Rejecting ", member, args);
-                ambiguousMethods[k] = -1;
-                ++removedCount;
-            }
-            else {
-                if (debug) printDebug("UNRESOLVED: ", member, args);
-            }
+        if (firstBestFit < 0) {
+            // Nothing was found
+            return -1;
+        } else if (extraBestFitsCount == 0) {
+            // single best fit
+            return firstBestFit;
         }
 
-        if (removedCount == ambiguousMethodCount) {
-            return bestFit;
-        }
-
-        // PENDING: report remaining ambiguity
+        // report remaining ambiguity
         StringBuffer buf = new StringBuffer();
-
-        ambiguousMethods[ambiguousMethodCount++] = bestFit;
-        boolean first = true;
-        for (int k = 0; k < ambiguousMethodCount; k++) {
-            int i = ambiguousMethods[k];
-            if (i < 0) { continue; }
-            if (!first) {
-                buf.append(", ");
+        for (int j = -1; j != extraBestFitsCount; ++j) {
+            int bestFitIndex;
+            if (j == -1) {
+                bestFitIndex = firstBestFit;
+            } else {
+                bestFitIndex = extraBestFits[j];
             }
-            buf.append(methodsOrCtors[i].toJavaDeclaration());
-            first = false;
+            buf.append("\n    ");
+            buf.append(methodsOrCtors[bestFitIndex].toJavaDeclaration());
         }
 
-        MemberBox best = methodsOrCtors[bestFit];
+        MemberBox firstFitMember = methodsOrCtors[firstBestFit];
+        String memberName = firstFitMember.getName();
+        String memberClass = firstFitMember.getDeclaringClass().getName();
 
         if (methodsOrCtors[0].isMethod()) {
             throw Context.reportRuntimeError3(
                 "msg.constructor.ambiguous",
-                best.getName(), scriptSignature(args), buf.toString());
+                memberName, scriptSignature(args), buf.toString());
         } else {
             throw Context.reportRuntimeError4(
-                "msg.method.ambiguous", best.getDeclaringClass().getName(),
-                best.getName(), scriptSignature(args), buf.toString());
+                "msg.method.ambiguous", memberClass,
+                memberName, scriptSignature(args), buf.toString());
         }
     }
 
@@ -396,59 +401,49 @@ public class NativeJavaMethod extends BaseFunction
     private static int preferSignature(Object[] args,
                                        Class[] sig1, Class[] sig2)
     {
-        int preference = 0;
-
+        int totalPreference = 0;
         for (int j = 0; j < args.length; j++) {
             Class type1 = sig1[j];
             Class type2 = sig2[j];
-
             if (type1 == type2) {
                 continue;
             }
+            Object arg = args[j];
 
-            preference |= preferConversion(args[j], type1, type2);
+            // Determine which of type1, type2 is easier to convert from arg.
 
-            if (preference == PREFERENCE_AMBIGUOUS) {
+            int rank1 = NativeJavaObject.getConversionWeight(arg, type1);
+            int rank2 = NativeJavaObject.getConversionWeight(arg, type2);
+
+            int preference;
+            if (rank1 < rank2) {
+                preference = PREFERENCE_FIRST_ARG;
+            } else if (rank1 > rank2) {
+                preference = PREFERENCE_SECOND_ARG;
+            } else {
+                // Equal ranks
+                if (rank1 == NativeJavaObject.CONVERSION_NONTRIVIAL) {
+                    if (type1.isAssignableFrom(type2)) {
+                        preference = PREFERENCE_SECOND_ARG;
+                    } else if (type2.isAssignableFrom(type1)) {
+                        preference = PREFERENCE_FIRST_ARG;
+                    } else {
+                        preference = PREFERENCE_AMBIGUOUS;
+                    }
+                } else {
+                    preference = PREFERENCE_AMBIGUOUS;
+                }
+            }
+
+            totalPreference |= preference;
+
+            if (totalPreference == PREFERENCE_AMBIGUOUS) {
                 break;
             }
         }
-        return preference;
+        return totalPreference;
     }
 
-
-    /**
-     * Determine which of two types is the easier conversion.
-     * Returns one of PREFERENCE_EQUAL, PREFERENCE_FIRST_ARG,
-     * PREFERENCE_SECOND_ARG, or PREFERENCE_AMBIGUOUS.
-     */
-    private static int preferConversion(Object fromObj,
-                                        Class toClass1, Class toClass2)
-    {
-        int rank1  =
-            NativeJavaObject.getConversionWeight(fromObj, toClass1);
-        int rank2 =
-            NativeJavaObject.getConversionWeight(fromObj, toClass2);
-
-        if (rank1 == NativeJavaObject.CONVERSION_NONTRIVIAL &&
-            rank2 == NativeJavaObject.CONVERSION_NONTRIVIAL) {
-
-            if (toClass1.isAssignableFrom(toClass2)) {
-                return PREFERENCE_SECOND_ARG;
-            }
-            else if (toClass2.isAssignableFrom(toClass1)) {
-                return PREFERENCE_FIRST_ARG;
-            }
-        }
-        else {
-            if (rank1 < rank2) {
-                return PREFERENCE_FIRST_ARG;
-            }
-            else if (rank1 > rank2) {
-                return PREFERENCE_SECOND_ARG;
-            }
-        }
-        return PREFERENCE_AMBIGUOUS;
-    }
 
     private static final boolean debug = false;
 
@@ -468,6 +463,7 @@ public class NativeJavaMethod extends BaseFunction
             sb.append(" for arguments (");
             sb.append(scriptSignature(args));
             sb.append(')');
+            System.out.println(sb);
         }
     }
 

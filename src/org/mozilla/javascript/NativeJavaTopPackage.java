@@ -53,7 +53,7 @@ import java.lang.reflect.*;
  */
 
 public class NativeJavaTopPackage
-    extends NativeJavaPackage implements Function
+    extends NativeJavaPackage implements Function, IdFunctionCall
 {
 
     // we know these are packages so we can skip the class check
@@ -79,13 +79,11 @@ public class NativeJavaTopPackage
 
     public Object call(Context cx, Scriptable scope, Scriptable thisObj,
                        Object[] args)
-        throws JavaScriptException
     {
         return construct(cx, scope, args);
     }
 
     public Scriptable construct(Context cx, Scriptable scope, Object[] args)
-        throws JavaScriptException
     {
         ClassLoader loader = null;
         if (args.length != 0) {
@@ -113,17 +111,12 @@ public class NativeJavaTopPackage
 
         String[] names = Kit.semicolonSplit(commonPackages);
         for (int i = 0; i != names.length; ++i) {
-            top.forcePackage(names[i]);
+            top.forcePackage(names[i], scope);
         }
 
         // getClass implementation
-        JIFunction getClass = new JIFunction("getClass", 1) {
-            public Object call(Context fcx, Scriptable fscope,
-                               Scriptable thisObj, Object[] args)
-            {
-                return top.js_getClass(fcx, fscope, args);
-            }
-        };
+        IdFunctionObject getClass = new IdFunctionObject(top, FTAG, Id_getClass,
+                                                         "getClass", 1, scope);
 
         // We want to get a real alias, and not a distinct JavaPackage
         // with the same packageName, so that we share classes and top
@@ -134,12 +127,26 @@ public class NativeJavaTopPackage
         // a ScriptableObject.
         ScriptableObject global = (ScriptableObject) scope;
 
-        getClass.defineAsProperty(global, ScriptableObject.DONTENUM);
+        if (sealed) {
+            getClass.sealObject();
+        }
+        getClass.exportAsScopeProperty();
         global.defineProperty("Packages", top, ScriptableObject.DONTENUM);
         global.defineProperty("java", javaAlias, ScriptableObject.DONTENUM);
     }
 
-    final Scriptable js_getClass(Context cx, Scriptable scope, Object[] args)
+    public Object execIdCall(IdFunctionObject f, Context cx, Scriptable scope,
+                             Scriptable thisObj, Object[] args)
+    {
+        if (f.hasTag(FTAG)) {
+            if (f.methodId() == Id_getClass) {
+                return js_getClass(cx, scope, args);
+            }
+        }
+        throw f.unknown();
+    }
+
+    private Scriptable js_getClass(Context cx, Scriptable scope, Object[] args)
     {
         if (args.length > 0  && args[0] instanceof Wrapper) {
             Scriptable result = this;
@@ -162,9 +169,10 @@ public class NativeJavaTopPackage
                 offset = index+1;
             }
         }
-        throw Context.reportRuntimeError(
-            Context.getMessage0("msg.not.java.obj"));
+        throw Context.reportRuntimeError0("msg.not.java.obj");
     }
 
+    private static final Object FTAG = new Object();
+    private static final int Id_getClass = 1;
 }
 

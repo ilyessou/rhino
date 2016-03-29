@@ -20,6 +20,7 @@
  *
  * Contributor(s):
  * Norris Boyd
+ * Igor Bukanov
  *
  * Alternatively, the contents of this file may be used under the
  * terms of the GNU Public License (the "GPL"), in which case the
@@ -35,35 +36,33 @@
 
 package org.mozilla.javascript;
 
-import java.lang.reflect.Method;
-
 /**
  * This class implements the object lookup required for the
  * <code>with</code> statement.
  * It simply delegates every action to its prototype except
  * for operations on its parent.
  */
-public final class NativeWith implements Scriptable, IdFunctionMaster {
+public class NativeWith implements Scriptable, IdFunctionCall {
 
     static void init(Context cx, Scriptable scope, boolean sealed) {
         NativeWith obj = new NativeWith();
-        obj.prototypeFlag = true;
 
-        IdFunction ctor = new IdFunction(obj, "constructor", Id_constructor);
-        ctor.initAsConstructor(scope, obj);
-        if (sealed) { ctor.sealObject(); }
-
-        obj.setParentScope(ctor);
+        obj.setParentScope(scope);
         obj.setPrototype(ScriptableObject.getObjectPrototype(scope));
 
-        ScriptableObject.defineProperty(scope, "With", ctor,
-                                        ScriptableObject.DONTENUM);
+        IdFunctionObject ctor = new IdFunctionObject(obj, FTAG, Id_constructor,
+                                         "With", 0, scope);
+        ctor.markAsConstructor(obj);
+        if (sealed) {
+            ctor.sealObject();
+        }
+        ctor.exportAsScopeProperty();
     }
 
     private NativeWith() {
     }
 
-    NativeWith(Scriptable parent, Scriptable prototype) {
+    protected NativeWith(Scriptable parent, Scriptable prototype) {
         this.parent = parent;
         this.prototype = prototype;
     }
@@ -72,47 +71,51 @@ public final class NativeWith implements Scriptable, IdFunctionMaster {
         return "With";
     }
 
-    public boolean has(String id, Scriptable start) {
-        if (start == this)
-            start = prototype;
-        return prototype.has(id, start);
+    public boolean has(String id, Scriptable start)
+    {
+        return prototype.has(id, prototype);
     }
 
-    public boolean has(int index, Scriptable start) {
-        if (start == this)
-            start = prototype;
-        return prototype.has(index, start);
+    public boolean has(int index, Scriptable start)
+    {
+        return prototype.has(index, prototype);
     }
 
-    public Object get(String id, Scriptable start) {
+    public Object get(String id, Scriptable start)
+    {
         if (start == this)
             start = prototype;
         return prototype.get(id, start);
     }
 
-    public Object get(int index, Scriptable start) {
+    public Object get(int index, Scriptable start)
+    {
         if (start == this)
             start = prototype;
         return prototype.get(index, start);
     }
 
-    public void put(String id, Scriptable start, Object value) {
+    public void put(String id, Scriptable start, Object value)
+    {
         if (start == this)
             start = prototype;
         prototype.put(id, start, value);
     }
 
-    public void put(int index, Scriptable start, Object value) {
+    public void put(int index, Scriptable start, Object value)
+    {
         if (start == this)
             start = prototype;
         prototype.put(index, start, value);
     }
 
-    public void delete(String id) {
+    public void delete(String id)
+    {
         prototype.delete(id);
     }
 
-    public void delete(int index) {
+    public void delete(int index)
+    {
         prototype.delete(index);
     }
 
@@ -144,36 +147,31 @@ public final class NativeWith implements Scriptable, IdFunctionMaster {
         return prototype.hasInstance(value);
     }
 
-    public Object execMethod(int methodId, IdFunction function, Context cx,
-                             Scriptable scope, Scriptable thisObj,
-                             Object[] args)
-        throws JavaScriptException
+    /**
+     * Must return null to continue looping or the final collection result.
+     */
+    protected Object updateDotQuery(boolean value)
     {
-        if (prototypeFlag) {
-            if (methodId == Id_constructor) {
-                throw Context.reportRuntimeError1
-                    ("msg.cant.call.indirect", "With");
-            }
-        }
-        throw IdFunction.onBadMethodId(this, methodId);
+        // NativeWith itself does not support it
+        throw new IllegalStateException();
     }
 
-    public int methodArity(int methodId) {
-        if (prototypeFlag) {
-            if (methodId == Id_constructor) { return 0; }
+    public Object execIdCall(IdFunctionObject f, Context cx, Scriptable scope,
+                             Scriptable thisObj, Object[] args)
+    {
+        if (f.hasTag(FTAG)) {
+            if (f.methodId() == Id_constructor) {
+                throw Context.reportRuntimeError1("msg.cant.call.indirect", "With");
+            }
         }
-        return -1;
+        throw f.unknown();
     }
 
     static boolean isWithFunction(Object functionObj)
     {
-        if (functionObj instanceof IdFunction) {
-            IdFunction function = (IdFunction)functionObj;
-            if (function.master instanceof NativeWith
-                && function.getMethodId() == Id_constructor)
-            {
-                return true;
-            }
+        if (functionObj instanceof IdFunctionObject) {
+            IdFunctionObject f = (IdFunctionObject)functionObj;
+            return f.hasTag(FTAG) && f.methodId() == Id_constructor;
         }
         return false;
     }
@@ -191,12 +189,11 @@ public final class NativeWith implements Scriptable, IdFunctionMaster {
         return thisObj;
     }
 
+    private static final Object FTAG = new Object();
+
     private static final int
         Id_constructor = 1;
 
-    private Scriptable prototype;
-    private Scriptable parent;
-    private Scriptable constructor;
-
-    private boolean prototypeFlag;
+    protected Scriptable prototype;
+    protected Scriptable parent;
 }

@@ -20,6 +20,7 @@
  *
  * Contributor(s):
  * Norris Boyd
+ * Igor Bukanov
  * Matthias Radestock
  *
  * Alternatively, the contents of this file may be used under the
@@ -70,8 +71,10 @@ import java.io.Serializable;
  *
  * @author Norris Boyd
  */
-public class ImporterTopLevel extends ScriptableObject
+public class ImporterTopLevel extends IdScriptableObject
 {
+    private static final Object IMPORTER_TAG = new Object();
+
     public ImporterTopLevel() { }
 
     public ImporterTopLevel(Context cx) {
@@ -85,13 +88,32 @@ public class ImporterTopLevel extends ScriptableObject
 
     public String getClassName()
     {
-        return "global";
+        return (topScopeFlag) ? "global" : "JavaImporter";
+    }
+
+    public static void init(Context cx, Scriptable scope, boolean sealed)
+    {
+        ImporterTopLevel obj = new ImporterTopLevel();
+        obj.exportAsJSClass(MAX_PROTOTYPE_ID, scope, sealed);
     }
 
     public void initStandardObjects(Context cx, boolean sealed)
     {
+        // Assume that Context.initStandardObjects initialize JavaImporter
+        // property lazily so the above init call is not yet called
         cx.initStandardObjects(this, sealed);
-        ImporterFunctions.setup(this);
+        topScopeFlag = true;
+        // If seal is true then exportAsJSClass(cx, seal) would seal
+        // this obj. Since this is scope as well, it would not allow
+        // to add variables.
+        IdFunctionObject ctor = exportAsJSClass(MAX_PROTOTYPE_ID, this, false);
+        if (sealed) {
+            ctor.sealObject();
+        }
+        // delete "constructor" defined by exportAsJSClass so "constructor"
+        // name would refer to Object.constructor
+        // and not to JavaImporter.prototype.constructor.
+        delete("constructor");
     }
 
     public boolean has(String name, Scriptable start) {
@@ -128,95 +150,165 @@ public class ImporterTopLevel extends ScriptableObject
         return result;
     }
 
-    void importClass(Context cx, Scriptable thisObj, Object[] args)
-    {
-        for (int i=0; i<args.length; i++) {
-            Object cl = args[i];
-            if (!(cl instanceof NativeJavaClass)) {
-                throw Context.reportRuntimeError1(
-                    "msg.not.class", Context.toString(cl));
-            }
-            String s = ((NativeJavaClass) cl).getClassObject().getName();
-            String n = s.substring(s.lastIndexOf('.')+1);
-            Object val = thisObj.get(n, thisObj);
-            if (val != NOT_FOUND && val != cl) {
-                throw Context.reportRuntimeError1("msg.prop.defined", n);
-            }
-            //thisObj.defineProperty(n, cl, DONTENUM);
-            thisObj.put(n,thisObj,cl);
-        }
-    }
-
-
+    /**
+     * @deprecated Kept only for compatibility.
+     */
     public void importPackage(Context cx, Scriptable thisObj, Object[] args,
                               Function funObj)
     {
-        importPackage(cx, thisObj, args);
+        js_importPackage(args);
     }
 
-    void importPackage(Context cx, Scriptable thisObj, Object[] args)
+    private Object js_construct(Scriptable scope, Object[] args)
+    {
+        ImporterTopLevel result = new ImporterTopLevel();
+        for (int i = 0; i != args.length; ++i) {
+            Object arg = args[i];
+            if (arg instanceof NativeJavaClass) {
+                result.importClass((NativeJavaClass)arg);
+            } else if (arg instanceof NativeJavaPackage) {
+                result.importPackage((NativeJavaPackage)arg);
+            } else {
+                throw Context.reportRuntimeError1(
+                    "msg.not.class.not.pkg", Context.toString(arg));
+            }
+        }
+        // set explicitly prototype and scope
+        // as otherwise in top scope mode BaseFunction.construct
+        // would keep them set to null. It also allow to use
+        // JavaImporter without new and still get properly
+        // initialized object.
+        result.setParentScope(scope);
+        result.setPrototype(this);
+        return result;
+    }
+
+    private Object js_importClass(Object[] args)
     {
         for (int i = 0; i != args.length; i++) {
-            Object pkg = args[i];
-            if (!(pkg instanceof NativeJavaPackage)) {
+            Object arg = args[i];
+            if (!(arg instanceof NativeJavaClass)) {
                 throw Context.reportRuntimeError1(
-                    "msg.not.pkg", Context.toString(pkg));
+                    "msg.not.class", Context.toString(arg));
             }
-            synchronized (importedPackages) {
-                for (int j = 0; j != importedPackages.size(); j++) {
-                    if (pkg == importedPackages.get(j)) {
-                        pkg = null;
-                        break;
-                    }
-                }
-                if (pkg != null) {
-                    importedPackages.add(pkg);
-                }
-            }
-        }
-    }
-
-    private ObjArray importedPackages = new ObjArray();
-}
-
-final class ImporterFunctions extends JIFunction
-{
-    private ImporterFunctions(ImporterTopLevel importer, int id)
-    {
-        this.importer = importer;
-        this.id = id;
-        if (id == Id_importClass) {
-            initNameArity("importClass", 1);
-        } else {
-            if (id != Id_importPackage) Kit.codeBug();
-            initNameArity("importPackage", 1);
-        }
-        defineAsProperty(importer);
-    }
-
-    static void setup(ImporterTopLevel importer)
-    {
-        new ImporterFunctions(importer, Id_importClass);
-        new ImporterFunctions(importer, Id_importPackage);
-    }
-
-    public Object call(Context cx, Scriptable scope, Scriptable thisObj,
-                       Object[] args)
-        throws JavaScriptException
-    {
-        if (id == Id_importClass) {
-            importer.importClass(cx, thisObj, args);
-        } else {
-            if (id != Id_importPackage) Kit.codeBug();
-            importer.importPackage(cx, thisObj, args);
+            importClass((NativeJavaClass)arg);
         }
         return Undefined.instance;
     }
 
-    private static final int
-        Id_importClass    =  1,
-        Id_importPackage  =  2;
+    private Object js_importPackage(Object[] args)
+    {
+        for (int i = 0; i != args.length; i++) {
+            Object arg = args[i];
+            if (!(arg instanceof NativeJavaPackage)) {
+                throw Context.reportRuntimeError1(
+                    "msg.not.pkg", Context.toString(arg));
+            }
+            importPackage((NativeJavaPackage)arg);
+        }
+        return Undefined.instance;
+    }
 
-    private ImporterTopLevel importer;
-    private int id;
+    private void importPackage(NativeJavaPackage pkg)
+    {
+        synchronized (importedPackages) {
+            for (int j = 0; j != importedPackages.size(); j++) {
+                if (pkg == importedPackages.get(j)) {
+                    pkg = null;
+                    break;
+                }
+            }
+            if (pkg != null) {
+                importedPackages.add(pkg);
+            }
+        }
+    }
+
+    private void importClass(NativeJavaClass cl)
+    {
+        String s = cl.getClassObject().getName();
+        String n = s.substring(s.lastIndexOf('.')+1);
+        Object val = get(n, this);
+        if (val != NOT_FOUND && val != cl) {
+            throw Context.reportRuntimeError1("msg.prop.defined", n);
+        }
+        //defineProperty(n, cl, DONTENUM);
+        put(n, this, cl);
+    }
+
+    protected void initPrototypeId(int id)
+    {
+        String s;
+        int arity;
+        switch (id) {
+          case Id_constructor:   arity=0; s="constructor";   break;
+          case Id_importClass:   arity=1; s="importClass";   break;
+          case Id_importPackage: arity=1; s="importPackage"; break;
+          default: throw new IllegalArgumentException(String.valueOf(id));
+        }
+        initPrototypeMethod(IMPORTER_TAG, id, s, arity);
+    }
+
+    public Object execIdCall(IdFunctionObject f, Context cx, Scriptable scope,
+                             Scriptable thisObj, Object[] args)
+    {
+        if (!f.hasTag(IMPORTER_TAG)) {
+            return super.execIdCall(f, cx, scope, thisObj, args);
+        }
+        int id = f.methodId();
+        switch (id) {
+          case Id_constructor:
+            return js_construct(scope, args);
+
+          case Id_importClass:
+            return realThis(thisObj, f).js_importClass(args);
+
+          case Id_importPackage:
+            return realThis(thisObj, f).js_importPackage(args);
+        }
+        throw new IllegalArgumentException(String.valueOf(id));
+    }
+
+    private ImporterTopLevel realThis(Scriptable thisObj, IdFunctionObject f)
+    {
+        if (topScopeFlag) {
+            // when used as top scope importPackage and importClass are global
+            // function that ignore thisObj
+            return this;
+        }
+        if (!(thisObj instanceof ImporterTopLevel))
+            throw incompatibleCallError(f);
+        return (ImporterTopLevel)thisObj;
+    }
+
+// #string_id_map#
+
+    protected int findPrototypeId(String s)
+    {
+        int id;
+// #generated# Last update: 2004-06-08 02:03:11 CEST
+        L0: { id = 0; String X = null; int c;
+            int s_length = s.length();
+            if (s_length==11) {
+                c=s.charAt(0);
+                if (c=='c') { X="constructor";id=Id_constructor; }
+                else if (c=='i') { X="importClass";id=Id_importClass; }
+            }
+            else if (s_length==13) { X="importPackage";id=Id_importPackage; }
+            if (X!=null && X!=s && !X.equals(s)) id = 0;
+        }
+// #/generated#
+        return id;
+    }
+
+    private static final int
+        Id_constructor          = 1,
+        Id_importClass          = 2,
+        Id_importPackage        = 3,
+        MAX_PROTOTYPE_ID        = 3;
+
+// #/string_id_map#
+
+    private ObjArray importedPackages = new ObjArray();
+    private boolean topScopeFlag;
 }

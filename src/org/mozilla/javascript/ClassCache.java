@@ -1,40 +1,37 @@
-/* -*- Mode: java; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
-
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+/* -*- Mode: java; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
+ * The contents of this file are subject to the Netscape Public
+ * License Version 1.1 (the "License"); you may not use this file
+ * except in compliance with the License. You may obtain a copy of
+ * the License at http://www.mozilla.org/NPL/
  *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
+ * Software distributed under the License is distributed on an "AS
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
+ * implied. See the License for the specific language governing
+ * rights and limitations under the License.
  *
- * The Original Code is cache holder of generated code for Java reflection
+ * The Original Code is Rhino code, released
+ * May 6, 1999.
  *
- * The Initial Developer of the Original Code is
- * RUnit Software AS.
- * Portions created by the Initial Developer are Copyright (C) 2003
- * the Initial Developer. All Rights Reserved.
+ * The Initial Developer of the Original Code is Netscape
+ * Communications Corporation.  Portions created by Netscape are
+ * Copyright (C) 1997-1999 Netscape Communications Corporation. All
+ * Rights Reserved.
  *
- * Contributor(s): Igor Bukanov, igor@fastmail.fm
+ * Contributor(s):
+ * Igor Bukanov, igor@fastmail.fm
  *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * Alternatively, the contents of this file may be used under the
+ * terms of the GNU Public License (the "GPL"), in which case the
+ * provisions of the GPL are applicable instead of those above.
+ * If you wish to allow use of your version of this file only
+ * under the terms of the GPL and not to allow others to use your
+ * version of this file under the NPL, indicate your decision by
+ * deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL.  If you do not delete
+ * the provisions above, a recipient may use your version of this
+ * file under either the NPL or the GPL.
+ */
 
 package org.mozilla.javascript;
 
@@ -57,12 +54,12 @@ public class ClassCache
 
     Hashtable classTable = new Hashtable();
 
-    boolean invokerOptimization = true;
+    boolean invokerOptimization = false;
     Invoker invokerMaster;
 
     Hashtable javaAdapterGeneratedClasses = new Hashtable();
 
-    Hashtable javaAdapterIFGlueMasters = new Hashtable();
+    private Hashtable interfaceAdapterCache;
 
     private int generatedClassSerial;
 
@@ -81,21 +78,13 @@ public class ClassCache
      */
     public static ClassCache get(Scriptable scope)
     {
-        scope = ScriptableObject.getTopLevelScope(scope);
-        Scriptable obj = scope;
-        do {
-            if (obj instanceof ScriptableObject) {
-                ScriptableObject so = (ScriptableObject)obj;
-                ClassCache lc = (ClassCache)so.getAssociatedValue(AKEY);
-                if (lc != null) {
-                    return lc;
-                }
-            }
-            obj = obj.getPrototype();
-        } while (obj != null);
-
-        // ALERT: warn somehow about wrong cache usage ?
-        return new ClassCache();
+        ClassCache cache;
+        cache = (ClassCache)ScriptableObject.getTopScopeValue(scope, AKEY);
+        if (cache == null) {
+            // XXX warn somehow about wrong cache usage ?
+            cache = new ClassCache();
+        }
+        return cache;
     }
 
     /**
@@ -125,11 +114,11 @@ public class ClassCache
     {
         classTable = new Hashtable();
         javaAdapterGeneratedClasses = new Hashtable();
-        javaAdapterIFGlueMasters = new Hashtable();
         Invoker im = invokerMaster;
         if (im != null) {
             im.clearMasterCaches();
         }
+        interfaceAdapterCache = null;
     }
 
     /**
@@ -144,8 +133,8 @@ public class ClassCache
      /**
      * Set whether to cache some values.
      * <p>
-     * By default, the engine will cache generated classes and
-     * results of <tt>Class.getMethods()</tt> and similar calls.
+     * By default, the engine will cache the results of
+     * <tt>Class.getMethods()</tt> and similar calls.
      * This can speed execution dramatically, but increases the memory
      * footprint. Also, with caching enabled, references may be held to
      * objects past the lifetime of any real usage.
@@ -169,15 +158,36 @@ public class ClassCache
     }
 
     /**
-     * To optimize invocation of reflected Java methods, the engine generates
-     * special glue classes that will call the methods directly. By default
-     * the optimization is enabled since it allows to speedup method invocation
-     * compared with calling <tt>Method.invoke</tt> by factor 2-2.5 under JDK
-     * 1.4.2 and by factor 10-15 under JDK 1.3.1. If increase memory
-     * consumption is too high or the optimization brings no benefits in a
-     * particular VM, then the optimization can be disabled.
+     * @see #setInvokerOptimizationEnabled(boolean enabled)
+     */
+    public boolean isInvokerOptimizationEnabled()
+    {
+        return invokerOptimization;
+    }
+
+    /**
+     * Control if invocation of Java methods in subclasses of
+     * {@link ScriptableObject} through reflection should be
+     * replaced by direct calls to invoker code generated at runtime.
+     * On many JVMs cost of calling Java method through reflection can be
+     * reduced significantly if a special invoker classes are generated at
+     * runtime to call the Java methods directly. For example, under JDK 1.3.1
+     * on Linux the reflection calls can be speedup by 10-15 times. On JDK
+     * 1.4.2 the the speedup can reach the factor of 1.5-2.
+     * <p>
+     * The drawback of the optimization is increased memory consumption and
+     * longer runtime initialization since class generating and loading is
+     * slow. In addition the current implementation assumes that the
+     * classes under optimization are reachable through
+     * {@link Context#getApplicationClassLoader()} which may not be feasible
+     * to implement.
+     * <p>
+     * By default the optimization is disabled.
      *
-     * @param enabled if true, invoke optimization is enabled.
+     * @param enabled if true enable invoker optimization or if false disable
+     *        it and clear all cached generated classes.
+     *
+     * @see #isInvokerOptimizationEnabled()
      */
     public synchronized void setInvokerOptimizationEnabled(boolean enabled)
     {
@@ -195,5 +205,27 @@ public class ClassCache
     public final synchronized int newClassSerialNumber()
     {
         return ++generatedClassSerial;
+    }
+
+    Object getInterfaceAdapter(Class cl)
+    {
+        Object result;
+        Hashtable cache = interfaceAdapterCache;
+        if (cache == null) {
+            result = null;
+        } else {
+            result = cache.get(cl);
+        }
+        return result;
+    }
+
+    synchronized void cacheInterfaceAdapter(Class cl, Object iadapter)
+    {
+        if (cachingIsEnabled) {
+            if (interfaceAdapterCache == null) {
+                interfaceAdapterCache = new Hashtable();
+            }
+            interfaceAdapterCache.put(cl, iadapter);
+        }
     }
 }

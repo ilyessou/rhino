@@ -43,19 +43,13 @@ import org.mozilla.javascript.debug.DebuggableScript;
 final class InterpreterData implements Serializable, DebuggableScript
 {
 
-    static final long serialVersionUID = 4815333329084415557L;
-
     static final int INITIAL_MAX_ICODE_LENGTH = 1024;
     static final int INITIAL_STRINGTABLE_SIZE = 64;
     static final int INITIAL_NUMBERTABLE_SIZE = 64;
 
-    InterpreterData(SecurityController securityController,
-                    Object securityDomain,
-                    int languageVersion,
+    InterpreterData(int languageVersion,
                     String sourceFile, String encodedSource)
     {
-        this.securityController = securityController;
-        this.securityDomain = securityDomain;
         this.languageVersion = languageVersion;
         this.itsSourceFile = sourceFile;
         this.encodedSource = encodedSource;
@@ -66,8 +60,6 @@ final class InterpreterData implements Serializable, DebuggableScript
     InterpreterData(InterpreterData parent)
     {
         this.parentData = parent;
-        this.securityController = parent.securityController;
-        this.securityDomain = parent.securityDomain;
         this.languageVersion = parent.languageVersion;
         this.itsSourceFile = parent.itsSourceFile;
         this.encodedSource = parent.encodedSource;
@@ -77,19 +69,13 @@ final class InterpreterData implements Serializable, DebuggableScript
 
     private void init()
     {
-        itsICodeTop = INITIAL_MAX_ICODE_LENGTH;
-        itsICode = new byte[itsICodeTop];
+        itsICode = new byte[INITIAL_MAX_ICODE_LENGTH];
         itsStringTable = new String[INITIAL_STRINGTABLE_SIZE];
     }
-
-    SecurityController securityController;
-    Object securityDomain;
 
     String itsName;
     String itsSourceFile;
     boolean itsNeedsActivation;
-    boolean itsFromEvalCode;
-    boolean itsCheckThis;
     int itsFunctionType;
 
     String[] itsStringTable;
@@ -98,7 +84,6 @@ final class InterpreterData implements Serializable, DebuggableScript
     Object[] itsRegExpLiterals;
 
     byte[] itsICode;
-    int itsICodeTop;
 
     int[] itsExceptionTable;
 
@@ -123,7 +108,15 @@ final class InterpreterData implements Serializable, DebuggableScript
 
     boolean topLevel;
 
+    Object[] literalIds;
+
+    UintMap longJumps;
+
+    int firstLinePC = -1; // PC for the first LINE icode
+
     InterpreterData parentData;
+
+    boolean evalScriptFlag; // true if script corresponds to eval() code
 
     public boolean isTopLevel()
     {
@@ -138,6 +131,21 @@ final class InterpreterData implements Serializable, DebuggableScript
     public String getFunctionName()
     {
         return itsName;
+    }
+
+    public int getParamCount()
+    {
+        return argCount;
+    }
+
+    public int getParamAndVarCount()
+    {
+        return argNames.length;
+    }
+
+    public String getParamOrVarName(int index)
+    {
+        return argNames[index];
     }
 
     public String getSourceName()

@@ -1,3 +1,4 @@
+
 /* -*- Mode: java; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
  * The contents of this file are subject to the Netscape Public
@@ -19,7 +20,7 @@
  * Rights Reserved.
  *
  * Contributor(s):
- * Norris Boyd
+ * Igor Bukanov
  *
  * Alternatively, the contents of this file may be used under the
  * terms of the GNU Public License (the "GPL"), in which case the
@@ -32,21 +33,15 @@
  * the provisions above, a recipient may use your version of this
  * file under either the NPL or the GPL.
  */
-
 // API class
 
 package org.mozilla.javascript;
 
 /**
- * @deprecated Exceptions of this type are no longer thrown.
+ * @deprecated The exception is no longer thrown by Rhino runtime as
+ * {@link EvaluatorException} is used instead.
  */
-public class NotAFunctionException extends Error {
-
-    public NotAFunctionException() {
-    }
-
-    public NotAFunctionException(String detail) {
-        super(detail);
-    }
-
+public class NotAFunctionException extends RuntimeException
+{
+    public NotAFunctionException() { }
 }

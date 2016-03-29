@@ -43,51 +43,50 @@ package org.mozilla.javascript;
  * @see org.mozilla.javascript.Arguments
  * @author Norris Boyd
  */
-public final class NativeCall extends ScriptableObject
+public final class NativeCall extends IdScriptableObject
 {
+    private static final Object CALL_TAG = new Object();
+
     static void init(Context cx, Scriptable scope, boolean sealed)
     {
-        new NativeCallPrototype(cx, scope, sealed);
+        NativeCall obj = new NativeCall();
+        obj.exportAsJSClass(MAX_PROTOTYPE_ID, scope, sealed);
     }
 
     NativeCall() { }
 
-    NativeCall(Context cx, Scriptable scope, NativeFunction funObj,
-               Scriptable thisObj, Object[] args)
+    NativeCall(NativeFunction function, Scriptable scope, Object[] args)
     {
-        this.funObj = funObj;
-        this.thisObj = thisObj;
+        this.function = function;
 
         setParentScope(scope);
         // leave prototype null
 
-        // save current activation
-        this.caller = cx.currentActivation;
-        cx.currentActivation = this;
-
         this.originalArgs = (args == null) ? ScriptRuntime.emptyArgs : args;
 
         // initialize values of arguments
-        String[] argNames = funObj.argNames;
-        if (argNames != null) {
-            for (int i=0; i < funObj.argCount; i++) {
+        int paramAndVarCount = function.getParamAndVarCount();
+        int paramCount = function.getParamCount();
+        if (paramAndVarCount != 0) {
+            for (int i = 0; i != paramCount; ++i) {
+                String name = function.getParamOrVarName(i);
                 Object val = i < args.length ? args[i]
                                              : Undefined.instance;
-                super.put(argNames[i], this, val);
+                defineProperty(name, val, PERMANENT);
             }
         }
 
         // initialize "arguments" property but only if it was not overriden by
         // the parameter with the same name
         if (!super.has("arguments", this)) {
-            super.put("arguments", this, new Arguments(this));
+            defineProperty("arguments", new Arguments(this), PERMANENT);
         }
 
-        if (argNames != null) {
-            for (int i = funObj.argCount; i != argNames.length; i++) {
-                String name = argNames[i];
+        if (paramAndVarCount != 0) {
+            for (int i = paramCount; i != paramAndVarCount; ++i) {
+                String name = function.getParamOrVarName(i);
                 if (!super.has(name, this)) {
-                    super.put(name, this, Undefined.instance);
+                    defineProperty(name, Undefined.instance, PERMANENT);
                 }
             }
         }
@@ -98,67 +97,31 @@ public final class NativeCall extends ScriptableObject
         return "Call";
     }
 
-    NativeCall getActivation(Function f)
+    protected int findPrototypeId(String s)
     {
-        NativeCall x = this;
-        do {
-            if (x.funObj == f)
-                return x;
-            x = x.caller;
-        } while (x != null);
-        return null;
+        return s.equals("constructor") ? Id_constructor : 0;
     }
 
-    public Function getFunctionObject()
+    protected void initPrototypeId(int id)
     {
-        return funObj;
+        String s;
+        int arity;
+        if (id == Id_constructor) {
+            arity=1; s="constructor";
+        } else {
+            throw new IllegalArgumentException(String.valueOf(id));
+        }
+        initPrototypeMethod(CALL_TAG, id, s, arity);
     }
 
-    public Object[] getOriginalArguments()
-    {
-        return originalArgs;
-    }
-
-    public NativeCall getCaller()
-    {
-        return caller;
-    }
-
-    public Scriptable getThisObj()
-    {
-        return thisObj;
-    }
-
-    NativeCall caller;
-    NativeFunction funObj;
-    Scriptable thisObj;
-    private Object[] originalArgs;
-}
-
-final class NativeCallPrototype extends IdScriptable
-{
-    NativeCallPrototype(Context cx, Scriptable scope, boolean sealed)
-    {
-        addAsPrototype(MAX_PROTOTYPE_ID, cx, scope, sealed);
-    }
-
-    public String getClassName()
-    {
-        return "Call";
-    }
-
-    public int methodArity(int methodId)
-    {
-        if (methodId == Id_constructor) return 1;
-        return super.methodArity(methodId);
-    }
-
-    public Object execMethod(int methodId, IdFunction f,
-                             Context cx, Scriptable scope,
+    public Object execIdCall(IdFunctionObject f, Context cx, Scriptable scope,
                              Scriptable thisObj, Object[] args)
-        throws JavaScriptException
     {
-        if (methodId == Id_constructor) {
+        if (!f.hasTag(CALL_TAG)) {
+            return super.execIdCall(f, cx, scope, thisObj, args);
+        }
+        int id = f.methodId();
+        if (id == Id_constructor) {
             if (thisObj != null) {
                 throw Context.reportRuntimeError1("msg.only.from.new", "Call");
             }
@@ -167,21 +130,16 @@ final class NativeCallPrototype extends IdScriptable
             result.setPrototype(getObjectPrototype(scope));
             return result;
         }
-        return super.execMethod(methodId, f, cx, scope, thisObj, args);
-    }
-
-    protected String getIdName(int id)
-    {
-        if (id == Id_constructor) return "constructor";
-        return null;
-    }
-
-    protected int mapNameToId(String s)
-    {
-        return s.equals("constructor") ? Id_constructor : 0;
+        throw new IllegalArgumentException(String.valueOf(id));
     }
 
     private static final int
         Id_constructor   = 1,
         MAX_PROTOTYPE_ID = 1;
+
+    NativeFunction function;
+    Object[] originalArgs;
+
+    transient NativeCall parentActivationCall;
 }
+

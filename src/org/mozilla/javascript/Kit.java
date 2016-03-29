@@ -1,46 +1,44 @@
-/* -*- Mode: java; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
-
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+/* -*- Mode: java; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
+ * The contents of this file are subject to the Netscape Public
+ * License Version 1.1 (the "License"); you may not use this file
+ * except in compliance with the License. You may obtain a copy of
+ * the License at http://www.mozilla.org/NPL/
  *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
+ * Software distributed under the License is distributed on an "AS
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
+ * implied. See the License for the specific language governing
+ * rights and limitations under the License.
  *
- * The Original Code is collection of utilities useful for Rhino code.
+ * The Original Code is Rhino code, released
+ * May 6, 1999.
  *
- * The Initial Developer of the Original Code is
- * RUnit Software AS.
- * Portions created by the Initial Developer are Copyright (C) 2003
- * the Initial Developer. All Rights Reserved.
+ * The Initial Developer of the Original Code is Netscape
+ * Communications Corporation.  Portions created by Netscape are
+ * Copyright (C) 1997-1999 Netscape Communications Corporation. All
+ * Rights Reserved.
  *
- * Contributor(s): Igor Bukanov, igor@fastmail.fm
+ * Contributor(s):
+ * Igor Bukanov, igor@fastmail.fm
  *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * Alternatively, the contents of this file may be used under the
+ * terms of the GNU Public License (the "GPL"), in which case the
+ * provisions of the GPL are applicable instead of those above.
+ * If you wish to allow use of your version of this file only
+ * under the terms of the GPL and not to allow others to use your
+ * version of this file under the NPL, indicate your decision by
+ * deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL.  If you do not delete
+ * the provisions above, a recipient may use your version of this
+ * file under either the NPL or the GPL.
+ */
 
 package org.mozilla.javascript;
 
-import java.util.Hashtable;
 import java.io.IOException;
 import java.io.Reader;
+import java.lang.reflect.Method;
+import java.util.Hashtable;
 
 /**
  * Collection of utilities
@@ -48,8 +46,25 @@ import java.io.Reader;
 
 public class Kit
 {
+    /**
+     * Reflection of Throwable.initCause(Throwable) from JDK 1.4
+     * or nul if it is not available.
+     */
+    private static Method Throwable_initCause = null;
 
-    static Class classOrNull(String className)
+    static {
+        // Are we running on a JDK 1.4 or later system?
+        try {
+            Class ThrowableClass = Kit.classOrNull("java.lang.Throwable");
+            Class[] signature = { ThrowableClass };
+            Throwable_initCause
+                = ThrowableClass.getMethod("initCause", signature);
+        } catch (Exception ex) {
+            // Assume any exceptions means the method does not exist.
+        }
+    }
+
+    public static Class classOrNull(String className)
     {
         try {
             return Class.forName(className);
@@ -63,7 +78,7 @@ public class Kit
         return null;
     }
 
-    static Class classOrNull(ClassLoader loader, String className)
+    public static Class classOrNull(ClassLoader loader, String className)
     {
         try {
             return loader.loadClass(className);
@@ -87,6 +102,25 @@ public class Kit
         } catch (IllegalAccessException x) {
         }
         return null;
+    }
+
+    /**
+     * If initCause methods exists in Throwable, call
+     * <tt>ex.initCause(cause)</tt> or otherwise do nothing.
+     * @return The <tt>ex</tt> argument.
+     */
+    public static RuntimeException initCause(RuntimeException ex,
+                                             Throwable cause)
+    {
+        if (Throwable_initCause != null) {
+            Object[] args = { cause };
+            try {
+                Throwable_initCause.invoke(ex, args);
+            } catch (Exception e) {
+                // Ignore any exceptions
+            }
+        }
+        return ex;
     }
 
     /**
@@ -117,6 +151,34 @@ public class Kit
             cursor = next + 1;
         }
         return array;
+    }
+
+    /**
+     * If character <tt>c</tt> is a hexadecimal digit, return
+     * <tt>accumulator</tt> * 16 plus corresponding
+     * number. Otherise return -1.
+     */
+    public static int xDigitToInt(int c, int accumulator)
+    {
+        check: {
+            // Use 0..9 < A..Z < a..z
+            if (c <= '9') {
+                c -= '0';
+                if (0 <= c) { break check; }
+            } else if (c <= 'F') {
+                if ('A' <= c) {
+                    c -= ('A' - 10);
+                    break check;
+                }
+            } else if (c <= 'f') {
+                if ('a' <= c) {
+                    c -= ('a' - 10);
+                    break check;
+                }
+            }
+            return -1;
+        }
+        return (accumulator << 4) | c;
     }
 
     /**
@@ -360,28 +422,10 @@ public class Kit
     public static RuntimeException codeBug()
         throws RuntimeException
     {
-        throw new IllegalStateException("FAILED ASSERTION");
+        RuntimeException ex = new IllegalStateException("FAILED ASSERTION");
+        // Print stack trace ASAP
+        ex.printStackTrace(System.err);
+        throw ex;
     }
-
-    /**
-     * Convinient way to throw IllegalArgumentException to indicate bad
-     * argument.
-     */
-    public static void argBug()
-        throws IllegalArgumentException
-    {
-        throw new IllegalArgumentException();
-    }
-
-    /**
-     * Convinient way to throw IllegalStateException to indicate bad
-     * state.
-     */
-    public static void stateBug()
-        throws IllegalArgumentException
-    {
-        throw new IllegalArgumentException();
-    }
-
 }
 

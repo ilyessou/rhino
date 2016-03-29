@@ -44,32 +44,29 @@ package org.mozilla.javascript;
  *
  * @author Norris Boyd
  */
-final class NativeNumber extends IdScriptable {
+final class NativeNumber extends IdScriptableObject
+{
+    private static final Object NUMBER_TAG = new Object();
 
     private static final int MAX_PRECISION = 100;
 
-    static void init(Context cx, Scriptable scope, boolean sealed) {
-        NativeNumber obj = new NativeNumber();
-        obj.prototypeFlag = true;
-        obj.addAsPrototype(MAX_PROTOTYPE_ID, cx, scope, sealed);
+    static void init(Context cx, Scriptable scope, boolean sealed)
+    {
+        NativeNumber obj = new NativeNumber(0.0);
+        obj.exportAsJSClass(MAX_PROTOTYPE_ID, scope, sealed);
     }
 
-    /**
-     * Zero-parameter constructor: just used to create Number.prototype
-     */
-    private NativeNumber() {
-    }
-
-    private NativeNumber(double number) {
+    private NativeNumber(double number)
+    {
         doubleValue = number;
     }
 
-    public String getClassName() {
+    public String getClassName()
+    {
         return "Number";
     }
 
-    protected void fillConstructorProperties
-        (Context cx, IdFunction ctor, boolean sealed)
+    protected void fillConstructorProperties(IdFunctionObject ctor)
     {
         final int attr = ScriptableObject.DONTENUM |
                          ScriptableObject.PERMANENT |
@@ -77,103 +74,105 @@ final class NativeNumber extends IdScriptable {
 
         ctor.defineProperty("NaN", ScriptRuntime.NaNobj, attr);
         ctor.defineProperty("POSITIVE_INFINITY",
-                            wrap_double(Double.POSITIVE_INFINITY), attr);
+                            ScriptRuntime.wrapNumber(Double.POSITIVE_INFINITY),
+                            attr);
         ctor.defineProperty("NEGATIVE_INFINITY",
-                            wrap_double(Double.NEGATIVE_INFINITY), attr);
-        ctor.defineProperty("MAX_VALUE", wrap_double(Double.MAX_VALUE), attr);
-        ctor.defineProperty("MIN_VALUE", wrap_double(Double.MIN_VALUE), attr);
+                            ScriptRuntime.wrapNumber(Double.NEGATIVE_INFINITY),
+                            attr);
+        ctor.defineProperty("MAX_VALUE",
+                            ScriptRuntime.wrapNumber(Double.MAX_VALUE),
+                            attr);
+        ctor.defineProperty("MIN_VALUE",
+                            ScriptRuntime.wrapNumber(Double.MIN_VALUE),
+                            attr);
 
-        super.fillConstructorProperties(cx, ctor, sealed);
+        super.fillConstructorProperties(ctor);
     }
 
-    public int methodArity(int methodId) {
-        if (prototypeFlag) {
-            switch (methodId) {
-                case Id_constructor:     return 1;
-                case Id_toString:        return 1;
-                case Id_toLocaleString:  return 1;
-                case Id_toSource:        return 0;
-                case Id_valueOf:         return 0;
-                case Id_toFixed:         return 1;
-                case Id_toExponential:   return 1;
-                case Id_toPrecision:     return 1;
-            }
-        }
-        return super.methodArity(methodId);
-    }
-
-    public Object execMethod
-        (int methodId, IdFunction f,
-         Context cx, Scriptable scope, Scriptable thisObj, Object[] args)
-        throws JavaScriptException
+    protected void initPrototypeId(int id)
     {
-        if (prototypeFlag) {
-            switch (methodId) {
-                case Id_constructor: {
-                    double val = (args.length >= 1)
-                        ? ScriptRuntime.toNumber(args[0]) : 0.0;
-                    if (thisObj == null) {
-                        // new Number(val) creates a new Number object.
-                        return new NativeNumber(val);
-                    }
-                    // Number(val) converts val to a number value.
-                    return wrap_double(val);
-                }
-
-                case Id_toString:
-                case Id_toLocaleString: {
-                    // toLocaleString is just an alias for toString for now
-                    double val = realThisValue(thisObj, f);
-                    int base = (args.length == 0)
-                        ? 10 : ScriptRuntime.toInt32(args[0]);
-                    return ScriptRuntime.numberToString(val, base);
-                }
-
-                case Id_toSource: {
-                    double val = realThisValue(thisObj, f);
-                    return "(new Number("+ScriptRuntime.toString(val)+"))";
-                }
-
-                case Id_valueOf:
-                    return wrap_double(realThisValue(thisObj, f));
-
-                case Id_toFixed:
-                    return num_to(f, thisObj, args,
-                                  DToA.DTOSTR_FIXED, DToA.DTOSTR_FIXED,
-                                  -20, 0);
-
-                case Id_toExponential:
-                    return num_to(f, thisObj, args,
-                                  DToA.DTOSTR_STANDARD_EXPONENTIAL,
-                                  DToA.DTOSTR_EXPONENTIAL,
-                                  0, 1);
-
-                case Id_toPrecision:
-                    return num_to(f, thisObj, args,
-                                  DToA.DTOSTR_STANDARD, DToA.DTOSTR_PRECISION,
-                                  1, 0);
-            }
+        String s;
+        int arity;
+        switch (id) {
+          case Id_constructor:    arity=1; s="constructor";    break;
+          case Id_toString:       arity=1; s="toString";       break;
+          case Id_toLocaleString: arity=1; s="toLocaleString"; break;
+          case Id_toSource:       arity=0; s="toSource";       break;
+          case Id_valueOf:        arity=0; s="valueOf";        break;
+          case Id_toFixed:        arity=1; s="toFixed";        break;
+          case Id_toExponential:  arity=1; s="toExponential";  break;
+          case Id_toPrecision:    arity=1; s="toPrecision";    break;
+          default: throw new IllegalArgumentException(String.valueOf(id));
         }
-        return super.execMethod(methodId, f, cx, scope, thisObj, args);
+        initPrototypeMethod(NUMBER_TAG, id, s, arity);
     }
 
-    private static double realThisValue(Scriptable thisObj, IdFunction f)
+    public Object execIdCall(IdFunctionObject f, Context cx, Scriptable scope,
+                             Scriptable thisObj, Object[] args)
     {
+        if (!f.hasTag(NUMBER_TAG)) {
+            return super.execIdCall(f, cx, scope, thisObj, args);
+        }
+        int id = f.methodId();
+        if (id == Id_constructor) {
+            double val = (args.length >= 1)
+                ? ScriptRuntime.toNumber(args[0]) : 0.0;
+            if (thisObj == null) {
+                // new Number(val) creates a new Number object.
+                return new NativeNumber(val);
+            }
+            // Number(val) converts val to a number value.
+            return ScriptRuntime.wrapNumber(val);
+        }
+
+        // The rest of Number.prototype methods require thisObj to be Number
+
         if (!(thisObj instanceof NativeNumber))
             throw incompatibleCallError(f);
-        return ((NativeNumber)thisObj).doubleValue;
+        double value = ((NativeNumber)thisObj).doubleValue;
+
+        switch (id) {
+
+          case Id_toString:
+          case Id_toLocaleString:
+            {
+                // toLocaleString is just an alias for toString for now
+                int base = (args.length == 0)
+                    ? 10 : ScriptRuntime.toInt32(args[0]);
+                return ScriptRuntime.numberToString(value, base);
+            }
+
+          case Id_toSource:
+            return "(new Number("+ScriptRuntime.toString(value)+"))";
+
+          case Id_valueOf:
+            return ScriptRuntime.wrapNumber(value);
+
+          case Id_toFixed:
+            return num_to(value, args, DToA.DTOSTR_FIXED,
+                          DToA.DTOSTR_FIXED, -20, 0);
+
+          case Id_toExponential:
+            return num_to(value, args, DToA.DTOSTR_STANDARD_EXPONENTIAL,
+                          DToA.DTOSTR_EXPONENTIAL, 0, 1);
+
+          case Id_toPrecision:
+            return num_to(value, args, DToA.DTOSTR_STANDARD,
+                          DToA.DTOSTR_PRECISION, 1, 0);
+
+          default: throw new IllegalArgumentException(String.valueOf(id));
+        }
     }
 
     public String toString() {
         return ScriptRuntime.numberToString(doubleValue, 10);
     }
 
-    private static String num_to(IdFunction f, Scriptable thisObj,
+    private static String num_to(double val,
                                  Object[] args,
                                  int zeroArgMode, int oneArgMode,
                                  int precisionMin, int precisionOffset)
     {
-        double val = realThisValue(thisObj, f);
         int precision;
         if (args.length == 0) {
             precision = 0;
@@ -193,26 +192,10 @@ final class NativeNumber extends IdScriptable {
         return sb.toString();
     }
 
-    protected String getIdName(int id) {
-        if (prototypeFlag) {
-            switch (id) {
-                case Id_constructor:     return "constructor";
-                case Id_toString:        return "toString";
-                case Id_toLocaleString:  return "toLocaleString";
-                case Id_toSource:        return "toSource";
-                case Id_valueOf:         return "valueOf";
-                case Id_toFixed:         return "toFixed";
-                case Id_toExponential:   return "toExponential";
-                case Id_toPrecision:     return "toPrecision";
-            }
-        }
-        return null;
-    }
-
 // #string_id_map#
 
-    protected int mapNameToId(String s) {
-        if (!prototypeFlag) { return 0; }
+    protected int findPrototypeId(String s)
+    {
         int id;
 // #generated# Last update: 2004-03-17 13:41:35 CET
         L0: { id = 0; String X = null; int c;
@@ -252,6 +235,4 @@ final class NativeNumber extends IdScriptable {
 // #/string_id_map#
 
     private double doubleValue;
-
-    private boolean prototypeFlag;
 }

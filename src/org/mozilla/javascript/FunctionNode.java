@@ -53,24 +53,8 @@ public class FunctionNode extends ScriptOrFnNode {
         return itsNeedsActivation;
     }
 
-    boolean setRequiresActivation(boolean b) {
-        return itsNeedsActivation = b;
-    }
-
-    public boolean getCheckThis() {
-        return itsCheckThis;
-    }
-
-    void setCheckThis() {
-        itsCheckThis = true;
-    }
-
     public boolean getIgnoreDynamicScope() {
         return itsIgnoreDynamicScope;
-    }
-
-    void setIgnoreDynamicScope() {
-        itsIgnoreDynamicScope = true;
     }
 
     /**
@@ -96,13 +80,8 @@ public class FunctionNode extends ScriptOrFnNode {
         return itsFunctionType;
     }
 
-    void setFunctionType(int functionType) {
-        itsFunctionType = functionType;
-    }
-
-    private String functionName;
-    private boolean itsNeedsActivation;
-    private boolean itsCheckThis;
-    private int itsFunctionType;
-    private boolean itsIgnoreDynamicScope;
+    String functionName;
+    boolean itsNeedsActivation;
+    int itsFunctionType;
+    boolean itsIgnoreDynamicScope;
 }

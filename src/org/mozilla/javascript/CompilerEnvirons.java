@@ -1,40 +1,37 @@
-/* -*- Mode: java; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
-
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+/* -*- Mode: java; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
+ * The contents of this file are subject to the Netscape Public
+ * License Version 1.1 (the "License"); you may not use this file
+ * except in compliance with the License. You may obtain a copy of
+ * the License at http://www.mozilla.org/NPL/
  *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
+ * Software distributed under the License is distributed on an "AS
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
+ * implied. See the License for the specific language governing
+ * rights and limitations under the License.
  *
- * The Original Code is representation of compiler options for Rhino.
+ * The Original Code is Rhino code, released
+ * May 6, 1999.
  *
- * The Initial Developer of the Original Code is
- * RUnit Software AS.
- * Portions created by the Initial Developer are Copyright (C) 2003
- * the Initial Developer. All Rights Reserved.
+ * The Initial Developer of the Original Code is Netscape
+ * Communications Corporation.  Portions created by Netscape are
+ * Copyright (C) 1997-1999 Netscape Communications Corporation. All
+ * Rights Reserved.
  *
- * Contributor(s): Igor Bukanov, igor@fastmail.fm
+ * Contributor(s):
+ * Igor Bukanov, igor@fastmail.fm
  *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * Alternatively, the contents of this file may be used under the
+ * terms of the GNU Public License (the "GPL"), in which case the
+ * provisions of the GPL are applicable instead of those above.
+ * If you wish to allow use of your version of this file only
+ * under the terms of the GPL and not to allow others to use your
+ * version of this file under the NPL, indicate your decision by
+ * deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL.  If you do not delete
+ * the provisions above, a recipient may use your version of this
+ * file under either the NPL or the GPL.
+ */
 
 package org.mozilla.javascript;
 
@@ -44,39 +41,35 @@ public class CompilerEnvirons
 {
     public CompilerEnvirons()
     {
-        this.errorReporter = DefaultErrorReporter.instance;
-        this.syntaxErrorCount = 0;
-        this.fromEval = false;
-        this.languageVersion = Context.VERSION_DEFAULT;
-        this.generateDebugInfo = true;
-        this.useDynamicScope = false;
-        this.reservedKeywordAsIdentifier = false;
-        this.allowMemberExprAsFunctionName = false;
-        this.optimizationLevel = 0;
-        this.generatingSource = true;
+        errorReporter = DefaultErrorReporter.instance;
+        languageVersion = Context.VERSION_DEFAULT;
+        generateDebugInfo = true;
+        useDynamicScope = false;
+        reservedKeywordAsIdentifier = false;
+        allowMemberExprAsFunctionName = false;
+        xmlAvailable = true;
+        optimizationLevel = 0;
+        generatingSource = true;
     }
 
     public void initFromContext(Context cx)
     {
         setErrorReporter(cx.getErrorReporter());
         this.languageVersion = cx.getLanguageVersion();
-        useDynamicScope = cx.hasCompileFunctionsWithDynamicScope();
+        useDynamicScope = cx.compileFunctionsWithDynamicScopeFlag;
         generateDebugInfo = (!cx.isGeneratingDebugChanged()
                              || cx.isGeneratingDebug());
-        this.reservedKeywordAsIdentifier
+        reservedKeywordAsIdentifier
             = cx.hasFeature(Context.FEATURE_RESERVED_KEYWORD_AS_IDENTIFIER);
-        this.allowMemberExprAsFunctionName
+        allowMemberExprAsFunctionName
             = cx.hasFeature(Context.FEATURE_MEMBER_EXPR_AS_FUNCTION_NAME);
+        xmlAvailable
+            = cx.hasFeature(Context.FEATURE_E4X);
 
-        this.optimizationLevel = cx.getOptimizationLevel();
+        optimizationLevel = cx.getOptimizationLevel();
 
-        this.generatingSource = cx.isGeneratingSource();
-        this.activationNames = cx.activationNames;
-    }
-
-    public final int getSyntaxErrorCount()
-    {
-        return syntaxErrorCount;
+        generatingSource = cx.isGeneratingSource();
+        activationNames = cx.activationNames;
     }
 
     public final ErrorReporter getErrorReporter()
@@ -88,40 +81,6 @@ public class CompilerEnvirons
     {
         if (errorReporter == null) throw new IllegalArgumentException();
         this.errorReporter = errorReporter;
-    }
-
-    public final void reportSyntaxError(String message,
-                                        String sourceName, int lineno,
-                                        String lineText, int lineOffset)
-    {
-        ++syntaxErrorCount;
-        if (fromEval) {
-            // We're probably in an eval. Need to throw an exception.
-            throw ScriptRuntime.constructError(
-                "SyntaxError", message, sourceName,
-                lineno, lineText, lineOffset);
-        } else {
-            getErrorReporter().error(message, sourceName, lineno,
-                                     lineText, lineOffset);
-        }
-    }
-
-    public final void reportSyntaxWarning(String message,
-                                          String sourceName, int lineno,
-                                          String lineText, int lineOffset)
-    {
-        getErrorReporter().warning(message, sourceName,
-                                   lineno, lineText, lineOffset);
-    }
-
-    public final boolean isFromEval()
-    {
-        return fromEval;
-    }
-
-    public void setFromEval(boolean fromEval)
-    {
-        this.fromEval = fromEval;
     }
 
     public final int getLanguageVersion()
@@ -150,9 +109,34 @@ public class CompilerEnvirons
         return useDynamicScope;
     }
 
-    public void setUseDynamicScope(boolean flag)
+    public final boolean isReservedKeywordAsIdentifier()
     {
-        this.useDynamicScope = flag;
+        return reservedKeywordAsIdentifier;
+    }
+
+    public void setReservedKeywordAsIdentifier(boolean flag)
+    {
+        reservedKeywordAsIdentifier = flag;
+    }
+
+    public final boolean isAllowMemberExprAsFunctionName()
+    {
+        return allowMemberExprAsFunctionName;
+    }
+
+    public void setAllowMemberExprAsFunctionName(boolean flag)
+    {
+        allowMemberExprAsFunctionName = flag;
+    }
+
+    public final boolean isXmlAvailable()
+    {
+        return xmlAvailable;
+    }
+
+    public void setXmlAvailable(boolean flag)
+    {
+        xmlAvailable = flag;
     }
 
     public final int getOptimizationLevel()
@@ -166,7 +150,7 @@ public class CompilerEnvirons
         this.optimizationLevel = level;
     }
 
-    public boolean isGeneratingSource()
+    public final boolean isGeneratingSource()
     {
         return generatingSource;
     }
@@ -185,19 +169,16 @@ public class CompilerEnvirons
         this.generatingSource = generatingSource;
     }
 
-
     private ErrorReporter errorReporter;
-    private int syntaxErrorCount;
 
-    private boolean fromEval;
-
-    int languageVersion = Context.VERSION_DEFAULT;
-    boolean generateDebugInfo = true;
-    boolean useDynamicScope;
-    boolean reservedKeywordAsIdentifier;
-    boolean allowMemberExprAsFunctionName;
-    private int optimizationLevel = 0;
-    private boolean generatingSource = true;
+    private int languageVersion;
+    private boolean generateDebugInfo;
+    private boolean useDynamicScope;
+    private boolean reservedKeywordAsIdentifier;
+    private boolean allowMemberExprAsFunctionName;
+    private boolean xmlAvailable;
+    private int optimizationLevel;
+    private boolean generatingSource;
     Hashtable activationNames;
 }
 

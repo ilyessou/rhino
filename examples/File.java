@@ -128,11 +128,9 @@ public class File extends ScriptableObject {
      *
      * @exception IOException if an error occurred while accessing the file
      *            associated with this object
-     * @exception JavaScriptException if a JavaScript exception occurred
-     *            while creating the result array
      */
     public Object jsFunction_readLines()
-        throws IOException, JavaScriptException
+        throws IOException
     {
         Vector v = new Vector();
         String s;
@@ -252,7 +250,7 @@ public class File extends ScriptableObject {
         // in a Scriptable object so that it can be manipulated by
         // JavaScript.
         Scriptable parent = ScriptableObject.getTopLevelScope(this);
-        return Context.toObject(reader, parent);
+        return Context.javaToJS(reader, parent);
     }
 
     /**
@@ -265,7 +263,7 @@ public class File extends ScriptableObject {
         if (writer == null)
             return null;
         Scriptable parent = ScriptableObject.getTopLevelScope(this);
-        return Context.toObject(writer, parent);
+        return Context.javaToJS(writer, parent);
     }
 
     /**

@@ -39,8 +39,12 @@ package org.mozilla.javascript;
 /**
  * The class of exceptions thrown by the JavaScript engine.
  */
-public class EvaluatorException extends RuntimeException
+public class EvaluatorException extends RhinoException
 {
+    public EvaluatorException(String detail)
+    {
+        super(detail);
+    }
 
     /**
      * Create an exception with the specified detail message.
@@ -48,17 +52,14 @@ public class EvaluatorException extends RuntimeException
      * Errors internal to the JavaScript engine will simply throw a
      * RuntimeException.
      *
-     * @param detail a message with detail about the exception
+     * @param detail the error message
+     * @param sourceName the name of the source reponsible for the error
+     * @param lineNumber the line number of the source
      */
-    public EvaluatorException(String detail)
+    public EvaluatorException(String detail, String sourceName,
+                              int lineNumber)
     {
-        super(detail);
-        Context cx = Context.getCurrentContext();
-        if (cx!= null) {
-            int[] linep = { 0 };
-            this.sourceName = cx.getSourcePositionFromStack(linep);
-            this.lineNumber = linep[0];
-        }
+        this(detail, sourceName, lineNumber, null, 0);
     }
 
     /**
@@ -78,69 +79,40 @@ public class EvaluatorException extends RuntimeException
     public EvaluatorException(String detail, String sourceName, int lineNumber,
                               String lineSource, int columnNumber)
     {
-        super(generateErrorMessage(detail, sourceName, lineNumber));
-        this.sourceName = sourceName;
-        this.lineNumber = lineNumber;
-        this.lineSource = lineSource;
-        this.columnNumber = columnNumber;
+        super(detail);
+        recordErrorOrigin(sourceName, lineNumber, lineSource, columnNumber);
     }
 
     /**
-     * Get the name of the source containing the error, or null
-     * if that information is not available.
+     * @deprecated Use {@link RhinoException#sourceName()} from the super class.
      */
     public String getSourceName()
     {
-        return sourceName;
+        return sourceName();
     }
 
     /**
-     * Returns the line number of the statement causing the error,
-     * or zero if not available.
+     * @deprecated Use {@link RhinoException#lineNumber()} from the super class.
      */
     public int getLineNumber()
     {
-        return lineNumber;
+        return lineNumber();
     }
 
     /**
-     * The column number of the location of the error, or zero if unknown.
+     * @deprecated Use {@link RhinoException#columnNumber()} from the super class.
      */
     public int getColumnNumber()
     {
-        return columnNumber;
+        return columnNumber();
     }
 
     /**
-     * The source of the line causing the error, or zero if unknown.
+     * @deprecated Use {@link RhinoException#lineSource()} from the super class.
      */
     public String getLineSource()
     {
-        return lineSource;
+        return lineSource();
     }
 
-    static String generateErrorMessage(String message,
-                                       String sourceName,
-                                       int line)
-    {
-        if (sourceName == null || line <= 0) {
-            return message;
-        }
-        StringBuffer buf = new StringBuffer(message);
-        buf.append(" (");
-        if (sourceName != null) {
-            buf.append(sourceName);
-        }
-        if (line > 0) {
-            buf.append('#');
-            buf.append(line);
-        }
-        buf.append(')');
-        return buf.toString();
-    }
-
-    private String sourceName;
-    private int lineNumber;
-    private String lineSource;
-    private int columnNumber;
 }

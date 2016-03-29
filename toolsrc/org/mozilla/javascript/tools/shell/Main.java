@@ -55,7 +55,42 @@ import org.mozilla.javascript.tools.ToolErrorReporter;
  *
  * @author Norris Boyd
  */
-public class Main {
+public class Main
+{
+    public static final ShellContextFactory
+        shellContextFactory = new ShellContextFactory();
+
+    /**
+     * Proxy class to avoid proliferation of anonymous classes.
+     */
+    private static class IProxy implements ContextAction
+    {
+        private static final int PROCESS_FILES = 1;
+        private static final int EVAL_INLINE_SCRIPT = 2;
+
+        private int type;
+        String[] args;
+        String scriptText;
+
+        IProxy(int type)
+        {
+            this.type = type;
+        }
+
+        public Object run(Context cx)
+        {
+            if (type == PROCESS_FILES) {
+                processFiles(cx, args);
+            } else if (type == EVAL_INLINE_SCRIPT) {
+                evaluateScript(cx, getGlobal(), null, scriptText,
+                               "<command>", 1, null);
+            } else {
+                throw Kit.codeBug();
+            }
+            return null;
+        }
+    }
+
 
     /**
      * Main entry point.
@@ -83,27 +118,35 @@ public class Main {
     /**
      *  Execute the given arguments, but don't System.exit at the end.
      */
-    public static int exec(String args[]) {
+    public static int exec(String origArgs[])
+    {
 
-        for (int i=0; i < args.length; i++) {
-            String arg = args[i];
+        for (int i=0; i < origArgs.length; i++) {
+            String arg = origArgs[i];
             if (arg.equals("-sealedlib")) {
                 sealedStdLib = true;
                 break;
             }
         }
 
-        Context cx = enterContext();
-        // Create the top-level scope object.
-        global = getGlobal();
         errorReporter = new ToolErrorReporter(false, global.getErr());
-        cx.setErrorReporter(errorReporter);
-
-        args = processOptions(cx, args);
-
+        shellContextFactory.setErrorReporter(errorReporter);
+        String[] args = processOptions(origArgs);
         if (processStdin)
             fileList.addElement(null);
 
+        IProxy iproxy = new IProxy(IProxy.PROCESS_FILES);
+        iproxy.args = args;
+        shellContextFactory.call(iproxy);
+
+        return exitCode;
+    }
+
+    static void processFiles(Context cx, String[] args)
+    {
+        if (!global.initialized) {
+            global.init(cx);
+        }
         // define "arguments" array in the top-level object:
         // need to allocate new array since newArray requires instances
         // of exactly Object[], not ObjectSubclass[]
@@ -117,35 +160,23 @@ public class Main {
             processSource(cx, (String) fileList.elementAt(i));
         }
 
-        cx.exit();
-        return exitCode;
     }
 
-    public static Global getGlobal() {
-        if (global == null) {
-            try {
-                global = new Global(enterContext());
-            }
-            finally {
-                Context.exit();
-            }
-        }
+    public static Global getGlobal()
+    {
         return global;
-    }
-
-    static Context enterContext() {
-        Context cx = new Context();
-        if (securityImpl != null) {
-            cx.setSecurityController(securityImpl);
-        }
-        return Context.enter(cx);
     }
 
     /**
      * Parse arguments.
      */
-    public static String[] processOptions(Context cx, String args[]) {
-        for (int i=0; i < args.length; i++) {
+    public static String[] processOptions(String args[])
+    {
+        String usageError;
+        goodUsage: for (int i = 0; ; ++i) {
+            if (i == args.length) {
+                return new String[0];
+            }
             String arg = args[i];
             if (!arg.startsWith("-")) {
                 processStdin = false;
@@ -155,28 +186,59 @@ public class Main {
                 return result;
             }
             if (arg.equals("-version")) {
-                if (++i == args.length)
-                    usage(arg);
-                double d = cx.toNumber(args[i]);
-                if (d != d)
-                    usage(arg);
-                cx.setLanguageVersion((int) d);
+                if (++i == args.length) {
+                    usageError = arg;
+                    break goodUsage;
+                }
+                int version;
+                try {
+                    version = Integer.parseInt(args[i]);
+                } catch (NumberFormatException ex) {
+                    usageError = args[i];
+                    break goodUsage;
+                }
+                if (!Context.isValidLanguageVersion(version)) {
+                    usageError = args[i];
+                    break goodUsage;
+                }
+                shellContextFactory.setLanguageVersion(version);
                 continue;
             }
             if (arg.equals("-opt") || arg.equals("-O")) {
-                if (++i == args.length)
-                    usage(arg);
-                double d = cx.toNumber(args[i]);
-                if (d != d)
-                    usage(arg);
-                cx.setOptimizationLevel((int)d);
+                if (++i == args.length) {
+                    usageError = arg;
+                    break goodUsage;
+                }
+                int opt;
+                try {
+                    opt = Integer.parseInt(args[i]);
+                } catch (NumberFormatException ex) {
+                    usageError = args[i];
+                    break goodUsage;
+                }
+                if (opt == -2) {
+                    // Compatibility with Cocoon Rhino fork
+                    opt = -1;
+                } else if (!Context.isValidOptimizationLevel(opt)) {
+                    usageError = args[i];
+                    break goodUsage;
+                }
+                shellContextFactory.setOptimizationLevel(opt);
+                continue;
+            }
+            if (arg.equals("-strict")) {
+                shellContextFactory.setStrictMode(true);
                 continue;
             }
             if (arg.equals("-e")) {
                 processStdin = false;
-                if (++i == args.length)
-                    usage(arg);
-                evaluateScript(cx, global, null, args[i], "<command>", 1, null);
+                if (++i == args.length) {
+                    usageError = arg;
+                    break goodUsage;
+                }
+                IProxy iproxy = new IProxy(IProxy.EVAL_INLINE_SCRIPT);
+                iproxy.scriptText = args[i];
+                shellContextFactory.call(iproxy);
                 continue;
             }
             if (arg.equals("-w")) {
@@ -185,8 +247,10 @@ public class Main {
             }
             if (arg.equals("-f")) {
                 processStdin = false;
-                if (++i == args.length)
-                    usage(arg);
+                if (++i == args.length) {
+                    usageError = arg;
+                    break goodUsage;
+                }
                 fileList.addElement(args[i].equals("-") ? null : args[i]);
                 continue;
             }
@@ -195,36 +259,35 @@ public class Main {
                 if (!sealedStdLib) Kit.codeBug();
                 continue;
             }
-            usage(arg);
+            usageError = arg;
+            break goodUsage;
         }
-        return new String[0];
-    }
-
-    /**
-     * Print a usage message.
-     */
-    public static void usage(String s) {
-        p(ToolErrorReporter.getMessage("msg.shell.usage", s));
+        // print usage message
+        p(ToolErrorReporter.getMessage("msg.shell.usage", usageError));
         System.exit(1);
+        return null;
     }
 
-    private static void initJavaPolicySecuritySupport() {
+    private static void initJavaPolicySecuritySupport()
+    {
         Throwable exObj;
         try {
             Class cl = Class.forName
                 ("org.mozilla.javascript.tools.shell.JavaPolicySecurity");
             securityImpl = (SecurityProxy)cl.newInstance();
+            SecurityController.initGlobal(securityImpl);
             return;
-        }catch (ClassNotFoundException ex) {
+        } catch (ClassNotFoundException ex) {
             exObj = ex;
-        }catch (IllegalAccessException ex) {
+        } catch (IllegalAccessException ex) {
             exObj = ex;
-        }catch (InstantiationException ex) {
+        } catch (InstantiationException ex) {
             exObj = ex;
-        }catch (LinkageError ex) {
+        } catch (LinkageError ex) {
             exObj = ex;
         }
-        throw new RuntimeException("Can not load security support: "+exObj);
+        throw Kit.initCause(new IllegalStateException(
+            "Can not load security support: "+exObj), exObj);
     }
 
     /**
@@ -234,7 +297,8 @@ public class Main {
      * @param filename the name of the file to compile, or null
      *                 for interactive mode.
      */
-    public static void processSource(Context cx, String filename) {
+    public static void processSource(Context cx, String filename)
+    {
         if (filename == null || filename.equals("-")) {
             if (filename == null) {
                 // print implementation version
@@ -279,25 +343,17 @@ public class Main {
                 if (result != cx.getUndefinedValue()) {
                     try {
                         global.getErr().println(cx.toString(result));
-                    } catch (EcmaError ee) {
-                        String msg = ToolErrorReporter.getMessage(
-                            "msg.uncaughtJSException", ee.toString());
-                        exitCode = EXITCODE_RUNTIME_ERROR;
-                        if (ee.getSourceName() != null) {
-                            Context.reportError(msg, ee.getSourceName(),
-                                                ee.getLineNumber(),
-                                                ee.getLineSource(),
-                                                ee.getColumnNumber());
-                        } else {
-                            Context.reportError(msg);
-                        }
+                    } catch (RhinoException rex) {
+                        errorReporter.reportException(rex);
                     }
                 }
                 NativeArray h = global.history;
                 h.put((int)h.getLength(), h, source);
             }
             global.getErr().println();
-        } else processFile(cx, global, filename);
+        } else {
+            processFile(cx, global, filename);
+        }
         System.gc();
     }
 
@@ -306,7 +362,7 @@ public class Main {
     {
         if (securityImpl == null) {
             processFileSecure(cx, scope, filename, null);
-        }else {
+        } else {
             securityImpl.callProcessFileSecure(cx, scope, filename);
         }
     }
@@ -376,6 +432,9 @@ public class Main {
                                         String sourceName,
                                         int lineno, Object securityDomain)
     {
+        if (!global.initialized) {
+            global.init(cx);
+        }
         Object result = cx.getUndefinedValue();
         try {
             if (in != null) {
@@ -397,18 +456,12 @@ public class Main {
         } catch (WrappedException we) {
             global.getErr().println(we.getWrappedException().toString());
             we.printStackTrace();
-        } catch (EcmaError ee) {
-            String msg = ToolErrorReporter.getMessage(
-                "msg.uncaughtJSException", ee.toString());
+        } catch (EvaluatorException ee) {
+            // Already printed message.
             exitCode = EXITCODE_RUNTIME_ERROR;
-            if (ee.getSourceName() != null) {
-                Context.reportError(msg, ee.getSourceName(),
-                                    ee.getLineNumber(),
-                                    ee.getLineSource(),
-                                    ee.getColumnNumber());
-            } else {
-                Context.reportError(msg);
-            }
+        } catch (RhinoException rex) {
+            errorReporter.reportException(rex);
+            exitCode = EXITCODE_RUNTIME_ERROR;
         } catch (VirtualMachineError ex) {
             // Treat StackOverflow and OutOfMemory as runtime errors
             ex.printStackTrace();
@@ -416,14 +469,6 @@ public class Main {
                 "msg.uncaughtJSException", ex.toString());
             exitCode = EXITCODE_RUNTIME_ERROR;
             Context.reportError(msg);
-        } catch (EvaluatorException ee) {
-            // Already printed message.
-            exitCode = EXITCODE_RUNTIME_ERROR;
-        } catch (JavaScriptException jse) {
-            exitCode = EXITCODE_RUNTIME_ERROR;
-            Context.reportError(ToolErrorReporter.getMessage(
-                "msg.uncaughtJSException",
-                jse.getMessage()));
         }
         return result;
     }
@@ -433,6 +478,9 @@ public class Main {
     }
 
     public static ScriptableObject getScope() {
+        if (!global.initialized) {
+            global.init(Context.getCurrentContext());
+        }
         return global;
     }
 
@@ -460,8 +508,8 @@ public class Main {
         Global.getInstance(getGlobal()).setErr(err);
     }
 
+    static protected final Global global = new Global();
     static protected ToolErrorReporter errorReporter;
-    static protected Global global;
     static protected int exitCode = 0;
     static private final int EXITCODE_RUNTIME_ERROR = 3;
     static private final int EXITCODE_FILE_NOT_FOUND = 4;

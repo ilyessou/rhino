@@ -58,26 +58,14 @@ public final class LazilyLoadedCtor {
             setter = FunctionObject.findSingleMethod(methods, "setProperty");
         }
 
-        try {
-            scope.defineProperty(ctorName, this, getter, setter,
-                                 ScriptableObject.DONTENUM);
-        }
-        catch (PropertyException e) {
-            throw Context.throwAsScriptRuntimeEx(e);
-        }
+        scope.defineProperty(ctorName, this, getter, setter,
+                             ScriptableObject.DONTENUM);
     }
 
     public Object getProperty(ScriptableObject obj) {
         synchronized (obj) {
             if (!isReplaced) {
                 boolean removeOnError = false;
-
-                // Treat security exceptions as absence of object.
-                // They can be due to the following reasons:
-                //  java.lang.RuntimePermission createClassLoader
-                //  java.util.PropertyPermission
-                //        org.mozilla.javascript.JavaAdapter read
-
                 Class cl = Kit.classOrNull(className);
                 if (cl == null) {
                     removeOnError = true;
@@ -85,10 +73,26 @@ public final class LazilyLoadedCtor {
                     try {
                         ScriptableObject.defineClass(obj, cl, sealed);
                         isReplaced = true;
-                    } catch (SecurityException ex) {
+                    } catch (InvocationTargetException ex) {
+                        Throwable target = ex.getTargetException();
+                        if (target instanceof RuntimeException) {
+                            throw (RuntimeException)target;
+                        }
                         removeOnError = true;
-                    } catch (Exception e) {
-                        throw Context.throwAsScriptRuntimeEx(e);
+                    } catch (RhinoException ex) {
+                        removeOnError = true;
+                    } catch (InstantiationException ex) {
+                        removeOnError = true;
+                    } catch (IllegalAccessException ex) {
+                        removeOnError = true;
+                    } catch (SecurityException ex) {
+                        // Treat security exceptions as absence of object.
+                        // They can be due to the following reasons:
+                        //  java.lang.RuntimePermission createClassLoader
+                        removeOnError = true;
+                    } catch (LinkageError ex) {
+                        // No dependant classes
+                        removeOnError = true;
                     }
                 }
                 if (removeOnError) {

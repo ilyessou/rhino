@@ -47,63 +47,27 @@ import java.lang.reflect.Method;
  */
 public class WrappedException extends EvaluatorException
 {
-
     /**
-     * <p>Pointer to initCause() method of Throwable.
-     * If this method does not exist,
-     * (i.e. we're running on something earlier than Java 1.4), the pointer will
-     * be null.</p>
-     */
-    private static Method initCauseMethod = null;
-
-    static {
-        // Are we running on a JDK 1.4 or later system?
-        try {
-            Class ThrowableClass = Kit.classOrNull(
-                                       "java.lang.Throwable");
-            initCauseMethod = ThrowableClass.getMethod("initCause",
-                                          new Class[]{ThrowableClass});
-        } catch (Exception ex) {
-            // Assume any exceptions means the method does not exist.
-        }
-    }
-
-    /**
-     * Create a new exception wrapped around an existing exception.
-     *
-     * @param exception the exception to wrap
+     * @see Context#throwAsScriptRuntimeEx(Throwable e)
      */
     public WrappedException(Throwable exception)
     {
-        super(exception.getMessage());
+        super("Wrapped "+exception.toString());
         this.exception = exception;
-        if (initCauseMethod != null) {
-            try {
-                initCauseMethod.invoke(this, new Object[] {exception});
-            } catch (Exception e) {
-                // Ignore any exceptions
+        Kit.initCause(this, exception);
+
+        Context cx = Context.getCurrentContext();
+        if (cx!= null) {
+            int[] linep = { 0 };
+            String sourceName = cx.getSourcePositionFromStack(linep);
+            int lineNumber = linep[0];
+            if (sourceName != null) {
+                initSourceName(sourceName);
+            }
+            if (lineNumber != 0) {
+                initLineNumber(lineNumber);
             }
         }
-    }
-
-    /**
-     * Get the message for the exception.
-     *
-     * Delegates to the wrapped exception.
-     */
-    public String getMessage()
-    {
-        return "WrappedException of " + exception.toString();
-    }
-
-    /**
-     * Gets the localized message.
-     *
-     * Delegates to the wrapped exception.
-     */
-    public String getLocalizedMessage()
-    {
-        return "WrappedException of " + exception.getLocalizedMessage();
     }
 
     /**

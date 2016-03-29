@@ -64,6 +64,44 @@ package org.mozilla.javascript;
  */
 public abstract class SecurityController
 {
+    private static SecurityController global;
+
+// The method must NOT be public or protected
+    static SecurityController global()
+    {
+        return global;
+    }
+
+    /**
+     * Check if global {@link SecurityController} was already installed.
+     * @see #initGlobal(SecurityController controller)
+     */
+    public static boolean hasGlobal()
+    {
+        return global != null;
+    }
+
+    /**
+     * Initialize global controller that will be used for all
+     * security-related operations. The global controller takes precedence
+     * over already installed {@link Context}-specific controllers and cause
+     * any subsequent call to
+     * {@link Context#setSecurityController(SecurityController)}
+     * to throw an exception.
+     * <p>
+     * The method can only be called once.
+     *
+     * @see #hasGlobal()
+     */
+    public static void initGlobal(SecurityController controller)
+    {
+        if (controller == null) throw new IllegalArgumentException();
+        if (global != null) {
+            throw new SecurityException("Cannot overwrite already installed global SecurityController");
+        }
+        global = controller;
+    }
+
     /**
      * Get class loader-like object that can be used
      * to define classes with the given security context.
@@ -134,12 +172,10 @@ public abstract class SecurityController
     public Object callWithDomain(Object securityDomain, Context cx,
                                  final Callable callable, Scriptable scope,
                                  final Scriptable thisObj, final Object[] args)
-        throws JavaScriptException
     {
         return execWithDomain(cx, scope, new Script()
         {
             public Object exec(Context cx, Scriptable scope)
-                throws JavaScriptException
             {
                 return callable.call(cx, scope, thisObj, args);
             }
@@ -154,7 +190,6 @@ public abstract class SecurityController
      */
     public Object execWithDomain(Context cx, Scriptable scope,
                                  Script script, Object securityDomain)
-        throws JavaScriptException
     {
         throw new IllegalStateException("callWithDomain should be overridden");
     }

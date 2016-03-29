@@ -44,35 +44,40 @@ package org.mozilla.javascript;
  * @see org.mozilla.javascript.NativeCall
  * @author Norris Boyd
  */
-class Arguments extends IdScriptable {
+final class Arguments extends IdScriptableObject
+{
 
-    public Arguments(NativeCall activation) {
+    public Arguments(NativeCall activation)
+    {
         this.activation = activation;
 
         Scriptable parent = activation.getParentScope();
         setParentScope(parent);
         setPrototype(ScriptableObject.getObjectPrototype(parent));
 
-        args = activation.getOriginalArguments();
+        args = activation.originalArgs;
         lengthObj = new Integer(args.length);
 
-        NativeFunction funObj = activation.funObj;
-        calleeObj = funObj;
+        NativeFunction f = activation.function;
+        calleeObj = f;
 
-        if (funObj.version <= Context.VERSION_1_3
-            && funObj.version != Context.VERSION_DEFAULT)
+        int version = f.getLanguageVersion();
+        if (version <= Context.VERSION_1_3
+            && version != Context.VERSION_DEFAULT)
         {
             callerObj = null;
-        }else {
+        } else {
             callerObj = NOT_FOUND;
         }
     }
 
-    public String getClassName() {
+    public String getClassName()
+    {
         return "Arguments";
     }
 
-    public boolean has(int index, Scriptable start) {
+    public boolean has(int index, Scriptable start)
+    {
         if (0 <= index && index < args.length) {
             if (args[index] != NOT_FOUND) {
                 return true;
@@ -81,12 +86,14 @@ class Arguments extends IdScriptable {
         return super.has(index, start);
     }
 
-    public Object get(int index, Scriptable start) {
+    public Object get(int index, Scriptable start)
+    {
         if (0 <= index && index < args.length) {
             Object value = args[index];
             if (value != NOT_FOUND) {
                 if (sharedWithActivation(index)) {
-                    String argName = activation.funObj.argNames[index];
+                    NativeFunction f = activation.function;
+                    String argName = f.getParamOrVarName(index);
                     value = activation.get(argName, activation);
                     if (value == NOT_FOUND) Kit.codeBug();
                 }
@@ -96,16 +103,17 @@ class Arguments extends IdScriptable {
         return super.get(index, start);
     }
 
-    private boolean sharedWithActivation(int index) {
-        NativeFunction f = activation.funObj;
-        int definedCount = f.argCount;
+    private boolean sharedWithActivation(int index)
+    {
+        NativeFunction f = activation.function;
+        int definedCount = f.getParamCount();
         if (index < definedCount) {
             // Check if argument is not hidden by later argument with the same
             // name as hidden arguments are not shared with activation
             if (index < definedCount - 1) {
-                String argName = f.argNames[index];
+                String argName = f.getParamOrVarName(index);
                 for (int i = index + 1; i < definedCount; i++) {
-                    if (argName.equals(f.argNames[i])) {
+                    if (argName.equals(f.getParamOrVarName(i))) {
                         return false;
                     }
                 }
@@ -115,17 +123,19 @@ class Arguments extends IdScriptable {
         return false;
     }
 
-    public void put(int index, Scriptable start, Object value) {
+    public void put(int index, Scriptable start, Object value)
+    {
         if (0 <= index && index < args.length) {
             if (args[index] != NOT_FOUND) {
                 if (sharedWithActivation(index)) {
-                    String argName = activation.funObj.argNames[index];
+                    String argName;
+                    argName = activation.function.getParamOrVarName(index);
                     activation.put(argName, activation, value);
                     return;
                 }
                 synchronized (this) {
                     if (args[index] != NOT_FOUND) {
-                        if (args == activation.getOriginalArguments()) {
+                        if (args == activation.originalArgs) {
                             args = (Object[])args.clone();
                         }
                         args[index] = value;
@@ -137,11 +147,12 @@ class Arguments extends IdScriptable {
         super.put(index, start, value);
     }
 
-    public void delete(int index) {
+    public void delete(int index)
+    {
         if (0 <= index && index < args.length) {
             synchronized (this) {
                 if (args[index] != NOT_FOUND) {
-                    if (args == activation.getOriginalArguments()) {
+                    if (args == activation.originalArgs) {
                         args = (Object[])args.clone();
                     }
                     args[index] = NOT_FOUND;
@@ -150,81 +161,6 @@ class Arguments extends IdScriptable {
             }
         }
         super.delete(index);
-    }
-
-    protected int getIdAttributes(int id)
-    {
-        switch (id) {
-            case Id_callee:
-            case Id_caller:
-            case Id_length:
-                return DONTENUM;
-        }
-        return super.getIdAttributes(id);
-    }
-
-    protected boolean hasIdValue(int id)
-    {
-        switch (id) {
-            case Id_callee: return calleeObj != NOT_FOUND;
-            case Id_length: return lengthObj != NOT_FOUND;
-            case Id_caller: return callerObj != NOT_FOUND;
-        }
-        return super.hasIdValue(id);
-    }
-
-    protected Object getIdValue(int id)
-    {
-        switch (id) {
-            case Id_callee: return calleeObj;
-            case Id_length: return lengthObj;
-            case Id_caller: {
-                Object value = callerObj;
-                if (value == UniqueTag.NULL_VALUE) { value = null; }
-                else if (value == null) {
-                    NativeCall caller = activation.caller;
-                    if (caller == null) {
-                        value = null;
-                    }else {
-                        value = caller.get("arguments", caller);
-                    }
-                }
-                return value;
-            }
-        }
-        return super.getIdValue(id);
-    }
-
-    protected void setIdValue(int id, Object value)
-    {
-        switch (id) {
-            case Id_callee: calleeObj = value; return;
-            case Id_length: lengthObj = value; return;
-            case Id_caller:
-                callerObj = (value != null) ? value : UniqueTag.NULL_VALUE;
-                return;
-        }
-        super.setIdValue(id, value);
-    }
-
-    protected void deleteIdValue(int id)
-    {
-        switch (id) {
-            case Id_callee: calleeObj = NOT_FOUND; return;
-            case Id_length: lengthObj = NOT_FOUND; return;
-            case Id_caller: callerObj = NOT_FOUND; return;
-        }
-        super.deleteIdValue(id);
-    }
-
-    protected String getIdName(int id)
-    {
-        switch (id) {
-            case Id_callee: return "callee";
-            case Id_length: return "length";
-            case Id_caller: return "caller";
-        }
-        return null;
     }
 
 // #string_id_map#
@@ -236,9 +172,12 @@ class Arguments extends IdScriptable {
 
         MAX_INSTANCE_ID     = 3;
 
-    { setMaxId(MAX_INSTANCE_ID); }
+    protected int getMaxInstanceId()
+    {
+        return MAX_INSTANCE_ID;
+    }
 
-    protected int mapNameToId(String s)
+    protected int findInstanceIdInfo(String s)
     {
         int id;
 // #generated# Last update: 2002-04-09 20:46:33 CEST
@@ -252,11 +191,104 @@ class Arguments extends IdScriptable {
             if (X!=null && X!=s && !X.equals(s)) id = 0;
         }
 // #/generated#
-        return id;
+
+        if (id == 0) return super.findInstanceIdInfo(s);
+
+        int attr;
+        switch (id) {
+          case Id_callee:
+          case Id_caller:
+          case Id_length:
+            attr = DONTENUM;
+            break;
+          default: throw new IllegalStateException();
+        }
+        return instanceIdInfo(attr, id);
     }
 
 // #/string_id_map#
 
+    protected String getInstanceIdName(int id)
+    {
+        switch (id) {
+            case Id_callee: return "callee";
+            case Id_length: return "length";
+            case Id_caller: return "caller";
+        }
+        return null;
+    }
+
+    protected Object getInstanceIdValue(int id)
+    {
+        switch (id) {
+            case Id_callee: return calleeObj;
+            case Id_length: return lengthObj;
+            case Id_caller: {
+                Object value = callerObj;
+                if (value == UniqueTag.NULL_VALUE) { value = null; }
+                else if (value == null) {
+                    NativeCall caller = activation.parentActivationCall;
+                    if (caller != null) {
+                        value = caller.get("arguments", caller);
+                    } else {
+                        value = null;
+                    }
+                }
+                return value;
+            }
+        }
+        return super.getInstanceIdValue(id);
+    }
+
+    protected void setInstanceIdValue(int id, Object value)
+    {
+        switch (id) {
+            case Id_callee: calleeObj = value; return;
+            case Id_length: lengthObj = value; return;
+            case Id_caller:
+                callerObj = (value != null) ? value : UniqueTag.NULL_VALUE;
+                return;
+        }
+        super.setInstanceIdValue(id, value);
+    }
+
+    Object[] getIds(boolean getAll)
+    {
+        Object[] ids = super.getIds(getAll);
+        if (getAll && args.length != 0) {
+            boolean[] present = null;
+            int extraCount = args.length;
+            for (int i = 0; i != ids.length; ++i) {
+                Object id = ids[i];
+                if (id instanceof Integer) {
+                    int index = ((Integer)id).intValue();
+                    if (0 <= index && index < args.length) {
+                        if (present == null) {
+                            present = new boolean[args.length];
+                        }
+                        if (!present[index]) {
+                            present[index] = true;
+                            extraCount--;
+                        }
+                    }
+                }
+            }
+            if (extraCount != 0) {
+                Object[] tmp = new Object[extraCount + ids.length];
+                System.arraycopy(ids, 0, tmp, extraCount, ids.length);
+                ids = tmp;
+                int offset = 0;
+                for (int i = 0; i != args.length; ++i) {
+                    if (present == null || !present[i]) {
+                        ids[offset] = new Integer(i);
+                        ++offset;
+                    }
+                }
+                if (offset != extraCount) Kit.codeBug();
+            }
+        }
+        return ids;
+    }
 
 // Fields to hold caller, callee and length properties,
 // where NOT_FOUND value tags deleted properties.

@@ -180,48 +180,43 @@ WrapFactory#wrap(Context cx, Scriptable scope, Object obj, Class)}
         return "JavaObject";
     }
 
-    Function getConverter(String converterName) {
-        Object converterFunction = get(converterName, this);
-        if (converterFunction instanceof Function) {
-            return (Function) converterFunction;
-        }
-        return null;
-    }
-
-    Object callConverter(Function converterFunction)
-        throws JavaScriptException
+    public Object getDefaultValue(Class hint)
     {
-        Function f = (Function) converterFunction;
-        return f.call(Context.getContext(), f.getParentScope(),
-                      this, ScriptRuntime.emptyArgs);
-    }
-
-    Object callConverter(String converterName)
-        throws JavaScriptException
-    {
-        Function converter = getConverter(converterName);
-        if (converter == null) {
-            return javaObject.toString();
-        }
-        return callConverter(converter);
-    }
-
-    public Object getDefaultValue(Class hint) {
-        if (hint == null || hint == ScriptRuntime.StringClass)
-            return javaObject.toString();
-        try {
-            if (hint == ScriptRuntime.BooleanClass)
-                return callConverter("booleanValue");
-            if (hint == ScriptRuntime.NumberClass) {
-                return callConverter("doubleValue");
+        Object value;
+        if (hint == null) {
+            if (javaObject instanceof Boolean) {
+                hint = ScriptRuntime.BooleanClass;
             }
-            // fall through to error message
-        } catch (JavaScriptException jse) {
-            // fall through to error message
         }
-        throw Context.reportRuntimeError0("msg.default.value");
+        if (hint == null || hint == ScriptRuntime.StringClass) {
+            value = javaObject.toString();
+        } else {
+            String converterName;
+            if (hint == ScriptRuntime.BooleanClass) {
+                converterName = "booleanValue";
+            } else if (hint == ScriptRuntime.NumberClass) {
+                converterName = "doubleValue";
+            } else {
+                throw Context.reportRuntimeError0("msg.default.value");
+            }
+            Object converterObject = get(converterName, this);
+            if (converterObject instanceof Function) {
+                Function f = (Function)converterObject;
+                value = f.call(Context.getContext(), f.getParentScope(),
+                               this, ScriptRuntime.emptyArgs);
+            } else {
+                if (hint == ScriptRuntime.NumberClass
+                    && javaObject instanceof Boolean)
+                {
+                    boolean b = ((Boolean)javaObject).booleanValue();
+                    value = ScriptRuntime.wrapNumber(b ? 1.0 : 0.0);
+                } else {
+                    value = javaObject.toString();
+                }
+            }
+        }
+        return value;
     }
-
 
     /**
      * Determine whether we can/should convert between the given type and the
@@ -234,15 +229,15 @@ WrapFactory#wrap(Context cx, Scriptable scope, Object obj, Class)}
         return (weight < CONVERSION_NONE);
     }
 
-    static final int JSTYPE_UNDEFINED   = 0; // undefined type
-    static final int JSTYPE_NULL        = 1; // null
-    static final int JSTYPE_BOOLEAN     = 2; // boolean
-    static final int JSTYPE_NUMBER      = 3; // number
-    static final int JSTYPE_STRING      = 4; // string
-    static final int JSTYPE_JAVA_CLASS  = 5; // JavaClass
-    static final int JSTYPE_JAVA_OBJECT = 6; // JavaObject
-    static final int JSTYPE_JAVA_ARRAY  = 7; // JavaArray
-    static final int JSTYPE_OBJECT      = 8; // Scriptable
+    private static final int JSTYPE_UNDEFINED   = 0; // undefined type
+    private static final int JSTYPE_NULL        = 1; // null
+    private static final int JSTYPE_BOOLEAN     = 2; // boolean
+    private static final int JSTYPE_NUMBER      = 3; // number
+    private static final int JSTYPE_STRING      = 4; // string
+    private static final int JSTYPE_JAVA_CLASS  = 5; // JavaClass
+    private static final int JSTYPE_JAVA_OBJECT = 6; // JavaObject
+    private static final int JSTYPE_JAVA_ARRAY  = 7; // JavaArray
+    private static final int JSTYPE_OBJECT      = 8; // Scriptable
 
     public static final byte CONVERSION_TRIVIAL      = 1;
     public static final byte CONVERSION_NONTRIVIAL   = 0;
@@ -365,6 +360,10 @@ WrapFactory#wrap(Context cx, Scriptable scope, Object obj, Class)}
 
         case JSTYPE_OBJECT:
             // Other objects takes #1-#3 spots
+            if (to == fromObj.getClass()) {
+                // No conversion required
+                return 1;
+            }
             if (to.isArray()) {
                 if (fromObj instanceof NativeArray) {
                     // This is a native array conversion to a java array
@@ -394,14 +393,13 @@ WrapFactory#wrap(Context cx, Scriptable scope, Object obj, Class)}
                 }
                 return 11;
             }
-            else if (to.isPrimitive() || to != Boolean.TYPE) {
+            else if (to.isPrimitive() && to != Boolean.TYPE) {
                 return 3 + getSizeRank(to);
             }
             break;
         }
 
         return CONVERSION_NONE;
-
     }
 
     static int getSizeRank(Class aType) {
@@ -434,7 +432,7 @@ WrapFactory#wrap(Context cx, Scriptable scope, Object obj, Class)}
         }
     }
 
-    static int getJSTypeCode(Object value) {
+    private static int getJSTypeCode(Object value) {
         if (value == null) {
             return JSTYPE_NULL;
         }
@@ -667,7 +665,9 @@ WrapFactory#wrap(Context cx, Scriptable scope, Object obj, Class)}
                 reportConversionError(value, type, !useErrorHandler);
             }
             else if (type.isInterface()) {
-                if (value instanceof Function && adapter_makeIFGlue != null) {
+                if (value instanceof Function
+                    && interfaceAdapter_create != null)
+                {
                     // Try to wrap function into interface with single method.
                     Function f = (Function)value;
 
@@ -689,7 +689,7 @@ WrapFactory#wrap(Context cx, Scriptable scope, Object obj, Class)}
                         Object glue;
                         Object[] args = { type, f };
                         try {
-                            glue = adapter_makeIFGlue.invoke(null, args);
+                            glue = interfaceAdapter_create.invoke(null, args);
                         } catch (Exception ex) {
                             throw Context.throwAsScriptRuntimeEx(ex);
                         }
@@ -988,20 +988,16 @@ WrapFactory#wrap(Context cx, Scriptable scope, Object obj, Class)}
     private transient Hashtable fieldAndMethods;
 
     private static final Object COERCED_INTERFACE_KEY = new Object();
-    private static Method adapter_makeIFGlue;
+    private static Method interfaceAdapter_create;
     private static Method adapter_writeAdapterObject;
     private static Method adapter_readAdapterObject;
 
     static {
         // Reflection in java is verbose
+        Class[] sig2 = new Class[2];
         Class cl = Kit.classOrNull("org.mozilla.javascript.JavaAdapter");
         if (cl != null) {
-            Class[] sig2 = new Class[2];
             try {
-                sig2[0] = ScriptRuntime.ClassClass;
-                sig2[1] = ScriptRuntime.FunctionClass;
-                adapter_makeIFGlue = cl.getMethod("makeIFGlue", sig2);
-
                 sig2[0] = ScriptRuntime.ObjectClass;
                 sig2[1] = Kit.classOrNull("java.io.ObjectOutputStream");
                 adapter_writeAdapterObject = cl.getMethod("writeAdapterObject",
@@ -1013,10 +1009,17 @@ WrapFactory#wrap(Context cx, Scriptable scope, Object obj, Class)}
                                                          sig2);
 
             } catch (Exception ex) {
-                adapter_makeIFGlue = null;
                 adapter_writeAdapterObject = null;
                 adapter_readAdapterObject = null;
             }
+        }
+        cl = Kit.classOrNull("org.mozilla.javascript.InterfaceAdapter");
+        if (cl != null) {
+            try {
+                sig2[0] = ScriptRuntime.ClassClass;
+                sig2[1] = ScriptRuntime.FunctionClass;
+                interfaceAdapter_create = cl.getMethod("create", sig2);
+            } catch (Exception ex) { }
         }
     }
 

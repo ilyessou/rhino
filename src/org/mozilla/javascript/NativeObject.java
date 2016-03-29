@@ -42,11 +42,14 @@ package org.mozilla.javascript;
  * See ECMA 15.2.
  * @author Norris Boyd
  */
-public class NativeObject extends IdScriptable
+public class NativeObject extends IdScriptableObject
 {
+    private static final Object OBJECT_TAG = new Object();
+
     public static void init(Context cx, Scriptable scope, boolean sealed)
     {
-        new NativeObjectPrototype(cx, scope, sealed);
+        NativeObject obj = new NativeObject();
+        obj.exportAsJSClass(MAX_PROTOTYPE_ID, scope, sealed);
     }
 
     public String getClassName()
@@ -56,204 +59,134 @@ public class NativeObject extends IdScriptable
 
     public String toString()
     {
-        return NativeObjectPrototype.toString(this);
+        return ScriptRuntime.defaultObjectToString(this);
     }
 
-    protected int mapNameToId(String s) { return 0; }
-
-    protected String getIdName(int id) { return null; }
-
-}
-
-final class NativeObjectPrototype extends NativeObject
-{
-    NativeObjectPrototype(Context cx, Scriptable scope, boolean sealed)
+    protected void initPrototypeId(int id)
     {
-        addAsPrototype(MAX_PROTOTYPE_ID, cx, scope, sealed);
-    }
-
-    public int methodArity(int methodId)
-    {
-        switch (methodId) {
-            case Id_constructor:           return 1;
-            case Id_toString:              return 0;
-            case Id_toLocaleString:        return 0;
-            case Id_valueOf:               return 0;
-            case Id_hasOwnProperty:        return 1;
-            case Id_propertyIsEnumerable:  return 1;
-            case Id_isPrototypeOf:         return 1;
-            case Id_toSource:              return 0;
-        }
-        return super.methodArity(methodId);
-    }
-
-    public Object execMethod
-        (int methodId, IdFunction f,
-         Context cx, Scriptable scope, Scriptable thisObj, Object[] args)
-        throws JavaScriptException
-    {
-        switch (methodId) {
-            case Id_constructor: {
-                if (thisObj != null) {
-                    // BaseFunction.construct will set up parent, proto
-                    return f.construct(cx, scope, args);
-                }
-                if (args.length == 0 || args[0] == null
-                    || args[0] == Undefined.instance)
-                {
-                    return new NativeObject();
-                }
-                return ScriptRuntime.toObject(cx, scope, args[0]);
-            }
-
-            case Id_toLocaleString: // For now just alias toString
-            case Id_toString: {
-                if (cx.hasFeature(Context.FEATURE_TO_STRING_AS_SOURCE)) {
-                    String s = toSource(cx, scope, thisObj, args);
-                    int L = s.length();
-                    if (L != 0 && s.charAt(0) == '(' && s.charAt(L - 1) == ')')
-                    {
-                        // Strip () that surrounds toSource
-                        s = s.substring(1, L - 1);
-                    }
-                    return s;
-                }
-                return toString(thisObj);
-            }
-
-            case Id_valueOf:
-                return thisObj;
-
-            case Id_hasOwnProperty: {
-                if (args.length != 0) {
-                    String property = ScriptRuntime.toString(args[0]);
-                    if (thisObj.has(property, thisObj))
-                        return Boolean.TRUE;
-                }
-                return Boolean.FALSE;
-            }
-
-            case Id_propertyIsEnumerable: {
-                if (args.length != 0) {
-                    String name = ScriptRuntime.toString(args[0]);
-                    if (thisObj.has(name, thisObj)) {
-                        if (thisObj instanceof ScriptableObject) {
-                            ScriptableObject so = (ScriptableObject)thisObj;
-                            int a = so.getAttributes(name);
-                            if ((a & ScriptableObject.DONTENUM) == 0) {
-                                return Boolean.TRUE;
-                            }
-                        }
-                    }
-                }
-                return Boolean.FALSE;
-            }
-
-            case Id_isPrototypeOf: {
-                if (args.length != 0 && args[0] instanceof Scriptable) {
-                    Scriptable v = (Scriptable) args[0];
-                    do {
-                        v = v.getPrototype();
-                        if (v == thisObj)
-                            return Boolean.TRUE;
-                    } while (v != null);
-                }
-                return Boolean.FALSE;
-            }
-
-            case Id_toSource:
-                return toSource(cx, scope, thisObj, args);
-        }
-        return super.execMethod(methodId, f, cx, scope, thisObj, args);
-    }
-
-    static String toString(Scriptable thisObj)
-    {
-        return "[object " + thisObj.getClassName() + "]";
-    }
-
-    private static String toSource(Context cx, Scriptable scope,
-                                   Scriptable thisObj, Object[] args)
-        throws JavaScriptException
-    {
-        boolean toplevel, iterating;
-        if (cx.iterating == null) {
-            toplevel = true;
-            iterating = false;
-            cx.iterating = new ObjToIntMap(31);
-        } else {
-            toplevel = false;
-            iterating = cx.iterating.has(thisObj);
-        }
-
-        StringBuffer result = new StringBuffer(128);
-        if (toplevel) {
-            result.append("(");
-        }
-        result.append('{');
-
-        // Make sure cx.iterating is set to null when done
-        // so we don't leak memory
-        try {
-            if (!iterating) {
-                cx.iterating.intern(thisObj); // stop recursion.
-                Object[] ids = thisObj.getIds();
-                for(int i=0; i < ids.length; i++) {
-                    if (i > 0)
-                        result.append(", ");
-                    Object id = ids[i];
-                    Object value;
-                    if (id instanceof Integer) {
-                        int intId = ((Integer)id).intValue();
-                        value = thisObj.get(intId, thisObj);
-                        result.append(intId);
-                    } else {
-                        String strId = (String)id;
-                        value = thisObj.get(strId, thisObj);
-                        if (ScriptRuntime.isValidIdentifierName(strId)) {
-                            result.append(strId);
-                        } else {
-                            result.append('\'');
-                            result.append(
-                                ScriptRuntime.escapeString(strId, '\''));
-                            result.append('\'');
-                        }
-                    }
-                    result.append(':');
-                    result.append(ScriptRuntime.uneval(cx, scope, value));
-                }
-            }
-        } finally {
-            if (toplevel) {
-                cx.iterating = null;
-            }
-        }
-
-        result.append('}');
-        if (toplevel) {
-            result.append(')');
-        }
-        return result.toString();
-    }
-
-    protected String getIdName(int id)
-    {
+        String s;
+        int arity;
         switch (id) {
-            case Id_constructor:          return "constructor";
-            case Id_toString:             return "toString";
-            case Id_toLocaleString:       return "toLocaleString";
-            case Id_valueOf:              return "valueOf";
-            case Id_hasOwnProperty:       return "hasOwnProperty";
-            case Id_propertyIsEnumerable: return "propertyIsEnumerable";
-            case Id_isPrototypeOf:        return "isPrototypeOf";
-            case Id_toSource:             return "toSource";
+          case Id_constructor:    arity=1; s="constructor";    break;
+          case Id_toString:       arity=0; s="toString";       break;
+          case Id_toLocaleString: arity=0; s="toLocaleString"; break;
+          case Id_valueOf:        arity=0; s="valueOf";        break;
+          case Id_hasOwnProperty: arity=1; s="hasOwnProperty"; break;
+          case Id_propertyIsEnumerable:
+            arity=1; s="propertyIsEnumerable"; break;
+          case Id_isPrototypeOf:  arity=1; s="isPrototypeOf";  break;
+          case Id_toSource:       arity=0; s="toSource";       break;
+          default: throw new IllegalArgumentException(String.valueOf(id));
         }
-        return null;
+        initPrototypeMethod(OBJECT_TAG, id, s, arity);
+    }
+
+    public Object execIdCall(IdFunctionObject f, Context cx, Scriptable scope,
+                             Scriptable thisObj, Object[] args)
+    {
+        if (!f.hasTag(OBJECT_TAG)) {
+            return super.execIdCall(f, cx, scope, thisObj, args);
+        }
+        int id = f.methodId();
+        switch (id) {
+          case Id_constructor: {
+            if (thisObj != null) {
+                // BaseFunction.construct will set up parent, proto
+                return f.construct(cx, scope, args);
+            }
+            if (args.length == 0 || args[0] == null
+                || args[0] == Undefined.instance)
+            {
+                return new NativeObject();
+            }
+            return ScriptRuntime.toObject(cx, scope, args[0]);
+          }
+
+          case Id_toLocaleString: // For now just alias toString
+          case Id_toString: {
+            if (cx.hasFeature(Context.FEATURE_TO_STRING_AS_SOURCE)) {
+                String s = ScriptRuntime.defaultObjectToSource(cx, scope,
+                                                               thisObj, args);
+                int L = s.length();
+                if (L != 0 && s.charAt(0) == '(' && s.charAt(L - 1) == ')') {
+                    // Strip () that surrounds toSource
+                    s = s.substring(1, L - 1);
+                }
+                return s;
+            }
+            return ScriptRuntime.defaultObjectToString(thisObj);
+          }
+
+          case Id_valueOf:
+            return thisObj;
+
+          case Id_hasOwnProperty: {
+            boolean result;
+            if (args.length == 0) {
+                result = false;
+            } else {
+                String s = ScriptRuntime.toStringIdOrIndex(cx, args[0]);
+                if (s == null) {
+                    int index = ScriptRuntime.lastIndexResult(cx);
+                    result = thisObj.has(index, thisObj);
+                } else {
+                    result = thisObj.has(s, thisObj);
+                }
+            }
+            return ScriptRuntime.wrapBoolean(result);
+          }
+
+          case Id_propertyIsEnumerable: {
+            boolean result;
+            if (args.length == 0) {
+                result = false;
+            } else {
+                String s = ScriptRuntime.toStringIdOrIndex(cx, args[0]);
+                if (s == null) {
+                    int index = ScriptRuntime.lastIndexResult(cx);
+                    result = thisObj.has(index, thisObj);
+                    if (result && thisObj instanceof ScriptableObject) {
+                        ScriptableObject so = (ScriptableObject)thisObj;
+                        int attrs = so.getAttributes(index);
+                        result = ((attrs & ScriptableObject.DONTENUM) == 0);
+                    }
+                } else {
+                    result = thisObj.has(s, thisObj);
+                    if (result && thisObj instanceof ScriptableObject) {
+                        ScriptableObject so = (ScriptableObject)thisObj;
+                        int attrs = so.getAttributes(s);
+                        result = ((attrs & ScriptableObject.DONTENUM) == 0);
+                    }
+                }
+            }
+            return ScriptRuntime.wrapBoolean(result);
+          }
+
+          case Id_isPrototypeOf: {
+            boolean result = false;
+            if (args.length != 0 && args[0] instanceof Scriptable) {
+                Scriptable v = (Scriptable) args[0];
+                do {
+                    v = v.getPrototype();
+                    if (v == thisObj) {
+                        result = true;
+                        break;
+                    }
+                } while (v != null);
+            }
+            return ScriptRuntime.wrapBoolean(result);
+          }
+
+          case Id_toSource:
+            return ScriptRuntime.defaultObjectToSource(cx, scope, thisObj,
+                                                       args);
+          default: throw new IllegalArgumentException(String.valueOf(id));
+        }
     }
 
 // #string_id_map#
 
-    protected int mapNameToId(String s)
+    protected int findPrototypeId(String s)
     {
         int id;
 // #generated# Last update: 2003-11-11 01:51:40 CET

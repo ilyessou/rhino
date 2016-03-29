@@ -235,6 +235,28 @@ public class ClassFileWriter {
     }
 
     /**
+     * Add Information about java variable to use when generating the local
+     * variable table.
+     *
+     * @param name variable name.
+     * @param type variable type as bytecode descriptor string.
+     * @param startPC the starting bytecode PC where this variable is live,
+     *                 or -1 if it does not have a Java register.
+     * @param register the Java register number of variable
+     *                 or -1 if it does not have a Java register.
+     */
+    public void addVariableDescriptor(String name, String type, int startPC, int register)
+    {
+        int nameIndex = itsConstantPool.addUtf8(name);
+        int descriptorIndex = itsConstantPool.addUtf8(type);
+        int [] chunk = { nameIndex, descriptorIndex, startPC, register };
+        if (itsVarDescriptors == null) {
+            itsVarDescriptors = new ObjArray();
+        }
+        itsVarDescriptors.add(chunk);
+    }
+
+    /**
      * Add a method and begin adding code.
      *
      * This method must be called before other methods for adding code,
@@ -264,7 +286,7 @@ public class ClassFileWriter {
      * @param vars the array of the variables for the method,
      *        or null if none
      */
-    public void stopMethod(short maxLocals, JavaVariable[] vars) {
+    public void stopMethod(short maxLocals) {
         if (itsCurrentMethod == null)
             throw new IllegalStateException("No method to stop");
 
@@ -281,11 +303,11 @@ public class ClassFileWriter {
         }
 
         int variableTableLength = 0;
-        if (vars != null) {
+        if (itsVarDescriptors != null) {
             // 6 bytes for the attribute header
             // 2 bytes for the variable count
             // 10 bytes for each entry
-            variableTableLength = 6 + 2 + (vars.length * 10);
+            variableTableLength = 6 + 2 + (itsVarDescriptors.size() * 10);
         }
 
         int attrLength = 2 +                    // attribute_name_index
@@ -300,7 +322,7 @@ public class ClassFileWriter {
                          lineNumberTableLength +
                          variableTableLength;
 
-        byte codeAttribute[] = new byte[attrLength];
+        byte[] codeAttribute = new byte[attrLength];
         int index = 0;
         int codeAttrIndex = itsConstantPool.addUtf8("Code");
         index = putInt16(codeAttrIndex, codeAttribute, index);
@@ -344,7 +366,7 @@ public class ClassFileWriter {
         int attributeCount = 0;
         if (itsLineNumberTable != null)
             attributeCount++;
-        if (vars != null)
+        if (itsVarDescriptors != null)
             attributeCount++;
         index = putInt16(attributeCount, codeAttribute, index);
 
@@ -360,32 +382,27 @@ public class ClassFileWriter {
             }
         }
 
-        if (vars != null) {
+        if (itsVarDescriptors != null) {
             int variableTableAttrIndex
                     = itsConstantPool.addUtf8("LocalVariableTable");
             index = putInt16(variableTableAttrIndex, codeAttribute, index);
-            int varCount = vars.length;
+            int varCount = itsVarDescriptors.size();
             int tableAttrLength = 2 + (varCount * 10);
             index = putInt32(tableAttrLength, codeAttribute, index);
             index = putInt16(varCount, codeAttribute, index);
             for (int i = 0; i < varCount; i++) {
-                JavaVariable lvar = vars[i];
+                int[] chunk = (int[])itsVarDescriptors.get(i);
+                int nameIndex       = chunk[0];
+                int descriptorIndex = chunk[1];
+                int startPC         = chunk[2];
+                int register        = chunk[3];
+                int length = itsCodeBufferTop - startPC;
 
-                int startPc = lvar.getStartPC();
-                index = putInt16(startPc, codeAttribute, index);
-
-                int length = itsCodeBufferTop - startPc;
+                index = putInt16(startPC, codeAttribute, index);
                 index = putInt16(length, codeAttribute, index);
-
-                int nameIndex = itsConstantPool.addUtf8(lvar.getName());
                 index = putInt16(nameIndex, codeAttribute, index);
-
-                String descriptor = lvar.getTypeDescriptor();
-                int descriptorIndex = itsConstantPool.addUtf8(descriptor);
                 index = putInt16(descriptorIndex, codeAttribute, index);
-
-                int jreg = lvar.getJRegister();
-                index = putInt16(jreg, codeAttribute, index);
+                index = putInt16(register, codeAttribute, index);
             }
         }
 
@@ -400,6 +417,7 @@ public class ClassFileWriter {
         itsStackTop = 0;
         itsLabelTableTop = 0;
         itsFixupTableTop = 0;
+        itsVarDescriptors = null;
     }
 
     /**
@@ -407,7 +425,7 @@ public class ClassFileWriter {
      *
      * @param theOpCode the opcode of the bytecode
      */
-    public void add(byte theOpCode) {
+    public void add(int theOpCode) {
         if (opcodeCount(theOpCode) != 0)
             throw new IllegalArgumentException("Unexpected operands");
         int newStack = itsStackTop + stackChange(theOpCode);
@@ -429,7 +447,7 @@ public class ClassFileWriter {
      * @param theOpCode the opcode of the bytecode
      * @param theOperand the operand of the bytecode
      */
-    public void add(byte theOpCode, int theOperand) {
+    public void add(int theOpCode, int theOperand) {
         if (DEBUGCODE) {
             System.out.println("Add "+bytecodeStr(theOpCode)
                                +", "+Integer.toHexString(theOperand));
@@ -506,7 +524,7 @@ public class ClassFileWriter {
                 if (!(0 <= theOperand && theOperand < 256))
                     throw new IllegalArgumentException("out of range index");
                 addToCodeBuffer(theOpCode);
-                addToCodeBuffer((byte)theOperand);
+                addToCodeBuffer(theOperand);
                 break;
 
             case ByteCode.GETFIELD :
@@ -534,7 +552,7 @@ public class ClassFileWriter {
                     addToCodeInt16(theOperand);
                 } else {
                     addToCodeBuffer(theOpCode);
-                    addToCodeBuffer((byte)theOperand);
+                    addToCodeBuffer(theOperand);
                 }
                 break;
 
@@ -558,7 +576,7 @@ public class ClassFileWriter {
                 }
                 else {
                     addToCodeBuffer(theOpCode);
-                    addToCodeBuffer((byte)theOperand);
+                    addToCodeBuffer(theOperand);
                 }
                 break;
 
@@ -627,7 +645,7 @@ public class ClassFileWriter {
      * @param theOperand1 the first operand of the bytecode
      * @param theOperand2 the second operand of the bytecode
      */
-    public void add(byte theOpCode, int theOperand1, int theOperand2) {
+    public void add(int theOpCode, int theOperand1, int theOperand2) {
         if (DEBUGCODE) {
             System.out.println("Add "+bytecodeStr(theOpCode)
                                +", "+Integer.toHexString(theOperand1)
@@ -651,8 +669,8 @@ public class ClassFileWriter {
             else {
                 addToCodeBuffer(ByteCode.WIDE);
                 addToCodeBuffer(ByteCode.IINC);
-                addToCodeBuffer((byte)theOperand1);
-                addToCodeBuffer((byte)theOperand2);
+                addToCodeBuffer(theOperand1);
+                addToCodeBuffer(theOperand2);
             }
         }
         else if (theOpCode == ByteCode.MULTIANEWARRAY) {
@@ -663,7 +681,7 @@ public class ClassFileWriter {
 
             addToCodeBuffer(ByteCode.MULTIANEWARRAY);
             addToCodeInt16(theOperand1);
-            addToCodeBuffer((byte)theOperand2);
+            addToCodeBuffer(theOperand2);
         }
         else {
             throw new IllegalArgumentException(
@@ -678,7 +696,7 @@ public class ClassFileWriter {
 
     }
 
-    public void add(byte theOpCode, String className) {
+    public void add(int theOpCode, String className) {
         if (DEBUGCODE) {
             System.out.println("Add "+bytecodeStr(theOpCode)
                                +", "+className);
@@ -709,7 +727,7 @@ public class ClassFileWriter {
     }
 
 
-    public void add(byte theOpCode, String className, String fieldName,
+    public void add(int theOpCode, String className, String fieldName,
                     String fieldType)
     {
         if (DEBUGCODE) {
@@ -747,16 +765,7 @@ public class ClassFileWriter {
         }
     }
 
-    /**
-     * @deprecated Use {@link #addInvoke} instead
-     */
-    public void add(byte theOpCode, String className, String methodName,
-                    String parametersType, String returnType)
-    {
-        addInvoke(theOpCode, className, methodName, parametersType+returnType);
-    }
-
-    public void addInvoke(byte theOpCode, String className, String methodName,
+    public void addInvoke(int theOpCode, String className, String methodName,
                           String methodType)
     {
         if (DEBUGCODE) {
@@ -784,8 +793,8 @@ public class ClassFileWriter {
                                                className, methodName,
                                                methodType);
                         addToCodeInt16(ifMethodRefIndex);
-                        addToCodeBuffer((byte)(parameterCount + 1));
-                        addToCodeBuffer((byte)0);
+                        addToCodeBuffer(parameterCount + 1);
+                        addToCodeBuffer(0);
                     }
                     else {
                         short methodRefIndex = itsConstantPool.addMethodRef(
@@ -828,6 +837,11 @@ public class ClassFileWriter {
         } else {
             addLoadConstant(k);
         }
+    }
+
+    public void addPush(boolean k)
+    {
+        add(k ? ByteCode.ICONST_1 : ByteCode.ICONST_0);
     }
 
     /**
@@ -1031,20 +1045,20 @@ public class ClassFileWriter {
         add(ByteCode.ALOAD_0);
     }
 
-    private void xop(byte shortOp, byte op, int local)
+    private void xop(int shortOp, int op, int local)
     {
         switch (local) {
           case 0:
             add(shortOp);
             break;
           case 1:
-            add((byte)(shortOp + 1));
+            add(shortOp + 1);
             break;
           case 2:
-            add((byte)(shortOp + 2));
+            add(shortOp + 2);
             break;
           case 3:
-            add((byte)(shortOp + 3));
+            add(shortOp + 3);
             break;
           default:
             add(op, local);
@@ -1068,7 +1082,7 @@ public class ClassFileWriter {
 
         int N = addReservedCodeSpace(1 + padSize + 4 * (1 + 2 + entryCount));
         int switchStart = N;
-        itsCodeBuffer[N++] = ByteCode.TABLESWITCH;
+        itsCodeBuffer[N++] = (byte)ByteCode.TABLESWITCH;
         while (padSize != 0) {
             itsCodeBuffer[N++] = 0;
             --padSize;
@@ -1129,7 +1143,7 @@ public class ClassFileWriter {
                 switchStart+" is outside a possible range of tableswitch"
                 +" in already generated code");
         }
-        if (!(itsCodeBuffer[switchStart] == ByteCode.TABLESWITCH)) {
+        if ((0xFF & itsCodeBuffer[switchStart]) != ByteCode.TABLESWITCH) {
             throw new IllegalArgumentException(
                 switchStart+" is not offset of tableswitch statement");
         }
@@ -1266,10 +1280,10 @@ public class ClassFileWriter {
         }
     }
 
-    private void addToCodeBuffer(byte b)
+    private void addToCodeBuffer(int b)
     {
         int N = addReservedCodeSpace(1);
-        itsCodeBuffer[N] = b;
+        itsCodeBuffer[N] = (byte)b;
     }
 
     private void addToCodeInt16(int value)
@@ -2269,7 +2283,7 @@ public class ClassFileWriter {
         throw new IllegalArgumentException("Bad opcode: "+opcode);
     }
 */
-    private static String bytecodeStr(byte code)
+    private static String bytecodeStr(int code)
     {
         if (DEBUGSTACK || DEBUGCODE) {
             switch (code) {
@@ -2511,7 +2525,7 @@ public class ClassFileWriter {
     private int itsLineNumberTable[];   // pack start_pc & line_number together
     private int itsLineNumberTableTop;
 
-    private byte itsCodeBuffer[] = new byte[256];
+    private byte[] itsCodeBuffer = new byte[256];
     private int itsCodeBufferTop;
 
     private ConstantPool itsConstantPool;
@@ -2541,6 +2555,7 @@ public class ClassFileWriter {
     private static final int MIN_FIXUP_TABLE_SIZE = 40;
     private long[] itsFixupTable;
     private int itsFixupTableTop;
+    private ObjArray itsVarDescriptors;
 
     private char[] tmpCharBuffer = new char[64];
 }

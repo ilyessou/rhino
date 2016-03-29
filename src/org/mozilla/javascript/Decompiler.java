@@ -112,14 +112,11 @@ public class Decompiler
         return sourceTop;
     }
 
-    int markFunctionStart(int functionType, String name)
+    int markFunctionStart(int functionType)
     {
         int savedOffset = getCurrentOffset();
         addToken(Token.FUNCTION);
         append((char)functionType);
-        if (name.length() != 0) {
-            addName(name);
-        }
         return savedOffset;
     }
 
@@ -145,15 +142,6 @@ public class Decompiler
 
         append((char)token);
         append((char)Token.EOL);
-    }
-
-    void addAssignOp(int op)
-    {
-        if (!(0 <= op && op <= Token.LAST_TOKEN))
-            throw new IllegalArgumentException();
-
-        append((char)Token.ASSIGNOP);
-        append((char)op);
     }
 
     void addName(String str)
@@ -301,11 +289,11 @@ public class Decompiler
         if (length == 0) { return ""; }
 
         int indent = properties.getInt(INITIAL_INDENT_PROP, 0);
-        if (indent < 0) Kit.argBug();
+        if (indent < 0) throw new IllegalArgumentException();
         int indentGap = properties.getInt(INDENT_GAP_PROP, 4);
-        if (indentGap < 0) Kit.argBug();
+        if (indentGap < 0) throw new IllegalArgumentException();
         int caseGap = properties.getInt(CASE_GAP_PROP, 2);
-        if (caseGap < 0) Kit.argBug();
+        if (caseGap < 0) throw new IllegalArgumentException();
 
         StringBuffer result = new StringBuffer();
         boolean justFunctionBody = (0 != (flags & Decompiler.ONLY_BODY_FLAG));
@@ -601,62 +589,58 @@ public class Decompiler
                 result.append(" = ");
                 break;
 
-            case Token.ASSIGNOP:
-                ++i;
-                switch (source.charAt(i)) {
-                case Token.ADD:
-                    result.append(" += ");
-                    break;
+            case Token.ASSIGN_ADD:
+                result.append(" += ");
+                break;
 
-                case Token.SUB:
-                    result.append(" -= ");
-                    break;
+            case Token.ASSIGN_SUB:
+                result.append(" -= ");
+                break;
 
-                case Token.MUL:
-                    result.append(" *= ");
-                    break;
+            case Token.ASSIGN_MUL:
+                result.append(" *= ");
+                break;
 
-                case Token.DIV:
-                    result.append(" /= ");
-                    break;
+            case Token.ASSIGN_DIV:
+                result.append(" /= ");
+                break;
 
-                case Token.MOD:
-                    result.append(" %= ");
-                    break;
+            case Token.ASSIGN_MOD:
+                result.append(" %= ");
+                break;
 
-                case Token.BITOR:
-                    result.append(" |= ");
-                    break;
+            case Token.ASSIGN_BITOR:
+                result.append(" |= ");
+                break;
 
-                case Token.BITXOR:
-                    result.append(" ^= ");
-                    break;
+            case Token.ASSIGN_BITXOR:
+                result.append(" ^= ");
+                break;
 
-                case Token.BITAND:
-                    result.append(" &= ");
-                    break;
+            case Token.ASSIGN_BITAND:
+                result.append(" &= ");
+                break;
 
-                case Token.LSH:
-                    result.append(" <<= ");
-                    break;
+            case Token.ASSIGN_LSH:
+                result.append(" <<= ");
+                break;
 
-                case Token.RSH:
-                    result.append(" >>= ");
-                    break;
+            case Token.ASSIGN_RSH:
+                result.append(" >>= ");
+                break;
 
-                case Token.URSH:
-                    result.append(" >>>= ");
-                    break;
-                }
+            case Token.ASSIGN_URSH:
+                result.append(" >>>= ");
                 break;
 
             case Token.HOOK:
                 result.append(" ? ");
                 break;
 
-            case Token.OBJLIT:
-                // pun OBJLIT to mean colon in objlit property initialization.
-                // this needs to be distinct from COLON in the general case
+            case Token.OBJECTLIT:
+                // pun OBJECTLIT to mean colon in objlit property
+                // initialization.
+                // This needs to be distinct from COLON in the general case
                 // to distinguish from the colon in a ternary... which needs
                 // different spacing.
                 result.append(':');
@@ -789,6 +773,18 @@ public class Decompiler
 
             case Token.MOD:
                 result.append(" % ");
+                break;
+
+            case Token.COLONCOLON:
+                result.append("::");
+                break;
+
+            case Token.DOTDOT:
+                result.append("..");
+                break;
+
+            case Token.XMLATTR:
+                result.append('@');
                 break;
 
             default:

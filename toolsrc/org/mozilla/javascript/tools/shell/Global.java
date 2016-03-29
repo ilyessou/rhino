@@ -53,23 +53,29 @@ import org.mozilla.javascript.serialize.*;
  *
  * @author Norris Boyd
  */
-public class Global extends ImporterTopLevel {
+public class Global extends ImporterTopLevel
+{
+
+    public Global()
+    {
+    }
 
     public Global(Context cx)
     {
+        init(cx);
+    }
+
+    public void init(Context cx)
+    {
         // Define some global functions particular to the shell. Note
         // that these functions are not part of ECMA.
-        super(cx, Main.sealedStdLib);
+        initStandardObjects(cx, Main.sealedStdLib);
         String[] names = { "print", "quit", "version", "load", "help",
                            "loadClass", "defineClass", "spawn", "sync",
                            "serialize", "deserialize", "runCommand",
                            "seal", "readFile", "readUrl" };
-        try {
-            defineFunctionProperties(names, Global.class,
-                                     ScriptableObject.DONTENUM);
-        } catch (PropertyException e) {
-            throw new Error();  // shouldn't occur.
-        }
+        defineFunctionProperties(names, Global.class,
+                                 ScriptableObject.DONTENUM);
 
         // Set up "environment" in the global scope to provide access to the
         // System environment variables.
@@ -80,6 +86,7 @@ public class Global extends ImporterTopLevel {
 
         history = (NativeArray) cx.newArray(this, 0);
         defineProperty("history", history, ScriptableObject.DONTENUM);
+        initialized = true;
     }
 
     /**
@@ -178,15 +185,12 @@ public class Global extends ImporterTopLevel {
      *            during execution of methods of the named class
      * @exception ClassDefinitionException if the format of the
      *            class causes this exception in ScriptableObject.defineClass
-     * @exception PropertyException if the format of the
-     *            class causes this exception in ScriptableObject.defineClass
      * @see org.mozilla.javascript.ScriptableObject#defineClass
      */
     public static void defineClass(Context cx, Scriptable thisObj,
                                    Object[] args, Function funObj)
         throws IllegalAccessException, InstantiationException,
-               InvocationTargetException, ClassDefinitionException,
-               PropertyException
+               InvocationTargetException
     {
         Class clazz = getClass(args);
         ScriptableObject.defineClass(thisObj, clazz);
@@ -207,14 +211,12 @@ public class Global extends ImporterTopLevel {
      *            the named class
      * @exception InvocationTargetException if an exception is thrown
      *            during execution of methods of the named class
-     * @exception JavaScriptException if a JavaScript exception is thrown
-     *            during execution of the compiled script
      * @see org.mozilla.javascript.ScriptableObject#defineClass
      */
     public static void loadClass(Context cx, Scriptable thisObj,
                                  Object[] args, Function funObj)
         throws IllegalAccessException, InstantiationException,
-               InvocationTargetException, JavaScriptException
+               InvocationTargetException
     {
         Class clazz = getClass(args);
         if (!Script.class.isAssignableFrom(clazz)) {
@@ -919,10 +921,11 @@ public class Global extends ImporterTopLevel {
     public InputStream inStream;
     public PrintStream outStream;
     public PrintStream errStream;
+    boolean initialized;
 }
 
 
-class Runner implements Runnable {
+class Runner implements Runnable, ContextAction {
 
     Runner(Scriptable scope, Function func, Object[] args) {
         this.scope = scope;
@@ -935,20 +938,17 @@ class Runner implements Runnable {
         s = script;
     }
 
-    public void run() {
-        Context cx = Main.enterContext();
-        try {
-            if (f != null)
-                f.call(cx, scope, scope, args);
-            else
-                s.exec(cx, scope);
-        } catch (JavaScriptException e) {
-            Context.reportError(ToolErrorReporter.getMessage(
-                "msg.uncaughtJSException",
-                e.getMessage()));
-        } finally {
-            Context.exit();
-        }
+    public void run()
+    {
+        Main.shellContextFactory.call(this);
+    }
+
+    public Object run(Context cx)
+    {
+        if (f != null)
+            return f.call(cx, scope, scope, args);
+        else
+            return s.exec(cx, scope);
     }
 
     private Scriptable scope;

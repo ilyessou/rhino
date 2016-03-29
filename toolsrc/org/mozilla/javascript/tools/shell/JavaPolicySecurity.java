@@ -122,9 +122,10 @@ public class JavaPolicySecurity extends SecurityProxy
         PermissionCollection _statisPermissions;
     }
 
-    public JavaPolicySecurity() {
+    public JavaPolicySecurity()
+    {
         // To trigger error on jdk-1.1 with lazy load
-        new CodeSource(null, null);
+        new CodeSource(null,  (java.security.cert.Certificate[])null);
     }
 
     protected void callProcessFileSecure(final Context cx,
@@ -142,7 +143,8 @@ public class JavaPolicySecurity extends SecurityProxy
         });
     }
 
-    private URL getUrlObj(String url) {
+    private URL getUrlObj(String url)
+    {
         URL urlObj;
         try {
             urlObj = new URL(url);
@@ -166,14 +168,17 @@ public class JavaPolicySecurity extends SecurityProxy
         return urlObj;
     }
 
-    private ProtectionDomain getUrlDomain(URL url) {
-        CodeSource cs = new CodeSource(url, null);
+    private ProtectionDomain getUrlDomain(URL url)
+    {
+        CodeSource cs;
+        cs = new CodeSource(url, (java.security.cert.Certificate[])null);
         PermissionCollection pc = Policy.getPolicy().getPermissions(cs);
         return new ProtectionDomain(cs, pc);
     }
 
     public GeneratedClassLoader
-    createClassLoader(ClassLoader parentLoader, Object securityDomain) {
+    createClassLoader(ClassLoader parentLoader, Object securityDomain)
+    {
         ProtectionDomain domain = (ProtectionDomain)securityDomain;
         return new Loader(parentLoader, domain);
     }
@@ -196,7 +201,6 @@ public class JavaPolicySecurity extends SecurityProxy
                                  final Scriptable scope,
                                  final Scriptable thisObj,
                                  final Object[] args)
-        throws JavaScriptException
     {
         ProtectionDomain staticDomain = (ProtectionDomain)securityDomain;
         // There is no direct way in Java to intersect permitions according
@@ -218,16 +222,12 @@ public class JavaPolicySecurity extends SecurityProxy
         ProtectionDomain[] tmp = { dynamicDomain };
         AccessControlContext restricted = new AccessControlContext(tmp);
 
-        PrivilegedExceptionAction action = new PrivilegedExceptionAction() {
-            public Object run() throws JavaScriptException {
+        PrivilegedAction action = new PrivilegedAction() {
+            public Object run() {
                 return callable.call(cx, scope, thisObj, args);
             }
         };
 
-        try {
-            return AccessController.doPrivileged(action, restricted);
-        }catch (PrivilegedActionException ex) {
-            throw (JavaScriptException)(ex.getException());
-        }
+        return AccessController.doPrivileged(action, restricted);
     }
 }
