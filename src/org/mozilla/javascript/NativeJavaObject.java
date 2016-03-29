@@ -20,6 +20,7 @@
  *
  * Contributor(s): 
  * Norris Boyd
+ * Igor Bukanov
  * Frank Mitchell
  * Mike Shaver
  *
@@ -98,7 +99,13 @@ public class NativeJavaObject implements Scriptable, Wrapper {
     }
     
     public void put(String name, Scriptable start, Object value) {
-        members.put(name, javaObject, value, false);
+        // We could be asked to modify the value of a property in the 
+        // prototype. Since we can't add a property to a Java object,
+        // we modify it in the prototype rather than copy it down.
+        if (prototype == null || members.has(name, false))
+            members.put(this, name, javaObject, value, false);
+        else
+            prototype.put(name, prototype, value);
     }
 
     public void put(int index, Scriptable start, Object value) {
@@ -172,17 +179,17 @@ public class NativeJavaObject implements Scriptable, Wrapper {
             return obj;
         if (Context.useJSObject && jsObjectClass != null && 
             staticType != jsObjectClass && jsObjectClass.isInstance(obj)) 
-            {
-                try {
-                    return jsObjectGetScriptable.invoke(obj, ScriptRuntime.emptyArgs);
-                }
-                catch (InvocationTargetException e) {
-                    // Just abandon conversion from JSObject
-                }
-                catch (IllegalAccessException e) {
-                    // Just abandon conversion from JSObject
-                }
+        {
+            try {
+                return jsObjectGetScriptable.invoke(obj, ScriptRuntime.emptyArgs);
             }
+            catch (InvocationTargetException e) {
+                // Just abandon conversion from JSObject
+            }
+            catch (IllegalAccessException e) {
+                // Just abandon conversion from JSObject
+            }
+        }
         return new NativeJavaObject(scope, obj, staticType);
     }
 
@@ -207,7 +214,7 @@ public class NativeJavaObject implements Scriptable, Wrapper {
     {
         Function f = (Function) converterFunction;
         return f.call(Context.getContext(), f.getParentScope(),
-                      this, new Object[0]);
+                      this, ScriptRuntime.emptyArgs);
     }
 
     Object callConverter(String converterName)
@@ -215,10 +222,7 @@ public class NativeJavaObject implements Scriptable, Wrapper {
     {
         Function converter = getConverter(converterName);
         if (converter == null) {
-            Object[] errArgs = { converterName, javaObject.getClass().getName() };
-            throw Context.reportRuntimeError(
-                    Context.getMessage("msg.java.conversion.implicit_method",
-                                       errArgs));
+            return javaObject.toString();
         }
         return callConverter(converter);
     }
@@ -236,8 +240,7 @@ public class NativeJavaObject implements Scriptable, Wrapper {
         } catch (JavaScriptException jse) {
             // fall through to error message
         }
-        throw Context.reportRuntimeError(
-            Context.getMessage("msg.default.value", null));
+        throw Context.reportRuntimeError0("msg.default.value");
     }
 
 
@@ -381,8 +384,8 @@ public class NativeJavaObject implements Scriptable, Wrapper {
             }
             else {
                 Object javaObj = fromObj;
-                if (javaObj instanceof NativeJavaObject) {
-                    javaObj = ((NativeJavaObject)javaObj).unwrap();
+                if (javaObj instanceof Wrapper) {
+                    javaObj = ((Wrapper)javaObj).unwrap();
                 }
                 if (to.isInstance(javaObj)) {
                     result = CONVERSION_NONTRIVIAL;
@@ -666,6 +669,12 @@ public class NativeJavaObject implements Scriptable, Wrapper {
 
                 return Result;
             }
+            else if (value instanceof Wrapper) {
+                value = ((Wrapper)value).unwrap();
+                if (type.isInstance(value))
+                    return value;
+                reportConversionError(value, type);
+            }
             else {
                 reportConversionError(value, type);
             }
@@ -875,16 +884,12 @@ public class NativeJavaObject implements Scriptable, Wrapper {
     }
 
     static void reportConversionError(Object value, Class type) {
-        Object[] args = { value.toString(),
-                          NativeJavaMethod.javaSignature(type)
-                        };
-        throw Context.reportRuntimeError(
-            Context.getMessage("msg.conversion.not.allowed", args));
+        throw Context.reportRuntimeError2
+            ("msg.conversion.not.allowed", 
+             value.toString(), NativeJavaMethod.javaSignature(type));
     }
 
     public static void initJSObject() {
-        if (!Context.useJSObject)
-            return;
         // if netscape.javascript.JSObject is in the CLASSPATH, enable JSObject
         // compatability wrappers
         jsObjectClass = null;

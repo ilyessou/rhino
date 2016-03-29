@@ -77,7 +77,7 @@ public class TokenStream {
      */
 
     public final static int
-	// start enum
+    // start enum
         ERROR       = -1, // well-known as the only code < EOF
         EOF         = 0,  // end of file token - (not EOF_CHAR)
         EOL         = 1,  // end of line
@@ -168,47 +168,48 @@ public class TokenStream {
         SETPARENT   = 84,
         SCOPE       = 85,
         GETSCOPEPARENT = 86,
-        JTHROW      = 87,
+        THISFN      = 87,
+        JTHROW      = 88,
         // End of interpreter bytecodes
-        SEMI        = 88,  // semicolon
-        LB          = 89,  // left and right brackets
-        RB          = 90,
-        LC          = 91,  // left and right curlies (braces)
-        RC          = 92,
-        LP          = 93,  // left and right parentheses
-        RP          = 94,
-        COMMA       = 95,  // comma operator
-        ASSIGN      = 96, // assignment ops (= += -= etc.)
-        HOOK        = 97, // conditional (?:)
-        COLON       = 98,
-        OR          = 99, // logical or (||)
-        AND         = 100, // logical and (&&)
-        EQOP        = 101, // equality ops (== !=)
-        RELOP       = 102, // relational ops (< <= > >=)
-        SHOP        = 103, // shift ops (<< >> >>>)
-        UNARYOP     = 104, // unary prefix operator
-        INC         = 105, // increment/decrement (++ --)
-        DEC         = 106,
-        DOT         = 107, // member operator (.)
-        PRIMARY     = 108, // true, false, null, this
-        FUNCTION    = 109, // function keyword
-        EXPORT      = 110, // export keyword
-        IMPORT      = 111, // import keyword
-        IF          = 112, // if keyword
-        ELSE        = 113, // else keyword
-        SWITCH      = 114, // switch keyword
-        CASE        = 115, // case keyword
-        DEFAULT     = 116, // default keyword
-        WHILE       = 117, // while keyword
-        DO          = 118, // do keyword
-        FOR         = 119, // for keyword
-        BREAK       = 120, // break keyword
-        CONTINUE    = 121, // continue keyword
-        VAR         = 122, // var keyword
-        WITH        = 123, // with keyword
-        CATCH       = 124, // catch keyword
-        FINALLY     = 125, // finally keyword
-        RESERVED    = 126, // reserved keywords
+        SEMI        = 89,  // semicolon
+        LB          = 90,  // left and right brackets
+        RB          = 91,
+        LC          = 92,  // left and right curlies (braces)
+        RC          = 93,
+        LP          = 94,  // left and right parentheses
+        RP          = 95,
+        COMMA       = 96,  // comma operator
+        ASSIGN      = 97, // assignment ops (= += -= etc.)
+        HOOK        = 98, // conditional (?:)
+        COLON       = 99,
+        OR          = 100, // logical or (||)
+        AND         = 101, // logical and (&&)
+        EQOP        = 102, // equality ops (== !=)
+        RELOP       = 103, // relational ops (< <= > >=)
+        SHOP        = 104, // shift ops (<< >> >>>)
+        UNARYOP     = 105, // unary prefix operator
+        INC         = 106, // increment/decrement (++ --)
+        DEC         = 107,
+        DOT         = 108, // member operator (.)
+        PRIMARY     = 109, // true, false, null, this
+        FUNCTION    = 110, // function keyword
+        EXPORT      = 111, // export keyword
+        IMPORT      = 112, // import keyword
+        IF          = 113, // if keyword
+        ELSE        = 114, // else keyword
+        SWITCH      = 115, // switch keyword
+        CASE        = 116, // case keyword
+        DEFAULT     = 117, // default keyword
+        WHILE       = 118, // while keyword
+        DO          = 119, // do keyword
+        FOR         = 120, // for keyword
+        BREAK       = 121, // break keyword
+        CONTINUE    = 122, // continue keyword
+        VAR         = 123, // var keyword
+        WITH        = 124, // with keyword
+        CATCH       = 125, // catch keyword
+        FINALLY     = 126, // finally keyword
+        RESERVED    = 127, // reserved keywords
 
         /** Added by Mike - these are JSOPs in the jsref, but I
          * don't have them yet in the java implementation...
@@ -217,41 +218,45 @@ public class TokenStream {
          * Most of these go in the 'op' field when returning
          * more general token types, eg. 'DIV' as the op of 'ASSIGN'.
          */
-        NOP         = 127, // NOP
-        NOT         = 128, // etc.
-        PRE         = 129, // for INC, DEC nodes.
-        POST        = 130,
+        NOP         = 128, // NOP
+        NOT         = 129, // etc.
+        PRE         = 130, // for INC, DEC nodes.
+        POST        = 131,
 
         /**
          * For JSOPs associated with keywords...
          * eg. op = THIS; token = PRIMARY
          */
 
-        VOID        = 131,
+        VOID        = 132,
 
         /* types used for the parse tree - these never get returned
          * by the scanner.
          */
-        BLOCK       = 132, // statement block
-        ARRAYLIT    = 133, // array literal
-        OBJLIT      = 134, // object literal
-        LABEL       = 135, // label
-        TARGET      = 136,
-        LOOP        = 137,
-        ENUMDONE    = 138,
-        EXPRSTMT    = 139,
-        PARENT      = 140,
-        CONVERT     = 141,
-        JSR         = 142,
-        NEWLOCAL    = 143,
-        USELOCAL    = 144,
-        SCRIPT      = 145,   // top-level node for entire script
+        BLOCK       = 133, // statement block
+        ARRAYLIT    = 134, // array literal
+        OBJLIT      = 135, // object literal
+        LABEL       = 136, // label
+        TARGET      = 137,
+        LOOP        = 138,
+        ENUMDONE    = 139,
+        EXPRSTMT    = 140,
+        PARENT      = 141,
+        CONVERT     = 142,
+        JSR         = 143,
+        NEWLOCAL    = 144,
+        USELOCAL    = 145,
+        SCRIPT      = 146,   // top-level node for entire script
         
         /**
          * For the interpreted mode indicating a line number change in icodes.
          */
-        LINE        = 146,
-        SOURCEFILE  = 147;
+        LINE        = 147,
+        SOURCEFILE  = 148,
+        
+        // For debugger
+        
+        BREAKPOINT  = 149;
     // end enum
 
 
@@ -350,6 +355,7 @@ public class TokenStream {
                 "setparent",
                 "scope",
                 "getscopeparent",
+                "thisfn",
                 "jthrow",
                 "semi",
                 "lb",
@@ -451,148 +457,175 @@ public class TokenStream {
         return names == null ? "" : names[type + 1];
     }
 
-    private static java.util.Hashtable keywords;
-
-    static {
-        String[] strings = {
-            "break",
-            "case",
-            "continue",
-            "default",
-            "delete",
-            "do",
-            "else",
-            "export",
-            "false",
-            "for",
-            "function",
-            "if",
-            "in",
-            "new",
-            "null",
-            "return",
-            "switch",
-            "this",
-            "true",
-            "typeof",
-            "var",
-            "void",
-            "while",
-            "with",
-
-            // the following are #ifdef RESERVE_JAVA_KEYWORDS in jsscan.c
-            "abstract",
-            "boolean",
-            "byte",
-            "catch",
-            "char",
-            "class",
-            "const",
-            "debugger",
-            "double",
-            "enum",
-            "extends",
-            "final",
-            "finally",
-            "float",
-            "goto",
-            "implements",
-            "import",
-            "instanceof",
-            "int",
-            "interface",
-            "long",
-            "native",
-            "package",
-            "private",
-            "protected",
-            "public",
-            "short",
-            "static",
-            "super",
-            "synchronized",
-            "throw",
-            "throws",
-            "transient",
-            "try",
-            "volatile"
-        };
-        int[] values = {
-            BREAK,	                // break
-            CASE,	                // case
-            CONTINUE,	                // continue
-            DEFAULT,	                // default
-            DELPROP,	                // delete
-            DO,	                        // do
-            ELSE,	                // else
-            EXPORT,	                // export
-            PRIMARY | (FALSE << 8),	// false
-            FOR,	                // for
-            FUNCTION,	                // function
-            IF,	                        // if
-            RELOP | (IN << 8),	        // in
-            NEW,	                // new
-            PRIMARY | (NULL << 8),	// null
-            RETURN,	                // return
-            SWITCH,	                // switch
-            PRIMARY | (THIS << 8),	// this
-            PRIMARY | (TRUE << 8),	// true
-            UNARYOP | (TYPEOF << 8),	// typeof
-            VAR,	                // var
-            UNARYOP | (VOID << 8),	// void
-            WHILE,	                // while
-            WITH,	                // with
-            RESERVED,	                // abstract
-            RESERVED,	                // boolean
-            RESERVED,	                // byte
-            CATCH,	                // catch
-            RESERVED,	                // char
-            RESERVED,	                // class
-            RESERVED,	                // const
-            RESERVED,	                // debugger
-            RESERVED,	                // double
-            RESERVED,	                // enum
-            RESERVED,	                // extends
-            RESERVED,	                // final
-            FINALLY,	                // finally
-            RESERVED,	                // float
-            RESERVED,	                // goto
-            RESERVED,	                // implements
-            IMPORT,	                // import
-            RELOP | (INSTANCEOF << 8),	// instanceof
-            RESERVED,	                // int
-            RESERVED,	                // interface
-            RESERVED,	                // long
-            RESERVED,	                // native
-            RESERVED,	                // package
-            RESERVED,	                // private
-            RESERVED,	                // protected
-            RESERVED,	                // public
-            RESERVED,	                // short
-            RESERVED,	                // static
-            RESERVED,                   // super
-            RESERVED,	                // synchronized
-            THROW,	                // throw
-            RESERVED,	                // throws
-            RESERVED,	                // transient
-            TRY,	                // try
-            RESERVED	                // volatile
-        };
-        keywords = new java.util.Hashtable(strings.length);
-        Integer res = new Integer(RESERVED);
-        for (int i=0; i < strings.length; i++)
-            keywords.put(strings[i], values[i] == RESERVED
-                                     ? res
-                                     : new Integer(values[i]));
-    }
 
     private int stringToKeyword(String name) {
-        Integer result = (Integer) keywords.get(name);
-        if (result == null)
-            return EOF;
-        int x = result.intValue();
-        this.op = x >> 8;
-        return x & 0xff;
+// #string_id_map#
+// The following assumes that EOF == 0
+        final int    
+            Id_break         = BREAK,
+            Id_case          = CASE,
+            Id_continue      = CONTINUE,
+            Id_default       = DEFAULT,
+            Id_delete        = DELPROP,
+            Id_do            = DO,
+            Id_else          = ELSE,
+            Id_export        = EXPORT,
+            Id_false         = PRIMARY | (FALSE << 8),
+            Id_for           = FOR,
+            Id_function      = FUNCTION,
+            Id_if            = IF,
+            Id_in            = RELOP | (IN << 8),
+            Id_new           = NEW,
+            Id_null          = PRIMARY | (NULL << 8),
+            Id_return        = RETURN,
+            Id_switch        = SWITCH,
+            Id_this          = PRIMARY | (THIS << 8),
+            Id_true          = PRIMARY | (TRUE << 8),
+            Id_typeof        = UNARYOP | (TYPEOF << 8),
+            Id_var           = VAR,
+            Id_void          = UNARYOP | (VOID << 8),
+            Id_while         = WHILE,
+            Id_with          = WITH,
+
+            // the following are #ifdef RESERVE_JAVA_KEYWORDS in jsscan.c
+            Id_abstract      = RESERVED,
+            Id_boolean       = RESERVED,
+            Id_byte          = RESERVED,
+            Id_catch         = CATCH,
+            Id_char          = RESERVED,
+            Id_class         = RESERVED,
+            Id_const         = RESERVED,
+            Id_debugger      = RESERVED,
+            Id_double        = RESERVED,
+            Id_enum          = RESERVED,
+            Id_extends       = RESERVED,
+            Id_final         = RESERVED,
+            Id_finally       = FINALLY,
+            Id_float         = RESERVED,
+            Id_goto          = RESERVED,
+            Id_implements    = RESERVED,
+            Id_import        = IMPORT,
+            Id_instanceof    = RELOP | (INSTANCEOF << 8),
+            Id_int           = RESERVED,
+            Id_interface     = RESERVED,
+            Id_long          = RESERVED,
+            Id_native        = RESERVED,
+            Id_package       = RESERVED,
+            Id_private       = RESERVED,
+            Id_protected     = RESERVED,
+            Id_public        = RESERVED,
+            Id_short         = RESERVED,
+            Id_static        = RESERVED,
+            Id_super         = RESERVED,
+            Id_synchronized  = RESERVED,
+            Id_throw         = THROW,
+            Id_throws        = RESERVED,
+            Id_transient     = RESERVED,
+            Id_try           = TRY,
+            Id_volatile      = RESERVED;
+        
+        int id;
+        String s = name;
+// #generated# Last update: 2001-06-01 17:45:01 CEST
+        L0: { id = 0; String X = null; int c;
+            L: switch (s.length()) {
+            case 2: c=s.charAt(1);
+                if (c=='f') { if (s.charAt(0)=='i') {id=Id_if; break L0;} }
+                else if (c=='n') { if (s.charAt(0)=='i') {id=Id_in; break L0;} }
+                else if (c=='o') { if (s.charAt(0)=='d') {id=Id_do; break L0;} }
+                break L;
+            case 3: switch (s.charAt(0)) {
+                case 'f': if (s.charAt(2)=='r' && s.charAt(1)=='o') {id=Id_for; break L0;} break L;
+                case 'i': if (s.charAt(2)=='t' && s.charAt(1)=='n') {id=Id_int; break L0;} break L;
+                case 'n': if (s.charAt(2)=='w' && s.charAt(1)=='e') {id=Id_new; break L0;} break L;
+                case 't': if (s.charAt(2)=='y' && s.charAt(1)=='r') {id=Id_try; break L0;} break L;
+                case 'v': if (s.charAt(2)=='r' && s.charAt(1)=='a') {id=Id_var; break L0;} break L;
+                } break L;
+            case 4: switch (s.charAt(0)) {
+                case 'b': X="byte";id=Id_byte; break L;
+                case 'c': c=s.charAt(3);
+                    if (c=='e') { if (s.charAt(2)=='s' && s.charAt(1)=='a') {id=Id_case; break L0;} }
+                    else if (c=='r') { if (s.charAt(2)=='a' && s.charAt(1)=='h') {id=Id_char; break L0;} }
+                    break L;
+                case 'e': c=s.charAt(3);
+                    if (c=='e') { if (s.charAt(2)=='s' && s.charAt(1)=='l') {id=Id_else; break L0;} }
+                    else if (c=='m') { if (s.charAt(2)=='u' && s.charAt(1)=='n') {id=Id_enum; break L0;} }
+                    break L;
+                case 'g': X="goto";id=Id_goto; break L;
+                case 'l': X="long";id=Id_long; break L;
+                case 'n': X="null";id=Id_null; break L;
+                case 't': c=s.charAt(3);
+                    if (c=='e') { if (s.charAt(2)=='u' && s.charAt(1)=='r') {id=Id_true; break L0;} }
+                    else if (c=='s') { if (s.charAt(2)=='i' && s.charAt(1)=='h') {id=Id_this; break L0;} }
+                    break L;
+                case 'v': X="void";id=Id_void; break L;
+                case 'w': X="with";id=Id_with; break L;
+                } break L;
+            case 5: switch (s.charAt(2)) {
+                case 'a': X="class";id=Id_class; break L;
+                case 'e': X="break";id=Id_break; break L;
+                case 'i': X="while";id=Id_while; break L;
+                case 'l': X="false";id=Id_false; break L;
+                case 'n': c=s.charAt(0);
+                    if (c=='c') { X="const";id=Id_const; }
+                    else if (c=='f') { X="final";id=Id_final; }
+                    break L;
+                case 'o': c=s.charAt(0);
+                    if (c=='f') { X="float";id=Id_float; }
+                    else if (c=='s') { X="short";id=Id_short; }
+                    break L;
+                case 'p': X="super";id=Id_super; break L;
+                case 'r': X="throw";id=Id_throw; break L;
+                case 't': X="catch";id=Id_catch; break L;
+                } break L;
+            case 6: switch (s.charAt(1)) {
+                case 'a': X="native";id=Id_native; break L;
+                case 'e': c=s.charAt(0);
+                    if (c=='d') { X="delete";id=Id_delete; }
+                    else if (c=='r') { X="return";id=Id_return; }
+                    break L;
+                case 'h': X="throws";id=Id_throws; break L;
+                case 'm': X="import";id=Id_import; break L;
+                case 'o': X="double";id=Id_double; break L;
+                case 't': X="static";id=Id_static; break L;
+                case 'u': X="public";id=Id_public; break L;
+                case 'w': X="switch";id=Id_switch; break L;
+                case 'x': X="export";id=Id_export; break L;
+                case 'y': X="typeof";id=Id_typeof; break L;
+                } break L;
+            case 7: switch (s.charAt(1)) {
+                case 'a': X="package";id=Id_package; break L;
+                case 'e': X="default";id=Id_default; break L;
+                case 'i': X="finally";id=Id_finally; break L;
+                case 'o': X="boolean";id=Id_boolean; break L;
+                case 'r': X="private";id=Id_private; break L;
+                case 'x': X="extends";id=Id_extends; break L;
+                } break L;
+            case 8: switch (s.charAt(0)) {
+                case 'a': X="abstract";id=Id_abstract; break L;
+                case 'c': X="continue";id=Id_continue; break L;
+                case 'd': X="debugger";id=Id_debugger; break L;
+                case 'f': X="function";id=Id_function; break L;
+                case 'v': X="volatile";id=Id_volatile; break L;
+                } break L;
+            case 9: c=s.charAt(0);
+                if (c=='i') { X="interface";id=Id_interface; }
+                else if (c=='p') { X="protected";id=Id_protected; }
+                else if (c=='t') { X="transient";id=Id_transient; }
+                break L;
+            case 10: c=s.charAt(1);
+                if (c=='m') { X="implements";id=Id_implements; }
+                else if (c=='n') { X="instanceof";id=Id_instanceof; }
+                break L;
+            case 12: X="synchronized";id=Id_synchronized; break L;
+            }
+            if (X!=null && X!=s && !X.equals(s)) id = 0;
+        }
+// #/generated#
+// #/string_id_map#
+        if (id == 0) { return EOF; }
+        this.op = id >> 8;
+        return id & 0xff;
     }
 
     public TokenStream(Reader in, Scriptable scope,
@@ -629,10 +662,8 @@ public class TokenStream {
 
     public void ungetToken(int tt) {
         if (this.pushbackToken != EOF && tt != ERROR) {
-            Object[] errArgs = { tokenToString(tt),
-                                 tokenToString(this.pushbackToken) };
-            String message = Context.getMessage("msg.token.replaces.pushback",
-                                                errArgs);
+            String message = Context.getMessage2("msg.token.replaces.pushback",
+                tokenToString(tt), tokenToString(this.pushbackToken));
             throw new RuntimeException(message);
         }
         this.pushbackToken = tt;
@@ -665,16 +696,16 @@ public class TokenStream {
             return false;
 
         for (int i=1; i<length; i++) {
-			char c = s.charAt(i);
+            char c = s.charAt(i);
             if (!Character.isJavaIdentifierPart(c))
-				if (c == '\\')
-					if (! ((i + 5) < length)
-							&& (s.charAt(i + 1) == 'u')
-							&& isXDigit(s.charAt(i + 2))
-							&& isXDigit(s.charAt(i + 3))
-							&& isXDigit(s.charAt(i + 4))
-							&& isXDigit(s.charAt(i + 5)))
-					
+                if (c == '\\')
+                    if (! ((i + 5) < length)
+                            && (s.charAt(i + 1) == 'u')
+                            && 0 <= xDigitToInt(s.charAt(i + 2))
+                            && 0 <= xDigitToInt(s.charAt(i + 3))
+                            && 0 <= xDigitToInt(s.charAt(i + 4))
+                            && 0 <= xDigitToInt(s.charAt(i + 5)))
+                    
                 return false;
         }
 
@@ -690,10 +721,11 @@ public class TokenStream {
         return (c >= '0' && c <= '9');
     }
 
-    static boolean isXDigit(int c) {
-        return ((c >= '0' && c <= '9')
-                || (c >= 'a' && c <= 'f')
-                || (c >= 'A' && c <= 'F'));
+    static int xDigitToInt(int c) {
+        if ('0' <= c && c <= '9') { return c - '0'; }
+        if ('a' <= c && c <= 'f') { return c - ('a' - 10); }
+        if ('A' <= c && c <= 'F') { return c - ('A' - 10); }
+        return -1;
     }
 
     /* As defined in ECMA.  jsscan.c uses C isspace() (which allows
@@ -735,29 +767,29 @@ public class TokenStream {
             return EOF;
 
         // identifier/keyword/instanceof?
-		// watch out for starting with a <backslash>
-		boolean isUnicodeEscapeStart = false;
-		if (c == '\\') {
-			c = in.read();
-			if (c == 'u')
-				isUnicodeEscapeStart = true;
-			else
-				c = '\\';
-			// always unread the 'u' or whatever, we need 
-			// to start the string below at the <backslash>.
-			in.unread();
-		}
+        // watch out for starting with a <backslash>
+        boolean isUnicodeEscapeStart = false;
+        if (c == '\\') {
+            c = in.read();
+            if (c == 'u')
+                isUnicodeEscapeStart = true;
+            else
+                c = '\\';
+            // always unread the 'u' or whatever, we need 
+            // to start the string below at the <backslash>.
+            in.unread();
+        }
         if (isUnicodeEscapeStart ||
-					Character.isJavaIdentifierStart((char)c)) {
+                    Character.isJavaIdentifierStart((char)c)) {
             in.startString();
 
-			boolean containsEscape = isUnicodeEscapeStart;			
-			do {
+            boolean containsEscape = isUnicodeEscapeStart;            
+            do {
                 c = in.read();
-				if (c == '\\') {
-					c = in.read();
-					containsEscape = (c == 'u');
-				}					
+                if (c == '\\') {
+                    c = in.read();
+                    containsEscape = (c == 'u');
+                }                    
             } while (Character.isJavaIdentifierPart((char)c));
             in.unread();
 
@@ -766,52 +798,54 @@ public class TokenStream {
             String str = in.getString();
             // OPT we shouldn't have to make a string (object!) to
             // check if it's a keyword.
-			
-			// strictly speaking we should probably push-back
-			// all the bad characters if the <backslash>uXXXX  
-			// sequence is malformed. But since there isn't a  
-			// correct context(is there?) for a bad Unicode  
-			// escape sequence after an identifier, we can report
-			// an error here.
-			if (containsEscape) {
-				char ca[] = str.toCharArray();
-				StringBuffer x = new StringBuffer();
-				int escStart = str.indexOf("\\u");
-				int start = 0;
-				while (escStart != -1) {
-					x.append(ca, start, escStart);
-					boolean goodEscape = false;
-					if ((escStart + 5) < ca.length) {
-						if (isXDigit(ca[escStart + 2])) {
-							int val = Character.digit(ca[escStart + 2], 16);
-							if (isXDigit(ca[escStart + 3])) {
-								val = (val << 4) | Character.digit(ca[escStart + 3], 16);
-								if (isXDigit(ca[escStart + 4])) {
-									val = (val << 4) | Character.digit(ca[escStart + 4], 16);
-									if (isXDigit(ca[escStart + 5])) {
-										val = (val << 4) | Character.digit(ca[escStart + 5], 16);
-										x.append((char)val);
-										start = escStart + 6;
-										goodEscape = true;
-									}
-								}
-							}
-						}
-					}
-					if (!goodEscape) {
-						reportSyntaxError("msg.invalid.escape", null);
-						return ERROR;
-					}
-					escStart = str.indexOf("\\u", start);
-				}
-				x.append(ca, start, ca.length - start);
-				str = x.toString();
-			}
-			else
-				// Return the corresponding token if it's a keyword
-				if ((result = stringToKeyword(str)) != EOF) {
-				    return result;
-				}
+            
+            // strictly speaking we should probably push-back
+            // all the bad characters if the <backslash>uXXXX  
+            // sequence is malformed. But since there isn't a  
+            // correct context(is there?) for a bad Unicode  
+            // escape sequence after an identifier, we can report
+            // an error here.
+            if (containsEscape) {
+                char ca[] = str.toCharArray();
+                int L = str.length();
+                int destination = 0;
+                for (int i = 0; i != L;) {
+                    c = ca[i];
+                    ++i;
+                    if (c == '\\' && i != L && ca[i] == 'u') {
+                        boolean goodEscape = false;
+                        if (i + 4 < L) {
+                            int val = xDigitToInt(ca[i + 1]);
+                            if (val >= 0) {
+                                val = (val << 4) | xDigitToInt(ca[i + 2]);
+                                if (val >= 0) {
+                                    val = (val << 4) | xDigitToInt(ca[i + 3]);
+                                    if (val >= 0) {
+                                        val = (val << 4) | xDigitToInt(ca[i + 4]);
+                                        if (val >= 0) {
+                                            c = (char)val;
+                                            i += 5;
+                                            goodEscape = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if (!goodEscape) {
+                            reportSyntaxError("msg.invalid.escape", null);
+                            return ERROR;
+                        }
+                    }
+                    ca[destination] = (char)c;
+                    ++destination;
+                }
+                str = new String(ca, 0, destination);
+            }
+            else
+                // Return the corresponding token if it's a keyword
+                if ((result = stringToKeyword(str)) != EOF) {
+                    return result;
+                }
 
             this.string = str;
             return NAME;
@@ -834,39 +868,29 @@ public class TokenStream {
                     // restart the string, losing leading 0x
                     in.startString();
                 } else if (isDigit(c)) {
-                    if (c < '8') {
-                        base = 8;
-                        // Restart the string, losing the leading 0
-                        in.startString();
-                    } else {
-                        /* Checking against c < '8' is non-ECMA, but
-                         * is required to support legacy code; we've
-                         * supported it in the past, and it's likely
-                         * that "08" and "09" are in use in code
-                         * having to do with dates.  So we need to
-                         * support it, which makes our behavior a
-                         * superset of ECMA in this area.  We raise a
-                         * warning if a non-octal digit is
-                         * encountered, then proceed as if it were
-                         * decimal.
-                         */
-                        Object[] errArgs = { String.valueOf((char)c) };
-                        Context.reportWarning
-                            (Context.getMessage("msg.bad.octal.literal",
-                                                errArgs),
-                             getSourceName(), in.getLineno(),
-                             getLine(), getOffset());
-                        // implicitly retain the leading 0
-                    }
-                } else {
-                    // implicitly retain the leading 0
+                    base = 8;
                 }
             }
 
-            while (isXDigit(c)) {
-                if (base < 16 && (isAlpha(c)
-                                  || (base == 8 && c >= '8'))) {
-                    break;
+            while (0 <= xDigitToInt(c)) {
+                if (base < 16) {
+                    if (isAlpha(c))
+                        break;
+                    /*
+                     * We permit 08 and 09 as decimal numbers, which
+                     * makes our behavior a superset of the ECMA
+                     * numeric grammar.  We might not always be so
+                     * permissive, so we warn about it.
+                     */
+                    if (base == 8 && c >= '8') {
+                        Object[] errArgs = { c == '8' ? "8" : "9" };
+                        Context.reportWarning(
+                            Context.getMessage("msg.bad.octal.literal",
+                                               errArgs),
+                            getSourceName(),
+                            in.getLineno(), getLine(), getOffset());
+                        base = 10;
+                    }
                 }
                 c = in.read();
             }
@@ -1005,76 +1029,66 @@ public class TokenStream {
                             }
                             c = val;
                         } else if (c == 'u') {
-							/*
-							 * Get 4 hex digits; if the u escape is not
-							 * followed by 4 hex digits, use 'u' + the literal
-							 * character sequence that follows.  Do some manual
-							 * match (OK because we're in a string) to avoid
-							 * multi-char match on the underlying stream.
-							 */
-							    int c1, c2, c3, c4;
-
-							    c1 = in.read();
-							    if (!isXDigit(c1)) {
-							        in.unread();
-							        c = 'u';
-							    } else {
-							        val = Character.digit((char) c1, 16);
-							        c2 = in.read();
-							        if (!isXDigit(c2)) {
-							            in.unread();
-							            stringBuf.append('u');
-							            c = c1;
-							        } else {
-							            val = 16 * val
-							                + Character.digit((char) c2, 16);
-							            c3 = in.read();
-							            if (!isXDigit(c3)) {
-							                in.unread();
-							                stringBuf.append('u');
-							                stringBuf.append((char)c1);
-							                c = c2;
-							            } else {
-							                val = 16 * val
-							                    + Character.digit((char) c3, 16);
-							                c4 = in.read();
-							                if (!isXDigit(c4)) {
-							                    in.unread();
-							                    stringBuf.append('u');
-							                    stringBuf.append((char)c1);
-							                    stringBuf.append((char)c2);
-							                    c = c3;
-							                } else {
-							                    // got 4 hex digits! Woo Hoo!
-							                    val = 16 * val
-							                        + Character.digit((char) c4, 16);
-							                    c = val;
-							                }
-							            }
-							        }
-							    }
+                            /*
+                             * Get 4 hex digits; if the u escape is not
+                             * followed by 4 hex digits, use 'u' + the literal
+                             * character sequence that follows.  Do some manual
+                             * match (OK because we're in a string) to avoid
+                             * multi-char match on the underlying stream.
+                             */
+                            int c1 = in.read();
+                            c = xDigitToInt(c1);
+                            if (c < 0) {
+                                in.unread();
+                                c = 'u';
+                            } else {
+                                int c2 = in.read();
+                                c = (c << 4) | xDigitToInt(c2);
+                                if (c < 0) {
+                                    in.unread();
+                                    stringBuf.append('u');
+                                    c = c1;
+                                } else {
+                                    int c3 = in.read();
+                                    c = (c << 4) | xDigitToInt(c3);
+                                    if (c < 0) {
+                                        in.unread();
+                                        stringBuf.append('u');
+                                        stringBuf.append((char)c1);
+                                        c = c2;
+                                    } else {
+                                        int c4 = in.read();
+                                        c = (c << 4) | xDigitToInt(c4);
+                                        if (c < 0) {
+                                            in.unread();
+                                            stringBuf.append('u');
+                                            stringBuf.append((char)c1);
+                                            stringBuf.append((char)c2);
+                                            c = c3;
+                                        } else {
+                                            // got 4 hex digits! Woo Hoo!
+                                        }
+                                    }
+                                }
+                            }
                         } else if (c == 'x') {
                             /* Get 2 hex digits, defaulting to 'x' + literal
                              * sequence, as above.
                              */
-                            int c1, c2;
-
-                            c1 = in.read();
-                            if (!isXDigit(c1)) {
+                            int c1 = in.read();
+                            c = xDigitToInt(c1);
+                            if (c < 0) {
                                 in.unread();
                                 c = 'x';
                             } else {
-                                val = Character.digit((char) c1, 16);
-                                c2 = in.read();
-                                if (!isXDigit(c2)) {
+                                int c2 = in.read();
+                                c = (c << 4) | xDigitToInt(c2);
+                                if (c < 0) {
                                     in.unread();
                                     stringBuf.append('x');
                                     c = c1;
                                 } else {
                                     // got 2 hex digits
-                                    val = 16 * val
-                                        + Character.digit((char) c2, 16);
-                                    c = val;
                                 }
                             }
                         }

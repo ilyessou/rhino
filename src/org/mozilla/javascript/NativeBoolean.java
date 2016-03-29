@@ -20,6 +20,7 @@
  *
  * Contributor(s): 
  * Norris Boyd
+ * Igor Bukanov
  * Mike McCabe
  *
  * Alternatively, the contents of this file may be used under the
@@ -41,7 +42,13 @@ package org.mozilla.javascript;
  * See ECMA 15.6.
  * @author Norris Boyd
  */
-public class NativeBoolean extends ScriptableObject {
+public class NativeBoolean extends IdScriptable {
+
+    public static void init(Context cx, Scriptable scope, boolean sealed) {
+        NativeBoolean obj = new NativeBoolean();
+        obj.prototypeFlag = true;
+        obj.addAsPrototype(MAX_PROTOTYPE_ID, cx, scope, sealed);
+    }
 
     /**
      * Zero-parameter constructor: just used to create Boolean.prototype
@@ -61,32 +68,101 @@ public class NativeBoolean extends ScriptableObject {
         // This is actually non-ECMA, but will be proposed
         // as a change in round 2.
         if (typeHint == ScriptRuntime.BooleanClass)
-	    return booleanValue ? Boolean.TRUE : Boolean.FALSE;
+            return wrap_boolean(booleanValue);
         return super.getDefaultValue(typeHint);
     }
 
-    public static Object jsConstructor(Context cx, Object[] args, 
-                                       Function ctorObj, boolean inNewExpr)
+    public int methodArity(int methodId) {
+        if (prototypeFlag) {
+            if (methodId == Id_constructor) return 1;
+            if (methodId == Id_toString) return 0;
+            if (methodId == Id_valueOf) return 0;
+        }
+        return super.methodArity(methodId);
+    }
+
+    public Object execMethod
+        (int methodId, IdFunction f,
+         Context cx, Scriptable scope, Scriptable thisObj, Object[] args)
+        throws JavaScriptException
     {
-        boolean b = args.length >= 1
-                    ? ScriptRuntime.toBoolean(args[0])
-                    : false;
-    	if (inNewExpr) {
-    	    // new Boolean(val) creates a new boolean object.
-    	    return new NativeBoolean(b);
-    	}
+        if (prototypeFlag) {
+            if (methodId == Id_constructor) {
+                return jsConstructor(args, thisObj == null);
+            }
+            else if (methodId == Id_toString) {
+                return realThis(thisObj, f).jsFunction_toString();
+            }
+            else if (methodId == Id_valueOf) {
+                return wrap_boolean(realThis(thisObj, f).jsFunction_valueOf());
+            }
+        }
 
-    	// Boolean(val) converts val to a boolean.
-    	return b ? Boolean.TRUE : Boolean.FALSE;
+        return super.execMethod(methodId, f, cx, scope, thisObj, args);
     }
 
-    public String jsFunction_toString() {
-	    return booleanValue ? "true" : "false";
+    private NativeBoolean realThis(Scriptable thisObj, IdFunction f) {
+        while (!(thisObj instanceof NativeBoolean)) {
+            thisObj = nextInstanceCheck(thisObj, f, true);
+        }
+        return (NativeBoolean)thisObj;
     }
 
-    public boolean jsFunction_valueOf() {
-	    return booleanValue;
+
+    private Object jsConstructor(Object[] args, boolean inNewExpr) {
+        boolean b = ScriptRuntime.toBoolean(args, 0);
+        if (inNewExpr) {
+            // new Boolean(val) creates a new boolean object.
+            return new NativeBoolean(b);
+        }
+
+        // Boolean(val) converts val to a boolean.
+        return wrap_boolean(b);
     }
+
+    private String jsFunction_toString() {
+        return booleanValue ? "true" : "false";
+    }
+
+    private boolean jsFunction_valueOf() {
+        return booleanValue;
+    }
+
+    protected String getIdName(int id) {
+        if (prototypeFlag) {
+            if (id == Id_constructor) return "constructor";
+            if (id == Id_toString) return "toString";
+            if (id == Id_valueOf) return "valueOf";
+        }
+        return null;        
+    }
+
+// #string_id_map#
+
+    protected int mapNameToId(String s) {
+        if (!prototypeFlag) { return 0; }
+        int id;
+// #generated# Last update: 2001-04-23 10:38:18 CEST
+        L0: { id = 0; String X = null;
+            int s_length = s.length();
+            if (s_length==7) { X="valueOf";id=Id_valueOf; }
+            else if (s_length==8) { X="toString";id=Id_toString; }
+            else if (s_length==11) { X="constructor";id=Id_constructor; }
+            if (X!=null && X!=s && !X.equals(s)) id = 0;
+        }
+// #/generated#
+        return id;
+    }
+
+    private static final int
+        Id_constructor          = 1,
+        Id_toString             = 2,
+        Id_valueOf              = 3,
+        MAX_PROTOTYPE_ID        = 3;
+
+// #/string_id_map#
 
     private boolean booleanValue;
+
+    private boolean prototypeFlag;
 }

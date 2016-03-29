@@ -55,26 +55,24 @@ import java.lang.reflect.*;
 public class NativeJavaMethod extends NativeFunction implements Function {
 
     public NativeJavaMethod() {
-        names = new String[1];
+        this.functionName = null;
     }
 
     public NativeJavaMethod(Method[] methods) {
         this.methods = methods;
-        names = new String[1];
-        names[0] = methods[0].getName();
+        this.functionName = methods[0].getName();
     }
 
     public NativeJavaMethod(Method method, String name) {
         this.methods = new Method[1];
         this.methods[0] = method;
-        names = new String[1];
-        names[0] = name;
+        this.functionName = name;
     }
 
     public void add(Method method) {
-        if (names[0] == null) {
-            names[0] = method.getName();
-        } else if (!names[0].equals(method.getName())) {
+        if (functionName == null) {
+            functionName = method.getName();
+        } else if (!functionName.equals(method.getName())) {
             throw new RuntimeException("internal method name mismatch");
         }                
         // XXX a more intelligent growth algorithm would be nice
@@ -100,8 +98,8 @@ public class NativeJavaMethod extends NativeFunction implements Function {
                 return "string";
             if (ScriptRuntime.NumberClass.isAssignableFrom(type))
                 return "number";
-            if (value instanceof NativeJavaObject) {
-                return ((NativeJavaObject)value).unwrap().getClass().getName();
+            if (value instanceof Wrapper) {
+                return ((Wrapper)value).unwrap().getClass().getName();
             }
             if (value instanceof Scriptable) {
                 if (value instanceof Function)
@@ -155,15 +153,32 @@ public class NativeJavaMethod extends NativeFunction implements Function {
         }
     }
     
+    public String decompile(Context cx, int indent, boolean justbody) {
+        StringBuffer sb = new StringBuffer();
+        if (!justbody) {
+            sb.append("function ");
+            sb.append(getFunctionName());
+            sb.append("() {");
+        }
+        sb.append("/*\n");
+        toString(sb);
+        sb.append(justbody ? "*/\n" : "*/}\n");
+        return sb.toString();
+    }
+    
     public String toString() {
         StringBuffer sb = new StringBuffer();
+        toString(sb);
+        return sb.toString();
+    }
+
+    private void toString(StringBuffer sb) {
         for (int i=0; i < methods.length; i++) {
             sb.append(javaSignature(methods[i].getReturnType()));
             sb.append(' ');
             sb.append(signature(methods[i]));
             sb.append('\n');
         }
-        return sb.toString();
     }
 
     public Object call(Context cx, Scriptable scope, Scriptable thisObj,
@@ -178,11 +193,9 @@ public class NativeJavaMethod extends NativeFunction implements Function {
         Method meth = (Method) findFunction(methods, args);
         if (meth == null) {
             Class c = methods[0].getDeclaringClass();
-            String sig = c.getName() + "." + names[0] + "(" +
+            String sig = c.getName() + "." + functionName + "(" +
                          scriptSignature(args) + ")";
-            Object errArgs[] = { sig };
-            throw Context.reportRuntimeError(
-                Context.getMessage("msg.java.no_such_method", errArgs));
+            throw Context.reportRuntimeError1("msg.java.no_such_method", sig);
         }
 
         // OPT: already retrieved in findFunction, so we should inline that
@@ -198,15 +211,14 @@ public class NativeJavaMethod extends NativeFunction implements Function {
             javaObject = null;  // don't need an object
         } else {
             Scriptable o = thisObj;
-            while (!(o instanceof NativeJavaObject)) {
+            while (!(o instanceof Wrapper)) {
                 o = o.getPrototype();
                 if (o == null) {
-                    Object errArgs[] = { names[0] };
-                    throw Context.reportRuntimeError(
-                        Context.getMessage("msg.nonjava.method", errArgs));
+                    throw Context.reportRuntimeError1(
+                        "msg.nonjava.method", functionName);
                 }
             }
-            javaObject = ((NativeJavaObject) o).unwrap();        
+            javaObject = ((Wrapper) o).unwrap();        
         }
         try {
             if (debug) {

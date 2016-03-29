@@ -23,6 +23,7 @@
  * Norris Boyd
  * Rob Ginda
  * Kurt Westerfeld
+ * Matthias Radestock
  *
  * Alternatively, the contents of this file may be used under the
  * terms of the GNU Public License (the "GPL"), in which case the
@@ -51,49 +52,42 @@ import org.mozilla.javascript.tools.ToolErrorReporter;
  */
 public class Global extends ImporterTopLevel {
 
-    /**
-     * Return name of this class, the global object.
-     *
-     * This method must be implemented in all concrete classes
-     * extending ScriptableObject.
-     *
-     * @see org.mozilla.javascript.Scriptable#getClassName
-     */
-    public String getClassName() {
-        return "global";
-    }
-
-    /**
-     * Initialize new SharedGlobal object.
-     */
-    public Global() {
-        Context cx = Context.enter();
-        
-        // Initialize the standard objects (Object, Function, etc.)
-        // This must be done before scripts can be executed.
-        cx.initStandardObjects(this, false);
-		
+    public Global(Context cx) 
+    {
         // Define some global functions particular to the shell. Note
         // that these functions are not part of ECMA.
+        super(cx);
         String[] names = { "print", "quit", "version", "load", "help",
-                           "loadClass", "defineClass", "spawn" };
+                           "loadClass", "defineClass", "spawn", "sync" };
         try {
             defineFunctionProperties(names, Global.class,
-                                     ScriptableObject.DONTENUM);
+                                           ScriptableObject.DONTENUM);
         } catch (PropertyException e) {
-            throw new Error(e.getMessage());
-        } finally {
-            Context.exit();
-        }   
+            throw new Error();  // shouldn't occur.
+        }
+        defineProperty(privateName, this, ScriptableObject.DONTENUM);
+        
+        // Set up "environment" in the global scope to provide access to the
+        // System environment variables.
+        Environment.defineClass(this);
+        Environment environment = new Environment(this);
+        defineProperty("environment", environment,
+                       ScriptableObject.DONTENUM);
+        
+        history = (NativeArray) cx.newArray(this, 0);
+        defineProperty("history", history, ScriptableObject.DONTENUM);
     }
-
+    
     /**
      * Print a help message.
      *
      * This method is defined as a JavaScript function.
      */
-    public static void help(String s) {
-        Main.getOut().println(ToolErrorReporter.getMessage("msg.help"));
+    public static void help(Context cx, Scriptable thisObj,
+                            Object[] args, Function funObj) 
+    {
+        PrintStream out = getInstance(thisObj).getOut();
+        out.println(ToolErrorReporter.getMessage("msg.help"));
     }
 
     /**
@@ -108,19 +102,20 @@ public class Global extends ImporterTopLevel {
     public static Object print(Context cx, Scriptable thisObj,
                                Object[] args, Function funObj)
     {
+        PrintStream out = getInstance(thisObj).getOut();
         for (int i=0; i < args.length; i++) {
             if (i > 0)
-                Main.getOut().print(" ");
+                out.print(" ");
 
             // Convert the arbitrary JavaScript value into a string form.
             String s = Context.toString(args[i]);
 
-            Main.getOut().print(s);
+            out.print(s);
         }
-        Main.getOut().println();
+        out.println();
         return Context.getUndefinedValue();
     }
-
+    
     /**
      * Quit the shell.
      *
@@ -132,12 +127,8 @@ public class Global extends ImporterTopLevel {
                             Object[] args, Function funObj)
     {
 
-        Main.global.exitCode = 0;
-        
-        if (args.length > 0)
-            Main.global.exitCode = (int) Context.toNumber(args[0]);
-
-        Main.global.quitting = true;
+        System.exit((args.length > 0) ?
+                    ((int) Context.toNumber(args[0])) : 0);
     }
 
     /**
@@ -166,7 +157,7 @@ public class Global extends ImporterTopLevel {
                             Object[] args, Function funObj)
     {
         for (int i=0; i < args.length; i++) {
-            Main.processSource(cx, cx.toString(args[i]));
+            Main.processFile(cx, thisObj, cx.toString(args[i]));
         }
     }
 
@@ -194,7 +185,7 @@ public class Global extends ImporterTopLevel {
                PropertyException
     {
         Class clazz = getClass(args);
-        ScriptableObject.defineClass(Main.global, clazz);
+        ScriptableObject.defineClass(thisObj, clazz);
     }
 
     /**
@@ -227,7 +218,7 @@ public class Global extends ImporterTopLevel {
                 "msg.must.implement.Script"));
         }
         Script script = (Script) clazz.newInstance();
-        script.exec(cx, Main.global);
+        script.exec(cx, thisObj);
     }
 
     private static Class getClass(Object[] args)
@@ -261,7 +252,7 @@ public class Global extends ImporterTopLevel {
      * js> a
      * 3
      */
-    public static Object spawn(Context cx, Scriptable thisObj, Object[] args, 
+    public static Object spawn(Context cx, Scriptable thisObj, Object[] args,
                                Function funObj)
     {
         Scriptable scope = funObj.getParentScope();
@@ -283,12 +274,75 @@ public class Global extends ImporterTopLevel {
         return thread;
     }
     
-    boolean debug = false;
-    boolean processStdin = true;    
-    boolean quitting;
-    int exitCode = 0;
+    /**
+     * The sync function creates a synchronized function (in the sense
+     * of a Java synchronized method) from an existing function. The
+     * new function synchronizes on the <code>this</code> object of
+     * its invocation.
+     * js> var o = { f : sync(function(x) {
+     *       print("entry");
+     *       Packages.java.lang.Thread.sleep(x*1000);
+     *       print("exit");
+     *     })};
+     * js> spawn(function() {o.f(5);});
+     * Thread[Thread-0,5,main]
+     * entry
+     * js> spawn(function() {o.f(5);});
+     * Thread[Thread-1,5,main]
+     * js>
+     * exit
+     * entry
+     * exit
+     */
+    public static Object sync(Context cx, Scriptable thisObj, Object[] args,
+                               Function funObj)
+    {
+        if (args.length == 1 && args[0] instanceof Function) {
+            return new Synchronizer((Function)args[0]);
+        }
+        else {
+            throw Context.reportRuntimeError(ToolErrorReporter.getMessage(
+                "msg.spawn.args"));
+        }
+    }
+    
+    public InputStream getIn() {
+        return inStream == null ? System.in : inStream;
+    }
+    
+    public void setIn(InputStream in) {
+        inStream = in;
+    }
+
+    public PrintStream getOut() {
+        return outStream == null ? System.out : outStream;
+    }
+    
+    public void setOut(PrintStream out) {
+        outStream = out;
+    }
+
+    public PrintStream getErr() { 
+        return errStream == null ? System.err : errStream;
+    }
+
+    public void setErr(PrintStream err) {
+        errStream = err;
+    }
+        
+    static final String privateName = "org.mozilla.javascript.tools.shell.Global private";
+    
+    public static Global getInstance(Scriptable scope) {
+        Object v = ScriptableObject.getProperty(scope,privateName);
+        if (v instanceof Global)
+            return (Global) v;
+        return null;
+    }
+
     NativeArray history;
-    boolean showDebuggerUI = false;
+    public InputStream inStream;
+    public PrintStream outStream;
+    public PrintStream errStream;
 }
 
 

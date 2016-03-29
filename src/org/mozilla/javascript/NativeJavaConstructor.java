@@ -57,8 +57,7 @@ public class NativeJavaConstructor extends NativeFunction implements Function {
 
     public NativeJavaConstructor(Constructor ctor) {
         this.constructor = ctor;
-        names = new String[1];
-        names[0] = "<init>" + NativeJavaMethod.signature(ctor);
+        this.functionName = "<init>" + NativeJavaMethod.signature(ctor);
     }
 
     public Object call(Context cx, Scriptable scope, Scriptable thisObj,
@@ -70,22 +69,9 @@ public class NativeJavaConstructor extends NativeFunction implements Function {
             throw new RuntimeException("No constructor defined for call");
         }
 
-        // Eliminate useless args[0] and unwrap if required
-        for (int i = 0; i < args.length; i++) {
-            if (args[i] instanceof Wrapper) {
-                args[i] = ((Wrapper)args[i]).unwrap();
-            }
-        }
-
         return NativeJavaClass.constructSpecific(cx, scope, 
                                                  this, constructor, args);
     }
-
-    /*
-    public Object getDefaultValue(Class hint) {
-        return this;
-    }
-    */
 
     public String toString() {
         return "[JavaConstructor " + constructor.getName() + "]";

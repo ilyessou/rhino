@@ -102,7 +102,8 @@ class JavaMembers {
             throw new RuntimeException("unexpected IllegalAccessException "+
                                        "accessing Java field");
         } catch (InvocationTargetException e) {
-            throw new WrappedException(e.getTargetException());
+            throw WrappedException.wrapException(
+                JavaScriptException.wrapException(scope, e));
         }
         // Need to wrap the object before we return it.
         scope = ScriptableObject.getTopLevelScope(scope);
@@ -183,8 +184,8 @@ class JavaMembers {
     }
 
 
-    public void put(String name, Object javaObject, Object value,
-                    boolean isStatic)
+    public void put(Scriptable scope, String name, Object javaObject, 
+                    Object value, boolean isStatic)
     {
         Hashtable ht = isStatic ? staticMembers : members;
         Object member = ht.get(name);
@@ -212,7 +213,8 @@ class JavaMembers {
                 throw new RuntimeException("unexpected IllegalAccessException " +
                                            "accessing Java field");
             } catch (InvocationTargetException e) {
-                throw new WrappedException(e.getTargetException());
+                throw WrappedException.wrapException(
+                    JavaScriptException.wrapException(scope, e));
             }
         }
         else {
@@ -220,25 +222,22 @@ class JavaMembers {
             try {
                 field = (Field) member;
                 if (field == null) {
-                    Object[] args = {name};
-                    throw Context.reportRuntimeError(
-                        Context.getMessage("msg.java.internal.private", args));
+                    throw Context.reportRuntimeError1(
+                        "msg.java.internal.private", name);
                 }
-                field.set(javaObject, NativeJavaObject.coerceType(field.getType(),
-                                                                  value));
+                field.set(javaObject,
+                          NativeJavaObject.coerceType(field.getType(), value));
             } catch (ClassCastException e) {
-                Object errArgs[] = { name };
-                throw Context.reportRuntimeError(Context.getMessage
-                                              ("msg.java.method.assign",
-                                              errArgs));
+                throw Context.reportRuntimeError1(
+                    "msg.java.method.assign", name);
             } catch (IllegalAccessException accessEx) {
                 throw new RuntimeException("unexpected IllegalAccessException "+
                                            "accessing Java field");
             } catch (IllegalArgumentException argEx) {
-                Object errArgs[] = { value.getClass().getName(), field,
-                                     javaObject.getClass().getName() };
-                throw Context.reportRuntimeError(Context.getMessage(
-                    "msg.java.internal.field.type", errArgs));
+                throw Context.reportRuntimeError3(
+                    "msg.java.internal.field.type", 
+                    value.getClass().getName(), field,
+                    javaObject.getClass().getName());
             }
         }
     }
@@ -362,12 +361,13 @@ class JavaMembers {
                 
                 // Make the bean property name.
                 String beanPropertyName = nameComponent;
-                if (nameComponent.length() > 1 && 
-                    Character.isUpperCase(nameComponent.charAt(0)) && 
-                    !Character.isUpperCase(nameComponent.charAt(1)))
-                {
-                   beanPropertyName = Character.toLowerCase(nameComponent.charAt(0)) + 
-                                      nameComponent.substring(1);
+                if (Character.isUpperCase(nameComponent.charAt(0))) {
+                    if (nameComponent.length() == 1) {
+                        beanPropertyName = nameComponent.substring(0, 1).toLowerCase();
+                    } else if (!Character.isUpperCase(nameComponent.charAt(1))) {
+                        beanPropertyName = Character.toLowerCase(nameComponent.charAt(0)) + 
+                                           nameComponent.substring(1);
+                    }
                 }
                 
                 // If we already have a member by this name, don't do this
@@ -515,11 +515,8 @@ class JavaMembers {
     }
 
     RuntimeException reportMemberNotFound(String memberName) {
-        Object errArgs[] = { cl.getName(), 
-                             memberName };
-        return Context.reportRuntimeError(
-            Context.getMessage("msg.java.member.not.found",
-                               errArgs));
+        return Context.reportRuntimeError2(
+            "msg.java.member.not.found", cl.getName(), memberName);
     }
 
     static Hashtable classTable = new Hashtable();
@@ -572,9 +569,8 @@ class FieldAndMethods extends NativeJavaMethod {
             rval = field.get(javaObject);
             type = field.getType();
         } catch (IllegalAccessException accEx) {
-            Object[] args = {getName()};
-            throw Context.reportRuntimeError(Context.getMessage
-                                          ("msg.java.internal.private", args));
+            throw Context.reportRuntimeError1(
+                "msg.java.internal.private", getName());
         }
         rval = NativeJavaObject.wrap(this, rval, type);
         if (rval instanceof Scriptable) {

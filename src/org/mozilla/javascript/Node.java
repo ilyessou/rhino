@@ -37,8 +37,6 @@
 
 package org.mozilla.javascript;
 
-import java.util.*;
-
 /**
  * This class implements the root of the intermediate representation.
  *
@@ -276,7 +274,8 @@ public class Node implements Cloneable {
 
         BASE_LINENO_PROP  = 28,
         END_LINENO_PROP   = 29,
-        SPECIALCALL_PROP  = 30;
+        SPECIALCALL_PROP  = 30,
+        DEBUGSOURCE_PROP  = 31;
 
     public static final int    // this value of the ISNUMBER_PROP specifies
         BOTH = 0,               // which of the children are Number types
@@ -302,7 +301,6 @@ public class Node implements Cloneable {
                 "vars",
                 "uses",
                 "regexp",
-                "switches",
                 "cases",
                 "default",
                 "casearray",
@@ -330,16 +328,32 @@ public class Node implements Cloneable {
     public Object getProp(int propType) {
         if (props == null)
             return null;
-        return props.get(new Integer(propType));
+        return props.getObject(propType);
+    }
+
+    public int getIntProp(int propType, int defaultValue) {
+        if (props == null)
+            return defaultValue;
+        return props.getInt(propType, defaultValue);
+    }
+
+    public int getExistingIntProp(int propType) {
+        return props.getExistingInt(propType);
     }
 
     public void putProp(int propType, Object prop) {
         if (props == null)
-            props = new Hashtable(2);
+            props = new UintMap(2);
         if (prop == null)
-            props.remove(new Integer(propType));
+            props.remove(propType);
         else
-            props.put(new Integer(propType), prop);
+            props.put(propType, prop);
+    }
+
+    public void putIntProp(int propType, int prop) {
+        if (props == null)
+            props = new UintMap(2);
+        props.put(propType, prop);
     }
 
     public Object getDatum() {
@@ -384,7 +398,7 @@ public class Node implements Cloneable {
         if (Context.printTrees) {
             StringBuffer sb = new StringBuffer(TokenStream.tokenToName(type));
             if (type == TokenStream.TARGET) {
-                sb.append(" ");
+                sb.append(' ');
                 sb.append(hashCode());
             }
             if (datum != null) {
@@ -394,15 +408,13 @@ public class Node implements Cloneable {
             if (props == null)
                 return sb.toString();
 
-            Enumeration keys = props.keys();
-            Enumeration elems = props.elements();
-            while (keys.hasMoreElements()) {
-                Integer key = (Integer) keys.nextElement();
-                Object elem = elems.nextElement();
+            int[] keys = props.getKeys();
+            for (int i = 0; i != keys.length; ++i) {
+                int key = keys[i];
                 sb.append(" [");
-                sb.append(propToString(key.intValue()));
+                sb.append(propToString(key));
                 sb.append(": ");
-                switch (key.intValue()) {
+                switch (key) {
                     case FIXUPS_PROP :      // can't add this as it recurses
                         sb.append("fixups property");
                         break;
@@ -416,10 +428,15 @@ public class Node implements Cloneable {
                         sb.append("last use property");
                         break;
                     default :
-                        sb.append(elem.toString());
+                        if (props.isObjectType(key)) {
+                            sb.append(props.getObject(key).toString());
+                        }
+                        else {
+                            sb.append(props.getExistingInt(key));
+                        }
                         break;
                 }
-                sb.append("]");
+                sb.append(']');
             }
             return sb.toString();
         }
@@ -463,7 +480,7 @@ public class Node implements Cloneable {
     protected Node next;        // next sibling
     protected Node first;       // first element of a linked list of children
     protected Node last;        // last element of a linked list of children
-    protected Hashtable props;
+    protected UintMap props;
     protected Object datum;     // encapsulated data; depends on type
 }
 

@@ -63,7 +63,8 @@ public class NodeTransformer {
     }
 
     public Node transform(Node tree, Node enclosing, TokenStream ts,
-                                                    Scriptable scope) {
+                          Scriptable scope) 
+    {
         loops = new Stack();
         loopEnds = new Stack();
         inFunction = tree.getType() == TokenStream.FUNCTION;
@@ -100,12 +101,18 @@ public class NodeTransformer {
                     }
 
                 } else {
-                    if (inFunction) {
-                        // Nested functions require activation  objects.
-                        ((FunctionNode) tree).setRequiresActivation(true);
-                    }
                     FunctionNode fnNode = (FunctionNode)
                                           node.getProp(Node.FUNCTION_PROP);
+                    if (inFunction) {
+                        // Functions containing other functions require 
+                        //  activation objects 
+                        ((FunctionNode) tree).setRequiresActivation(true);
+
+                        // Nested functions must check their 'this' value to
+                        //  insure it is not an activation object:
+                        //  see 10.1.6 Activation Object
+                        fnNode.setCheckThis(true);
+                    }
                     addParameters(fnNode);
                     NodeTransformer inner = newInstance();
                     fnNode = (FunctionNode) 
@@ -132,9 +139,8 @@ public class NodeTransformer {
                     if (n.getType() == TokenStream.LABEL) {
                         String otherId = (String)n.getProp(Node.LABEL_PROP);
                         if (id.equals(otherId)) {
-                            Object[] errArgs = { id };
-                            String message = Context.getMessage("msg.dup.label",
-                                                                errArgs);
+                            String message = Context.getMessage1(
+                                "msg.dup.label", id);
                             reportMessage(Context.getContext(), message, node, 
                                           tree, true, scope);
                             break typeswitch;
@@ -360,8 +366,7 @@ public class NodeTransformer {
                                 ("msg.bad.break", null);
                         }
                     } else if (loop != null) {
-                        message = Context.getMessage("msg.continue.nonloop", 
-                                                     null);
+                        message = Context.getMessage0("msg.continue.nonloop");
                     } else {
                         Object[] errArgs = { id };
                         message = Context.getMessage
@@ -443,12 +448,13 @@ public class NodeTransformer {
                 if (bind == null || bind.getType() != TokenStream.BINDNAME)
                     break;
                 String name = bind.getString();
-                if (name.equals("arguments")) {
+                Context cx = Context.getCurrentContext();
+                if (cx != null && cx.isActivationNeeded(name)) {
                     // use of "arguments" requires an activation object.
                     ((FunctionNode) tree).setRequiresActivation(true);
                 }
                 VariableTable vars = getVariableTable(tree);
-                if (vars.get(name) != null) {
+                if (vars.getVariable(name) != null) {
                     if (type == TokenStream.SETNAME) {
                         node.setType(TokenStream.SETVAR);
                         bind.setType(TokenStream.STRING);
@@ -466,7 +472,8 @@ public class NodeTransformer {
                 if (inFunction) {
                     Node n = node.getFirstChild().getNextSibling();
                     String name = n == null ? "" : n.getString();
-                    if (name.equals("arguments") || 
+                    Context cx = Context.getCurrentContext();
+                    if ((cx != null && cx.isActivationNeeded(name)) ||
                         (name.equals("length") && 
                          Context.getContext().getLanguageVersion() == 
                          Context.VERSION_1_2))
@@ -483,12 +490,13 @@ public class NodeTransformer {
                 if (!inFunction || inWithStatement())
                     break;
                 String name = node.getString();
-                if (name.equals("arguments")) {
+                Context cx = Context.getCurrentContext();
+                if (cx != null && cx.isActivationNeeded(name)) {
                     // Use of "arguments" requires an activation object.
                     ((FunctionNode) tree).setRequiresActivation(true);
                 }
                 VariableTable vars = getVariableTable(tree);
-                if (vars.get(name) != null) {
+                if (vars.getVariable(name) != null) {
                     node.setType(TokenStream.GETVAR);
                 }
                 break;
@@ -509,7 +517,9 @@ public class NodeTransformer {
         while ((node = iterator.nextNode()) != null) {
             int nodeType = node.getType();
             if (inFunction && nodeType == TokenStream.FUNCTION &&
-                node != tree) 
+                node != tree && 
+                ((FunctionNode) node.getProp(Node.FUNCTION_PROP)).getFunctionType() == 
+                    FunctionNode.FUNCTION_EXPRESSION_STATEMENT) 
             {
                 // In a function with both "var x" and "function x",
                 // disregard the var statement, independent of order.
@@ -529,6 +539,26 @@ public class NodeTransformer {
                 if (ht == null || ht.get(n.getString()) == null)
                     vars.addLocal(n.getString());
             }
+        }
+        String name = (String) tree.getDatum();
+        if (inFunction && ((FunctionNode) tree).getFunctionType() ==
+                          FunctionNode.FUNCTION_EXPRESSION &&
+            name != null && name.length() > 0 &&
+            vars.getVariable(name) == null)
+        {
+            // A function expression needs to have its name as a variable
+            // (if it isn't already allocated as a variable). See 
+            // ECMA Ch. 13.  We add code to the beginning of the function
+            // to initialize a local variable of the function's name
+            // to the function value.
+            vars.addLocal(name);
+            Node block = tree.getLastChild();
+            Node setFn = new Node(TokenStream.POP,
+                            new Node(TokenStream.SETVAR,
+                                new Node(TokenStream.STRING, name),
+                                new Node(TokenStream.PRIMARY,
+                                    new Integer(TokenStream.THISFN))));
+            block.addChildrenToFront(setFn);
         }
     }
 
@@ -579,7 +609,9 @@ public class NodeTransformer {
         if (left.getType() == TokenStream.NAME) {
             VariableTable vars = getVariableTable(tree);
             String name = left.getString();
-            if (inFunction && vars.get(name) != null && !inWithStatement()) {
+            if (inFunction && vars.getVariable(name) != null && 
+                !inWithStatement()) 
+            {
                 // call to a var. Transform to Call(GetVar("a"), b, c)
                 left.setType(TokenStream.GETVAR);
                 // fall through to code to add GetParent

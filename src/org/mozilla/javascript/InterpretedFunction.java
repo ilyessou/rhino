@@ -35,34 +35,36 @@
 
 package org.mozilla.javascript;
 
-class InterpretedFunction extends NativeFunction {
+import java.util.*;
+import org.mozilla.javascript.debug.DebuggableScript;
+
+class InterpretedFunction extends NativeFunction implements DebuggableScript {
     
-    InterpretedFunction(InterpreterData theData, Context cx)
+    InterpretedFunction(Context cx,
+                        InterpreterData theData, 
+                        String[] argNames, short argCount)
     {
         itsData = theData;
+        this.argNames = argNames;
+        this.argCount = argCount;
         init(cx);
     }
     
     void init(Context cx)
     {
-// probably too much copying going on from theData to the InterpretedFunction object
-// should pass them as parameters - unless we need them in the data block anyway?
-
-        names = new String[itsData.itsVariableTable.size() + 1];
-        names[0] = itsData.itsName;
-        for (int i = 0; i < itsData.itsVariableTable.size(); i++)
-            names[i + 1] = itsData.itsVariableTable.getName(i);
-        argCount = (short)itsData.itsVariableTable.getParameterCount();
+        functionName = itsData.itsName;
         source = itsData.itsSource;
         nestedFunctions = itsData.itsNestedFunctions;
         if (cx != null)
-            version = (short)cx.getLanguageVersion();   
+            version = (short)cx.getLanguageVersion();
     }
     
     InterpretedFunction(InterpretedFunction theOther,
-                                Scriptable theScope, Context cx)
+                        Scriptable theScope, Context cx)
     {
         itsData = theOther.itsData;
+        this.argNames = theOther.argNames;
+        this.argCount = theOther.argCount;
         itsClosure = theScope;
         init(cx);
     }
@@ -71,17 +73,50 @@ class InterpretedFunction extends NativeFunction {
                        Object[] args)
         throws JavaScriptException
     {            
-        itsData.itsCX = cx;
         if (itsClosure != null)
-        	scope = itsClosure;
+            scope = itsClosure;
         else if (!itsData.itsUseDynamicScope)
             scope = getParentScope();
-        if (itsData.itsNeedsActivation)
+
+        if (itsData.itsCheckThis) 
+            thisObj = ScriptRuntime.getThis(thisObj);
+        
+        if (itsData.itsNeedsActivation) {
             scope = ScriptRuntime.initVarObj(cx, scope, this, thisObj, args);
-        itsData.itsScope = scope;
-        itsData.itsThisObj = thisObj;
-        itsData.itsInArgs = args;
-        return Interpreter.interpret(itsData);
+        }
+        try {
+            return Interpreter.interpret(cx, scope, thisObj, args, this,
+                                         itsData);
+        }
+        finally {
+            if (itsData.itsNeedsActivation) {
+                ScriptRuntime.popActivation(cx);
+            }
+        }
+    }
+    
+    public boolean isFunction() {
+        return true;
+    }
+    
+    public Scriptable getScriptable() {
+        return this;
+    }
+    
+    public String getSourceName() {
+        return itsData.itsSourceFile;
+    }
+    
+    public int[] getLineNumbers() { 
+        return itsData.itsLineNumberTable.getKeys();
+    }
+    
+    public boolean placeBreakpoint(int line) { // XXX throw exn?
+        return itsData.placeBreakpoint(line);
+    }
+    
+    public boolean removeBreakpoint(int line) {
+        return itsData.removeBreakpoint(line);
     }
     
     InterpreterData itsData;

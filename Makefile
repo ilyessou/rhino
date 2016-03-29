@@ -72,7 +72,8 @@ JARS = $(JS_JAR) $(JSTOOLS_JAR)
 DIST_DIR = jsjava
 
 # XXX test this with sj
-JAVAC = javac
+#  JAVAC = mgcj
+JAVAC=javac
 
 # We don't define JFLAGS but we do export it to child
 # builds in case it's defined by the environment.
@@ -81,6 +82,8 @@ JAVAC = javac
 GZIP = gzip
 ZIP = zip
 UNZIP = unzip
+
+# JFLAGS="-O -g:none"
 
 # Shouldn't need to change anything below here.
 
@@ -111,6 +114,11 @@ helpmessage : FORCE
 	@echo
 	@echo 'Define OS_TARGET to "WINNT" to build on Windows NT with GNU make.'
 	@echo
+	@echo 'The make-based build system does not include graphical'
+	@echo 'debugger or Bean Scripting Framework support.  To build with'
+	@echo 'these, use the Ant build tool.'
+	@echo
+	@echo 'Ant is available at http://jakarta.apache.org/ant/'
 
 all : jars examples
 

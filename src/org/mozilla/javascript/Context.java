@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -22,6 +22,7 @@
  *
  * Patrick Beard
  * Norris Boyd
+ * Igor Bukanov
  * Brendan Eich
  * Roger Lawrence
  * Mike McCabe
@@ -49,11 +50,11 @@ import java.beans.*;
 import java.io.*;
 import java.util.Enumeration;
 import java.util.Hashtable;
-import java.util.Vector;
 import java.util.Locale;
 import java.util.ResourceBundle;
 import java.text.MessageFormat;
 import java.lang.reflect.*;
+import org.mozilla.javascript.debug.*;
 
 /**
  * This class represents the runtime context of an executing script.
@@ -81,9 +82,9 @@ import java.lang.reflect.*;
  * @author Brendan Eich
  */
 
-public final class Context {
-    public static String languageVersionProperty = "language version";
-    public static String errorReporterProperty   = "error reporter";
+public class Context {
+    public static final String languageVersionProperty = "language version";
+    public static final String errorReporterProperty   = "error reporter";
     
     /**
      * Create a new Context.
@@ -94,9 +95,7 @@ public final class Context {
      * @see org.mozilla.javascript.Context#enter
      */
     public Context() {
-        setLanguageVersion(VERSION_DEFAULT);
-        this.generatingDebug = true;
-        optimizationLevel = codegenClass != null ? 0 : -1;
+        init();
     }
     
     /**
@@ -107,8 +106,19 @@ public final class Context {
      * @see org.mozilla.javascript.SecuritySupport
      */
     public Context(SecuritySupport securitySupport) {
-        this();
         this.securitySupport = securitySupport;
+        init();
+    }
+    
+    private void init() {
+        setLanguageVersion(VERSION_DEFAULT);
+        optimizationLevel = codegenClass != null ? 0 : -1;
+        Object[] array = contextListeners;
+        if (array != null) {
+            for (int i = array.length; i-- != 0;) {
+                ((ContextListener)array[i]).contextCreated(this);
+            }
+        }
     }
         
     /**
@@ -160,22 +170,29 @@ public final class Context {
             synchronized (current) {
                 current.enterCount++;
             }
-            return current;
         }
-        if (cx != null) {
+        else if (cx != null) {
             synchronized (cx) {
                 if (cx.currentThread == null) {
                     cx.currentThread = t;
                     threadContexts.put(t, cx);
                     cx.enterCount++;
-                    return cx;
                 }
             }
+            current = cx;
         }
+        else {
         current = new Context();
         current.currentThread = t;
         threadContexts.put(t, current);
         current.enterCount = 1;
+        }
+        Object[] array = contextListeners;
+        if (array != null) {
+            for (int i = array.length; i-- != 0;) {
+                ((ContextListener)array[i]).contextEntered(current);
+            }
+        }
         return current;
      }
         
@@ -194,11 +211,21 @@ public final class Context {
      */
     public static void exit() {
         Context cx = getCurrentContext();
+        boolean released = false;
         if (cx != null) {
             synchronized (cx) {
                 if (--cx.enterCount == 0) {
                     threadContexts.remove(cx.currentThread);
                     cx.currentThread = null;
+                    released = true;
+                }
+            }
+            Object[] array = contextListeners;
+            if (array != null) {
+                for (int i = array.length; i-- != 0;) {
+                    ContextListener l = (ContextListener)array[i];
+                    l.contextExited(cx);
+                    if (released) { l.contextReleased(cx); }
                 }
             }
         }
@@ -290,8 +317,9 @@ public final class Context {
      * @param version the version as specified by VERSION_1_0, VERSION_1_1, etc.
      */
     public void setLanguageVersion(int version) {
-        if (listeners != null && version != this.version) {
-            firePropertyChange(languageVersionProperty, 
+        Object[] array = listeners;
+        if (array != null && version != this.version) {
+            firePropertyChangeImpl(array, languageVersionProperty,
                                new Integer(this.version), 
                                new Integer(version));
         }
@@ -315,7 +343,7 @@ public final class Context {
      *         number, and date.
      */
      public String getImplementationVersion() {
-        return "JavaScript-Java 1.5 release 1 2000 03 15";
+        return "Rhino 1.5 release 2 2001 07 27";
      }
 
     /**
@@ -324,9 +352,6 @@ public final class Context {
      * @see org.mozilla.javascript.ErrorReporter
      */
     public ErrorReporter getErrorReporter() {
-        if (debug_errorReporterHook != null) {
-            return debug_errorReporterHook;
-        }
         if (errorReporter == null) {
             errorReporter = new DefaultErrorReporter();
         }
@@ -340,12 +365,11 @@ public final class Context {
      * @see org.mozilla.javascript.ErrorReporter
      */
     public ErrorReporter setErrorReporter(ErrorReporter reporter) {
-        if (null != debug_errorReporterHook)
-            return debug_errorReporterHook.setErrorReporter(reporter);
         ErrorReporter result = errorReporter;
-        if (listeners != null && errorReporter != reporter) {
-            firePropertyChange(errorReporterProperty, errorReporter, 
-                               reporter);
+        Object[] array = listeners;
+        if (array != null && errorReporter != reporter) {
+            firePropertyChangeImpl(array, errorReporterProperty,
+                                   errorReporter, reporter);
         }
         errorReporter = reporter;
         return result;
@@ -383,10 +407,9 @@ public final class Context {
      * @param  listener  the listener
      */
     public void addPropertyChangeListener(PropertyChangeListener listener) {
-        if (listeners == null) {
-            listeners = new ListenerCollection();
+        synchronized (this) {
+            listeners = ListenerArray.add(listeners, listener);
         }    
-        listeners.addListener(listener);
     }
     
     /**
@@ -397,7 +420,9 @@ public final class Context {
      * @param listener  the listener
      */
     public void removePropertyChangeListener(PropertyChangeListener listener) {
-        listeners.removeListener(listener);
+        synchronized (this) {
+            listeners = ListenerArray.remove(listeners, listener);
+        }
     }
     
     /**
@@ -410,16 +435,26 @@ public final class Context {
      * @param  oldValue  the old value
      * @param  newVale   the new value
      */
-    protected void firePropertyChange(String property, Object oldValue,
-                                      Object newValue) {
-            Class listenerClass = java.beans.PropertyChangeListener.class;
-            Object[] listenerList = listeners.getListeners(listenerClass);
-            for(int i = 0; i < listenerList.length; i++) {
-                PropertyChangeListener l = 
-                    (PropertyChangeListener)listenerList[i];    
+    void firePropertyChange(String property, Object oldValue,
+                            Object newValue)
+    {
+        Object[] array = listeners;
+        if (array != null) {
+            firePropertyChangeImpl(array, property, oldValue, newValue);
+        }
+    }
+
+    private void firePropertyChangeImpl(Object[] array, String property,
+                                        Object oldValue, Object newValue)
+    {
+        for (int i = array.length; i-- != 0;) {
+            Object obj = array[i];
+            if (obj instanceof PropertyChangeListener) {
+                PropertyChangeListener l = (PropertyChangeListener)obj;
                 l.propertyChange(new PropertyChangeEvent(
                     this, property, oldValue, newValue));
             }
+    }
     }
                                     
     /**
@@ -518,6 +553,28 @@ public final class Context {
         }
     }
 
+    static EvaluatorException reportRuntimeError0(String messageId) {
+        return reportRuntimeError(getMessage0(messageId));
+    }
+
+    static EvaluatorException reportRuntimeError1
+        (String messageId, Object arg1) 
+    {
+        return reportRuntimeError(getMessage1(messageId, arg1));
+    }
+
+    static EvaluatorException reportRuntimeError2
+        (String messageId, Object arg1, Object arg2) 
+    {
+        return reportRuntimeError(getMessage2(messageId, arg1, arg2));
+    }
+
+    static EvaluatorException reportRuntimeError3
+        (String messageId, Object arg1, Object arg2, Object arg3) 
+    {
+        return reportRuntimeError(getMessage3(messageId, arg1, arg2, arg3));
+    }
+
     /**
      * Report a runtime error using the error reporter for the current thread.
      *
@@ -572,104 +629,78 @@ public final class Context {
      * @return the initialized scope
      * @since 1.4R3
      */
-    public ScriptableObject initStandardObjects(ScriptableObject scope, 
-                                                boolean sealed) 
+    public ScriptableObject initStandardObjects(ScriptableObject scope,
+                                                boolean sealed)
     {
-        final String omj = "org.mozilla.javascript.";
+        if (scope == null)
+            scope = new NativeObject();
+
+        BaseFunction.init(this, scope, sealed);
+        NativeObject.init(this, scope, sealed);
+
+        Scriptable objectProto = ScriptableObject.getObjectPrototype(scope);
+
+        // Function.prototype.__proto__ should be Object.prototype
+        Scriptable functionProto = ScriptableObject.getFunctionPrototype(scope);
+        functionProto.setPrototype(objectProto);
+
+        // Set the prototype of the object passed in if need be
+        if (scope.getPrototype() == null)
+            scope.setPrototype(objectProto);
+
+        // must precede NativeGlobal since it's needed therein
+        NativeError.init(this, scope, sealed);
+        NativeGlobal.init(this, scope, sealed);
+
+        NativeArray.init(this, scope, sealed);
+        NativeString.init(this, scope, sealed);
+        NativeBoolean.init(this, scope, sealed);
+        NativeNumber.init(this, scope, sealed);
+        NativeDate.init(this, scope, sealed);
+        NativeMath.init(this, scope, sealed);
+
+        NativeWith.init(this, scope, sealed);
+        NativeCall.init(this, scope, sealed);
+        NativeScript.init(this, scope, sealed);
+
+        new LazilyLoadedCtor(scope, 
+                             "RegExp",
+                             "org.mozilla.javascript.regexp.NativeRegExp",
+                             sealed);
+
+        // This creates the Packages and java package roots.
+        new LazilyLoadedCtor(scope, 
+                             "Packages",
+                             "org.mozilla.javascript.NativeJavaPackage",
+                             sealed);
+        new LazilyLoadedCtor(scope, 
+                             "java", 
+                             "org.mozilla.javascript.NativeJavaPackage",
+                             sealed);
+        new LazilyLoadedCtor(scope, 
+                             "getClass",
+                             "org.mozilla.javascript.NativeJavaPackage",
+                             sealed);
+ 
+        // Define the JavaAdapter class, allowing it to be overridden.
+        String adapterClass = "org.mozilla.javascript.JavaAdapter";
+        String adapterProperty = "JavaAdapter";
         try {
-            if (scope == null)
-                scope = new NativeObject();
-            ScriptableObject.defineClass(scope, NativeFunction.class, sealed);
-            ScriptableObject.defineClass(scope, NativeObject.class, sealed);
+            adapterClass = System.getProperty(adapterClass, adapterClass);
+            adapterProperty = System.getProperty
+                ("org.mozilla.javascript.JavaAdapterClassName",
+                 adapterProperty);
+        }
+        catch (SecurityException e) {
+            // We may not be allowed to get system properties. Just
+            // use the default adapter in that case.
+        }
 
-            Scriptable objectProto = ScriptableObject.
-                                      getObjectPrototype(scope);
-
-            // Function.prototype.__proto__ should be Object.prototype
-            Scriptable functionProto = ScriptableObject.
-                                        getFunctionPrototype(scope);
-            functionProto.setPrototype(objectProto);
-
-            // Set the prototype of the object passed in if need be
-            if (scope.getPrototype() == null)
-                scope.setPrototype(objectProto);
-            
-            // must precede NativeGlobal since it's needed therein
-            ScriptableObject.defineClass(scope, NativeError.class, sealed);
-            ScriptableObject.defineClass(scope, NativeGlobal.class, sealed);                                     
-
-            String[] classes = { "NativeArray",         "Array",
-                                 "NativeString",        "String",
-                                 "NativeBoolean",       "Boolean",
-                                 "NativeNumber",        "Number",
-                                 "NativeDate",          "Date",
-                                 "NativeMath",          "Math",
-                                 "NativeCall",          "Call",
-                                 "NativeWith",          "With",
-                                 "regexp.NativeRegExp", "RegExp",
-                                 "NativeScript",        "Script",
-                               };
-            for (int i=0; i < classes.length; i+=2) {
-                try {
-                    if (sealed) {
-                        Class c = Class.forName(omj + classes[i]);
-                        ScriptableObject.defineClass(scope, c, sealed);
-                    } else {
-                        String s = omj + classes[i];
-                        new LazilyLoadedCtor(scope, classes[i+1], s, 
-                                             ScriptableObject.DONTENUM);
-                    }
-                } catch (ClassNotFoundException e) {
-                    continue;
-                }
-            }
-            
-            // Define the JavaAdapter class, allowing it to be overridden.
-            String adapterName = "org.mozilla.javascript.JavaAdapter";
-            try {
-                adapterName = System.getProperty(adapterName, adapterName);
-            } catch (SecurityException e) {
-                // We may not be allowed to get system properties. Just
-                // use the default adapter in that case.
-            }
-            try {
-                Class adapterClass = Class.forName(adapterName);
-                ScriptableObject.defineClass(scope, adapterClass, sealed);
-                
-                // This creates the Packages and java package roots.
-                Class c = Class.forName(omj + "NativeJavaPackage");
-                ScriptableObject.defineClass(scope, c, sealed);
-            } catch (ClassNotFoundException e) {
-                // If the class is not found, proceed without it.
-            } catch (SecurityException e) {
-                // Ignore AccessControlExceptions that may occur if a
-                //    SecurityManager is installed:
-                //  java.lang.RuntimePermission createClassLoader
-                //  java.util.PropertyPermission 
-                //        org.mozilla.javascript.JavaAdapter read
-            }
-        }
-        // All of these exceptions should not occur since we are initializing
-        // from known classes
-        catch (IllegalAccessException e) {
-            throw WrappedException.wrapException(e);
-        }
-        catch (InstantiationException e) {
-            throw WrappedException.wrapException(e);
-        }
-        catch (InvocationTargetException e) {
-            throw WrappedException.wrapException(e);
-        }
-        catch (ClassDefinitionException e) {
-            throw WrappedException.wrapException(e);
-        }
-        catch (PropertyException e) {
-            throw WrappedException.wrapException(e);
-        }
+        new LazilyLoadedCtor(scope, adapterProperty, adapterClass, sealed);
 
         return scope;
     }
-
+    
     /**
      * Get the singleton object that represents the JavaScript Undefined value.
      */
@@ -769,7 +800,6 @@ public final class Context {
 
         // Temporarily set error reporter to always be the exception-throwing
         // DefaultErrorReporter.  (This is why the method is synchronized...)
-        DeepErrorReporterHook hook = setErrorReporterHook(null);
         ErrorReporter currentReporter = 
             setErrorReporter(new DefaultErrorReporter());
 
@@ -785,7 +815,6 @@ public final class Context {
         } finally {
             // Restore the old error reporter.
             setErrorReporter(currentReporter);
-            setErrorReporterHook(hook);
         }
         // Return false only if an error occurred as a result of reading past
         // the end of the file, i.e. if the source could be fixed by
@@ -873,7 +902,7 @@ public final class Context {
     {
         NativeScript ns = (NativeScript) script;
         ns.initScript(scope);
-        return ns.decompile(indent, true, false);
+        return ns.decompile(this, indent, false);
     }
 
     /**
@@ -890,8 +919,8 @@ public final class Context {
      * @return a string representing the function source
      */
     public String decompileFunction(Function fun, int indent) {
-        if (fun instanceof NativeFunction)
-            return ((NativeFunction)fun).decompile(indent, true, false);
+        if (fun instanceof BaseFunction)
+            return ((BaseFunction)fun).decompile(this, indent, false);
         else
             return "function " + fun.getClassName() +
                    "() {\n\t[native code]\n}\n";
@@ -911,8 +940,8 @@ public final class Context {
      * @return a string representing the function body source.
      */
     public String decompileFunctionBody(Function fun, int indent) {
-        if (fun instanceof NativeFunction)
-            return ((NativeFunction)fun).decompile(indent, true, true);
+        if (fun instanceof BaseFunction)
+            return ((BaseFunction)fun).decompile(this, indent, true);
         else
             // not sure what the right response here is.  JSRef currently
             // dumps core.
@@ -944,7 +973,7 @@ public final class Context {
     /**
      * Create a new JavaScript object by executing the named constructor.
      *
-     * The call <code>newObject("Foo")</code> is equivalent to
+     * The call <code>newObject(scope, "Foo")</code> is equivalent to
      * evaluating "new Foo()".
      *
      * @param scope the scope to search for the constructor and to evaluate against
@@ -998,13 +1027,11 @@ public final class Context {
     {
         Object ctorVal = ScriptRuntime.getTopLevelProp(scope, constructorName);
         if (ctorVal == Scriptable.NOT_FOUND) {
-            Object[] errArgs = { constructorName };
-            String message = getMessage("msg.ctor.not.found", errArgs);
+            String message = getMessage1("msg.ctor.not.found", constructorName);
             throw new PropertyException(message);
         }
         if (!(ctorVal instanceof Function)) {
-            Object[] errArgs = { constructorName };
-            String message = getMessage("msg.not.ctor", errArgs);
+            String message = getMessage1("msg.not.ctor", constructorName);
             throw new NotAFunctionException(message);
         }
         Function ctor = (Function) ctorVal;
@@ -1173,6 +1200,7 @@ public final class Context {
      * @since 1.3
      */
     public void setGeneratingDebug(boolean generatingDebug) {
+        generatingDebugChanged = true;
         if (generatingDebug)
             setOptimizationLevel(0);
         this.generatingDebug = generatingDebug;
@@ -1309,6 +1337,41 @@ public final class Context {
         if (nameHelper != null)
             nameHelper.setClassOutput(classOutput);
     }
+    
+    /**
+     * Add a Context listener.
+     */
+    public static void addContextListener(ContextListener listener) {
+        synchronized (staticDataLock) {
+            contextListeners = ListenerArray.add(contextListeners, listener);
+        }
+    }
+    
+    /**
+     * Remove a Context listener.
+     * @param listener the listener to remove.
+     */
+    public static void removeContextListener(ContextListener listener) {
+        synchronized (staticDataLock) {
+            contextListeners = ListenerArray.remove(contextListeners, listener);
+        }
+    }
+
+    /**
+     * Set the security support for this context. 
+     * <p> SecuritySupport may only be set if it is currently null.
+     * Otherwise a SecurityException is thrown.
+     * @param supportObj a SecuritySupport object
+     * @throws SecurityException if there is already a SecuritySupport
+     *         object for this Context
+     */
+    public synchronized void setSecuritySupport(SecuritySupport supportObj) {
+        if (securitySupport != null) {
+            throw new SecurityException("Cannot overwrite existing " +
+                                        "SecuritySupport object");
+        }
+        securitySupport = supportObj;
+    }
         
     /**
      * Return true if a security domain is required on calls to
@@ -1402,6 +1465,17 @@ public final class Context {
     }
     
     /**
+     * Remove values from thread-local storage.
+     * @param key the key for the entry to remove.
+     * @since 1.5 release 2
+     */
+    public void removeThreadLocal(Object key) {
+        if (hashtable == null)
+            return;
+        hashtable.remove(key);
+    }    
+    
+    /**
      * Return whether functions are compiled by this context using
      * dynamic scope.
      * <p>
@@ -1447,297 +1521,137 @@ public final class Context {
     public static void setCachingEnabled(boolean cachingEnabled) {
         if (isCachingEnabled && !cachingEnabled) {
             // Caching is being turned off. Empty caches.
-            FunctionObject.methodsCache = null;
             JavaMembers.classTable = new Hashtable();
+            nameHelper.reset();
         }
         isCachingEnabled = cachingEnabled;
+        FunctionObject.setCachingEnabled(cachingEnabled);
     }
     
     /**
+     * Set a WrapHandler for this Context.
+     * <p>
+     * The WrapHandler allows custom object wrapping behavior for 
+     * Java object manipulated with JavaScript.
+     * @see org.mozilla.javascript.WrapHandler
+     * @since 1.5 Release 2 
      */
     public void setWrapHandler(WrapHandler wrapHandler) {
         this.wrapHandler = wrapHandler;
     }
     
+    /**
+     * Return the current WrapHandler, or null if none is defined.
+     * @see org.mozilla.javascript.WrapHandler
+     * @since 1.5 Release 2 
+     */
     public WrapHandler getWrapHandler() {
         return wrapHandler;
     }
-
-    /**** debugger oriented portion of API: CURRENTLY UNSUPPORTED ****/
-
-    /**
-     * Get the current source text hook (for debugging).
-     * <p>
-     * <b>CURRRENTLY UNSUPPORTED.</b>
-     * @return the current hook
-     * @see org.mozilla.javascript.SourceTextManager
-     * @see org.mozilla.javascript.Context#setSourceTextManager
-     * @deprecated
-     */
-    public SourceTextManager getSourceTextManager() {
-        return debug_stm;
-    }
-
-    /**
-     * Set the current source text hook (for debugging).
-     * <p>
-     * <b>CURRRENTLY UNSUPPORTED.</b>
-     * <p>
-     * When using the org.mozilla.javascript.debug system to debug within the
-     * context of a particular embedding if the Context has this hook set
-     * then all parsed JavaScript source will be passed to the hook. In
-     * some embeddings of JavaScript it may be  better to not use this
-     * low level hook and instead have the embedding itself feed the
-     * source text to the SourceTextManager.
-     *
-     * @param debug_stm new hook
-     * @return the previous hook
-     * @see org.mozilla.javascript.SourceTextManager
-     */
-    public SourceTextManager setSourceTextManager(SourceTextManager debug_stm) {
-        SourceTextManager result = this.debug_stm;
-        this.debug_stm = debug_stm;
-        return result;
-    }
-
-    /**
-     * Get the current script hook (for debugging).
-     * <p>
-     * <b>CURRRENTLY UNSUPPORTED.</b>
-     *
-     * @return the current hook
-     * @see org.mozilla.javascript.DeepScriptHook
-     * @see org.mozilla.javascript.Context#setScriptHook
-     */
-    public DeepScriptHook getScriptHook() {
-        return debug_scriptHook;
-    }
-
-    /**
-     * Set the current script hook (for debugging).
-     * <p>
-     * <b>CURRRENTLY UNSUPPORTED.</b>
-     * <p>
-     * At debugLevel >= 3 the script hook is called when
-     * compiled scripts (and functions) are loaded and unloaded.
-     *
-     * @param hook new hook
-     * @return the previous hook
-     * @see org.mozilla.javascript.DeepScriptHook
-     */
-    public DeepScriptHook setScriptHook(DeepScriptHook hook) {
-        DeepScriptHook result = debug_scriptHook;
-        debug_scriptHook = hook;
-        return result;
-    }
-
-    /**
-     * Get the current call hook (for debugging).
-     * <p>
-     * <b>CURRRENTLY UNSUPPORTED.</b>
-     *
-     * @return the current hook
-     * @see org.mozilla.javascript.DeepCallHook
-     * @see org.mozilla.javascript.Context#setCallHook
-     */
-    public DeepCallHook getCallHook() {
-        return debug_callHook;
-    }
-
-    /**
-     * Set the current call hook (for debugging).
-     * <p>
-     * <b>CURRRENTLY UNSUPPORTED.</b>
-     * <p>
-     * At debugLevel >= 3 the call hook is called when
-     * compiled scripts and functions make function calls.
-     *
-     * @param hook new hook
-     * @return the previous hook
-     * @see org.mozilla.javascript.DeepCallHook
-     */
-    public DeepCallHook setCallHook(DeepCallHook hook) {
-        DeepCallHook result = debug_callHook;
-        debug_callHook = hook;
-        return result;
-    }
-
-    /**
-     * Get the current execute hook (for debugging).
-      * <p>
-     * <b>CURRRENTLY UNSUPPORTED.</b>
-    *
-     * @return the current hook
-     * @see org.mozilla.javascript.DeepExecuteHook
-     * @see org.mozilla.javascript.Context#setExecuteHook
-     */
-    public DeepExecuteHook getExecuteHook() {
-        return debug_executeHook;
-    }
-
-    /**
-     * Set the current execute hook (for debugging).
-     * <p>
-     * At debugLevel >= 3 the execute hook is called when
-     * top level compiled scripts (non-functions) are executed.
-     *
-     * @param hook new hook
-     * @return the previous hook
-     * @see org.mozilla.javascript.DeepExecuteHook
-     */
-    public DeepExecuteHook setExecuteHook(DeepExecuteHook hook) {
-        DeepExecuteHook result = debug_executeHook;
-        debug_executeHook = hook;
-        return result;
-    }
-
-    /**
-     * Get the current new object hook (for debugging).
-     * <p>
-     * <b>CURRRENTLY UNSUPPORTED.</b>
-     *
-     * @return the current hook
-     * @see org.mozilla.javascript.DeepNewObjectHook
-     * @see org.mozilla.javascript.Context#setNewObjectHook
-     */
-    public DeepNewObjectHook getNewObjectHook() {
-        return debug_newObjectHook;
-    }
-
-    /**
-     * Set the current new object hook (for debugging).
-     * <p>
-     * <b>CURRRENTLY UNSUPPORTED.</b>
-     * <p>
-     * At debugLevel >= 3 the new object hook is called when
-     * JavaScript objects are created by compiled scripts
-     * and functions; i.e. when constructor functions run.
-     *
-     * @param hook new hook
-     * @return the previous hook
-     * @see org.mozilla.javascript.DeepNewObjectHook
-     */
-    public DeepNewObjectHook setNewObjectHook(DeepNewObjectHook hook) {
-        DeepNewObjectHook result = debug_newObjectHook;
-        debug_newObjectHook = hook;
-        return result;
-    }
-
-    /**
-     * Get the current byte code hook (for debugging).
-     * <p>
-     * <b>CURRRENTLY UNSUPPORTED.</b>
-     *
-     * @return the current hook
-     * @see org.mozilla.javascript.DeepBytecodeHook
-     * @see org.mozilla.javascript.Context#setBytecodeHook
-     */
-    public DeepBytecodeHook getBytecodeHook() {
-        return debug_bytecodeHook;
-    }
-
-    /**
-     * Set the current byte code hook (for debugging).
-     * <p>
-     * <b>CURRRENTLY UNSUPPORTED.</b>
-     * <p>
-     * At debugLevel >= 6 generated scripts and functions
-     * support setting traps and interrupts on a per statement
-     * basis. If a trap or interrupt is encountered while
-     * running in this Context, then this hook is called to
-     * handle it.
-     *
-     * @param hook new hook
-     * @return the previous hook
-     * @see org.mozilla.javascript.DeepBytecodeHook
-     */
-    public DeepBytecodeHook setBytecodeHook(DeepBytecodeHook hook) {
-        DeepBytecodeHook result = debug_bytecodeHook;
-        debug_bytecodeHook = hook;
-        return result;
-    }
-
-    /**
-     * Get the current error reporter hook (for debugging).
-      * <p>
-     * <b>CURRRENTLY UNSUPPORTED.</b>
-    *
-     * @return the current hook
-     * @see org.mozilla.javascript.DeepErrorReporterHook
-     * @see org.mozilla.javascript.Context#setErrorReporter
-     */
-    public DeepErrorReporterHook getErrorReporterHook() {
-        return debug_errorReporterHook;
-    }
-
-    /**
-     * Set the current error reporter hook (for debugging).
-     * <p>
-     * <b>CURRRENTLY UNSUPPORTED.</b>
-     * <p>
-     * This hook allows a debugger to trap error reports before
-     * there are sent to the error reporter. This is not meant to
-     * be used in place of the normal error reporting system.
-     *
-     * @param hook new hook
-     * @return the previous hook
-     * @see org.mozilla.javascript.DeepErrorReporterHook
-     * @see org.mozilla.javascript.ErrorReporter
-     * @see org.mozilla.javascript.Context#setErrorReporter
-     */
-    public DeepErrorReporterHook setErrorReporterHook(DeepErrorReporterHook hook) {
-        DeepErrorReporterHook result = debug_errorReporterHook;
-        debug_errorReporterHook = hook;
-        return result;
-    }
-
-    /**
-     * Get the current debug level (for debugging).
-     * <p>
-     * <b>CURRRENTLY UNSUPPORTED.</b>
-     *
-     * @return the current debug level
-     * @see org.mozilla.javascript.Context#setDebugLevel
-     */
-    public int getDebugLevel() {
-        return debugLevel;
-    }
-
-    /**
-     * Set the current debug level (for debugging).
-     * <p>
-     * <b>CURRRENTLY UNSUPPORTED.</b>
-     * <p>
-     * Set the debug level. Note that a non-zero debug level will
-     * force the optimization level to 0.
-     * <p>
-     * Currently supported debug levels:
-     * <pre>
-     *  debugLevel == 0 - all debug support off (except error reporter hooks)
-     *  debugLevel >= 1 - name of source file stored in NativeFunction
-     *  debugLevel >= 3 - load/unload hooks called
-     *                  - base/end lineno info stored in NativeFunction
-     *                  - call, new object, and execute hooks called
-     *  debugLevel >= 6 - interrupts and traps supported
-     *
-     * </pre>
-     *
-     * @param debugLevel new debugLevel
-     * @return the previous debug level
-     */
-    public int setDebugLevel(int debugLevel) {
-        int result = this.debugLevel;
-        if (debugLevel < 0)
-            debugLevel = 0;
-        else if (debugLevel > 9)
-            debugLevel = 9;
-        if (debugLevel > 0)
-            setOptimizationLevel(0);
-        return result;
+    
+    public DebuggableEngine getDebuggableEngine() {
+        if (debuggableEngine == null)
+            debuggableEngine = new DebuggableEngineImpl(this);
+        return debuggableEngine;
     }
     
-    /********** end of API **********/
+    
+    /**
+     * if hasFeature(FEATURE_NON_ECMA_GET_YEAR) returns true,
+     * Date.prototype.getYear subtructs 1900 only if 1900 <= date < 2000
+     * in deviation with Ecma B.2.4
+     */
+    public static final int FEATURE_NON_ECMA_GET_YEAR = 1;
+    
+    /**
+     * Controls certain aspects of script semantics. 
+     * Should be overwritten to alter default behavior.
+     * @param featureIndex feature index to check
+     * @return true if the <code>featureIndex</code> feature is turned on
+     * @see #FEATURE_NON_ECMA_GET_YEAR
+     */
+    public boolean hasFeature(int featureIndex) {
+        if (featureIndex == FEATURE_NON_ECMA_GET_YEAR) {
+           /*
+            * During the great date rewrite of 1.3, we tried to track the
+            * evolving ECMA standard, which then had a definition of
+            * getYear which always subtracted 1900.  Which we
+            * implemented, not realizing that it was incompatible with
+            * the old behavior...  now, rather than thrash the behavior
+            * yet again, we've decided to leave it with the - 1900
+            * behavior and point people to the getFullYear method.  But
+            * we try to protect existing scripts that have specified a
+            * version...
+            */
+            return (version == Context.VERSION_1_0 
+                    || version == Context.VERSION_1_1
+                    || version == Context.VERSION_1_2);
+        }
+        throw new RuntimeException("Bad feature index: " + featureIndex);
+    }
 
+    /**
+     * Get/Set threshold of executed instructions counter that triggers call to
+     * <code>observeInstructionCount()</code>.
+     * When the threshold is zero, instruction counting is disabled, 
+     * otherwise each time the run-time executes at least the threshold value
+     * of script instructions, <code>observeInstructionCount()</code> will 
+     * be called.
+     */
+    public int getInstructionObserverThreshold() {
+        return instructionThreshold;
+    }
+    
+    public void setInstructionObserverThreshold(int threshold) {
+        instructionThreshold = threshold;
+    }
+    
+    /** 
+     * Allow application to monitor counter of executed script instructions
+     * in Context subclasses.
+     * Run-time calls this when instruction counting is enabled and the counter
+     * reaches limit set by <code>setInstructionObserverThreshold()</code>.
+     * The method is useful to observe long running scripts and if necessary
+     * to terminate them.
+     * @param instructionCount amount of script instruction executed since 
+     * last call to <code>observeInstructionCount</code> 
+     * @throws Error to terminate the script
+     */
+    protected void observeInstructionCount(int instructionCount) {}
+    
+    /********** end of API **********/
+    
+    void pushFrame(DebugFrame frame) {
+        if (frameStack == null)
+            frameStack = new java.util.Stack();
+        frameStack.push(frame);
+    }
+    
+    void popFrame() {
+        frameStack.pop();
+    }
+    
+
+
+    static String getMessage0(String messageId) {
+        return getMessage(messageId, null);
+    }
+
+    static String getMessage1(String messageId, Object arg1) {
+        Object[] arguments = {arg1};
+        return getMessage(messageId, arguments);
+    }
+
+    static String getMessage2(String messageId, Object arg1, Object arg2) {
+        Object[] arguments = {arg1, arg2};
+        return getMessage(messageId, arguments);
+    }
+
+    static String getMessage3
+        (String messageId, Object arg1, Object arg2, Object arg3) {
+        Object[] arguments = {arg1, arg2, arg3};
+        return getMessage(messageId, arguments);
+    }
     /**
      * Internal method that reports an error for missing calls to
      * enter().
@@ -1814,8 +1728,11 @@ public final class Context {
                            boolean returnFunction)
         throws IOException
     {
+        if (debugger != null && in != null) {
+            in = new DebugReader(in);
+        }
         TokenStream ts = new TokenStream(in, scope, sourceName, lineno);
-        return compile(scope, ts, securityDomain, returnFunction);
+        return compile(scope, ts, securityDomain, in, returnFunction);
     }
 
     private static Class codegenClass;
@@ -1838,9 +1755,7 @@ public final class Context {
     }
     
     private Interpreter getCompiler() {
-        if (codegenClass == null) {
-            return new Interpreter();
-        } else {
+        if (codegenClass != null) {
             try {
                 return (Interpreter) codegenClass.newInstance();
             }
@@ -1852,12 +1767,14 @@ public final class Context {
             }
             catch (IllegalAccessException x) {
             }
-            throw new RuntimeException("Malformed optimizer package");
+            // fall through
         }
+        return new Interpreter();
     }
     
     private Object compile(Scriptable scope, TokenStream ts, 
-                           Object securityDomain, boolean returnFunction)
+                           Object securityDomain, Reader in,
+                           boolean returnFunction)
         throws IOException
     {
         Interpreter compiler = optimizationLevel == -1 
@@ -1884,6 +1801,11 @@ public final class Context {
             if (tree == null)
                 return null;
         }
+        
+        if (in instanceof DebugReader) {
+            DebugReader dr = (DebugReader) in;
+            tree.putProp(Node.DEBUGSOURCE_PROP, dr.getSaved());
+        }
 
         Object result = compiler.compile(this, scope, tree, securityDomain,
                                          securitySupport, nameHelper);
@@ -1891,11 +1813,18 @@ public final class Context {
         return errorCount == 0 ? result : null;
     }
 
-    /**
-     * A bit of a hack, but the only way to get filename and line
-     * number from an enclosing frame.
-     */
     static String getSourcePositionFromStack(int[] linep) {
+        Context cx = getCurrentContext();
+        if (cx == null)
+            return null;
+        if (cx.interpreterLine > 0 && cx.interpreterSourceFile != null) {
+            linep[0] = cx.interpreterLine;
+            return cx.interpreterSourceFile;
+        }
+        /**
+         * A bit of a hack, but the only way to get filename and line
+         * number from an enclosing frame.
+         */
         CharArrayWriter writer = new CharArrayWriter();
         RuntimeException re = new RuntimeException();
         re.printStackTrace(new PrintWriter(writer));
@@ -1911,7 +1840,9 @@ public final class Context {
                 open = i;
             else if (c == ')')
                 close = i;
-            else if (c == '\n' && open != -1 && close != -1 && colon != -1) {
+            else if (c == '\n' && open != -1 && close != -1 && colon != -1 && 
+                     open < colon && colon < close) 
+            {
                 String fileStr = s.substring(open + 1, colon);
                 if (fileStr.endsWith(".js")) {
                     String lineStr = s.substring(colon + 1, close);
@@ -1927,12 +1858,6 @@ public final class Context {
             }
         }
 
-        // Not found; so we should try the interpreter data.
-        Context cx = getCurrentContext();
-        if (cx.interpreterLine > 0 && cx.interpreterSourceFile != null) {
-            linep[0] = cx.interpreterLine;
-            return cx.interpreterSourceFile;
-        }
         return null;
     }
 
@@ -1986,39 +1911,97 @@ public final class Context {
         Object result = null;
         if (securitySupport != null) {
             Class[] classes = securitySupport.getClassContext();
-            if (depth != -1) {
-                int depth1 = depth + 1;
-                result = getSecurityDomainFromClass(classes[depth1]);
-            } else {
-                for (int i=1; i < classes.length; i++) {
-                    result = getSecurityDomainFromClass(classes[i]);
-                    if (result != null)
-                        break;
+            if (classes != null) {
+                if (depth != -1) {
+                    int depth1 = depth + 1;
+                    result = getSecurityDomainFromClass(classes[depth1]);
+                } else {
+                    for (int i=1; i < classes.length; i++) {
+                        result = getSecurityDomainFromClass(classes[i]);
+                        if (result != null)
+                            break;
+                    }
                 }
             }
         }
         if (result != null)
             return result;
-        if (requireSecurityDomain)
-            throw new SecurityException("Required security context not found");
+        if (requireSecurityDomain) 
+            checkSecurityDomainRequired();
         return null;
     }
 
     private static boolean requireSecurityDomain = true;
+    private static boolean resourceMissing = false;
+    final static String securityResourceName = 
+        "org.mozilla.javascript.resources.Security";
     static {
-        final String securityResourceName = 
-            "org.mozilla.javascript.resources.Security";
         try {
             ResourceBundle rb = ResourceBundle.getBundle(securityResourceName);
             String s = rb.getString("security.requireSecurityDomain");
             requireSecurityDomain = s.equals("true");
         } catch (java.util.MissingResourceException mre) {
             requireSecurityDomain = true;
+            resourceMissing = true;
         } catch (SecurityException se) {
             requireSecurityDomain = true;
         }   
-    }      
+    }
     
+    final public static void checkSecurityDomainRequired() {
+        if (requireSecurityDomain) {
+            String msg = "Required security context not found";
+            if (resourceMissing) {
+                msg += ". Didn't find properties file at " + 
+                       securityResourceName;
+            }
+            throw new SecurityException(msg);
+        }
+    }
+
+    public boolean isGeneratingDebugChanged() {
+        return generatingDebugChanged;
+    }
+    
+
+    /**
+     * Add a name to the list of names forcing the creation of real
+     * activation objects for functions.
+     *
+     * @param name the name of the object to add to the list
+     */
+    public void addActivationName(String name) {
+        if (activationNames == null) 
+            activationNames = new Hashtable(5);
+        activationNames.put(name, name);
+    }
+
+    /**
+     * Check whether the name is in the list of names of objects
+     * forcing the creation of activation objects.
+     *
+     * @param name the name of the object to test
+     *
+     * @return true if an function activation object is needed.
+     */
+    public boolean isActivationNeeded(String name) {
+        if ("arguments".equals(name))
+            return true;
+        return activationNames != null && activationNames.containsKey(name);
+    }
+
+    /**
+     * Remove a name from the list of names forcing the creation of real
+     * activation objects for functions.
+     *
+     * @param name the name of the object to remove from the list
+     */
+    public void removeActivationName(String name) {
+        if (activationNames != null)
+            activationNames.remove(name);
+    }
+
+
     static final boolean useJSObject = false;
 
     /** 
@@ -2031,7 +2014,6 @@ public final class Context {
     Hashtable iterating;
             
     Object interpreterSecurityDomain;
-    Scriptable ctorScope;
 
     int version;
     int errorCount;
@@ -2044,25 +2026,35 @@ public final class Context {
     private RegExpProxy regExpProxy;
     private Locale locale;
     private boolean generatingDebug;
+    private boolean generatingDebugChanged;
     private boolean generatingSource=true;
     private boolean compileFunctionsWithDynamicScopeFlag;
     private int optimizationLevel;
     WrapHandler wrapHandler;
-    private SourceTextManager debug_stm;
-    private DeepScriptHook debug_scriptHook;
-    private DeepCallHook debug_callHook;
-    private DeepExecuteHook debug_executeHook;
-    private DeepNewObjectHook debug_newObjectHook;
-    private DeepBytecodeHook debug_bytecodeHook;
-    private DeepErrorReporterHook debug_errorReporterHook;
-    // debugging is currently unsupported, leave the code in for now
-    // in case we get a chance to revive it
-    private static final byte debugLevel = 0;
+    Debugger debugger;
+    DebuggableEngine debuggableEngine;
+    boolean inLineStepMode;
+    java.util.Stack frameStack;    
     private int enterCount;
-    private ListenerCollection listeners;
+    private Object[] listeners;
     private Hashtable hashtable;
+
+    /**
+     * This is the list of names of objects forcing the creation of
+     * function activation records.
+     */
+    private Hashtable activationNames;
+
+    // Private lock for static fields to avoid a possibility of denial
+    // of service via synchronized (Context.class) { while (true) {} }
+    private static final Object staticDataLock = new Object();
+    private static Object[] contextListeners;
 
     // For the interpreter to indicate line/source for error reports.
     int interpreterLine;
     String interpreterSourceFile;
+
+    // For instruction counting (interpreter only)
+    int instructionCount;
+    int instructionThreshold;
 }

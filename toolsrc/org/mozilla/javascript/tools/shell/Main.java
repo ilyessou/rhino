@@ -44,14 +44,6 @@ import java.lang.reflect.*;
 import org.mozilla.javascript.*;
 import org.mozilla.javascript.tools.ToolErrorReporter;
 
-/*
-TODO: integrate debugger; make DebugProxy class so that debugger is
-      not required to run the shell.
-import org.mozilla.javascript.debug.ILaunchableDebugger;
-import org.mozilla.javascript.debug.DebugManager;
-import org.mozilla.javascript.debug.SourceTextManagerImpl;
-*/
-
 /**
  * The shell program.
  *
@@ -72,81 +64,48 @@ public class Main {
      */
     public static void main(String args[]) {
         int result = exec(args);
-        System.exit(result);
+        if (result != 0)
+            System.exit(result);
     }
-
+    
     /**
-     *  Execute the given arguments, but don't exit at the end.
+     *  Execute the given arguments, but don't System.exit at the end.
      */
     public static int exec(String args[]) {
         Context cx = Context.enter();
-
-        errorReporter = new ToolErrorReporter(false, getErr());
+        // Create the top-level scope object.
+        global = new Global(cx);
+        errorReporter = new ToolErrorReporter(false, global.getErr());
         cx.setErrorReporter(errorReporter);
-
-        // Create the "global" object where top-level variables will live.
-        global = new Global();
 
         args = processOptions(cx, args);
 
-        // Set up "arguments" in the global scope to contain the command
-        // line arguments after the name of the script to execute
+        int skip = 0;
+        if (fileList.size() == 0 && args.length > 0) {
+            skip = 1;
+            fileList.addElement(args[0]);
+        }
+        if (processStdin)
+            fileList.addElement(null);
+
+        // get the command line arguments after the name of the script,
+        // and define "arguments" array in the top-level object
         Object[] array = args;
         if (args.length > 0) {
-            int length = args.length - 1;
+            int length = args.length - skip;
             array = new Object[length];
-            System.arraycopy(args, 1, array, 0, length);
+            System.arraycopy(args, skip, array, 0, length);
         }
         Scriptable argsObj = cx.newArray(global, array);
         global.defineProperty("arguments", argsObj,
                               ScriptableObject.DONTENUM);
         
-        // Set up "environment" in the global scope to provide access to the
-        // System environment variables.
-        Environment.defineClass(global);
-        Environment environment = new Environment(global);
-        global.defineProperty("environment", environment,
-                              ScriptableObject.DONTENUM);
-        
-        global.history = (NativeArray) cx.newArray(global, 0);
-        global.defineProperty("history", global.history,
-                              ScriptableObject.DONTENUM);
-        
-        /*
-        TODO: enable debugger
-        if (global.debug) {
-
-            global.debug_dm = new DebugManager();
-            global.debug_stm = new SourceTextManagerImpl();
-            global.debug_dm.setSourceTextManager(global.debug_stm);
-            cx.setSourceTextManager(global.debug_stm);
-            global.debug_dm.createdContext(cx);
-
-            if (global.showDebuggerUI) {
-                out.println("Launching JSDebugger...");
-
-                try {
-                    Class clazz = Class.forName(
-                        "org.mozilla.jsdebugging.ifcui.launcher.rhino.LaunchNetscapeJavaScriptDebugger");
-                    ILaunchableDebugger debugger =
-                        (ILaunchableDebugger) clazz.newInstance();
-                    debugger.launch(global.debug_dm, global.debug_stm, false);
-
-                } catch (Exception e) {
-                    // eat it...
-                    out.println(e);
-                    out.println("Failed to launch the JSDebugger");
-                }
-            }
-            out.println("Debug level set to "+cx.getDebugLevel());
+        for (int i=0; i < fileList.size(); i++) {
+            processSource(cx, (String) fileList.get(i));
         }
-        */
-
-        if (global.processStdin)
-            processSource(cx, args.length == 0 ? null : args[0]);
 
         cx.exit();
-        return global.exitCode;
+        return exitCode;
     }
 
     /**
@@ -157,9 +116,9 @@ public class Main {
         for (int i=0; i < args.length; i++) {
             String arg = args[i];
             if (!arg.startsWith("-")) {
+                processStdin = false;
                 String[] result = new String[args.length - i];
-                for (int j=i; j < args.length; j++)
-                    result[j-i] = args[j];
+                System.arraycopy(args, i, result, 0, args.length - i);
                 return result;
             }
             if (arg.equals("-version")) {
@@ -181,7 +140,7 @@ public class Main {
                 continue;
             }
             if (arg.equals("-e")) {
-                global.processStdin = false;
+                processStdin = false;
                 if (++i == args.length)
                     usage(arg);
                 Reader reader = new StringReader(args[i]);
@@ -193,33 +152,10 @@ public class Main {
                 continue;
             }
             if (arg.equals("-f")) {
-                global.processStdin = false;
+                processStdin = false;
                 if (++i == args.length)
                     usage(arg);
-                if (args[i].equals("-"))
-                    global.processStdin = false;
-                processSource(cx, args[i]);
-                continue;
-            }
-            if (false && arg.startsWith("-debug")) {
-
-                int level = 9;
-                if (i+1 < args.length) {
-                    double d = cx.toNumber(args[i+1]);
-                    if (d == d) {
-                        level = (int)d;
-                        i++;
-                    }
-                }
-                if (arg.equals("-debug"))
-                    global.showDebuggerUI = true;
-                else if (arg.equals("-debugQ"))
-                    global.showDebuggerUI = false;
-                else
-                    usage(arg);
-
-                cx.setDebugLevel(level);
-                global.debug = true;
+                fileList.addElement(args[i].equals("-") ? null : args[i]);
                 continue;
             }
             usage(arg);
@@ -243,22 +179,19 @@ public class Main {
      *                 for interactive mode.
      */
     public static void processSource(Context cx, String filename) {
-        SourceTextManager stm = cx.getSourceTextManager();
         if (filename == null || filename.equals("-")) {
             // Use the interpreter for interactive input
             cx.setOptimizationLevel(-1);
             
             BufferedReader in = new BufferedReader
-                (new InputStreamReader(Main.getIn()));
-            if(null != stm)
-                in = new DebugReader(in, stm, "<stdin>");           
+                (new InputStreamReader(global.getIn()));
             int lineno = 1;
             boolean hitEOF = false;
-            while (!hitEOF && !global.quitting) {
+            while (!hitEOF) {
                 int startline = lineno;
                 if (filename == null)
-                    getErr().print("js> ");
-                getErr().flush();
+                    global.getErr().print("js> ");
+                global.getErr().flush();
                 String source = "";
                     
                 // Collect lines of source to compile.
@@ -268,7 +201,7 @@ public class Main {
                         newline = in.readLine();
                     }
                     catch (IOException ioe) {
-                        getErr().println(ioe.toString());
+                        global.getErr().println(ioe.toString());
                         break;
                     }
                     if (newline == null) {
@@ -284,17 +217,33 @@ public class Main {
                 Object result = evaluateReader(cx, global, reader, 
                                                "<stdin>", startline);
                 if (result != cx.getUndefinedValue()) {
-                    getErr().println(cx.toString(result));
+                    try {
+                        global.getErr().println(cx.toString(result));
+                    } catch (EcmaError ee) {
+                        String msg = ToolErrorReporter.getMessage(
+                            "msg.uncaughtJSException", ee.toString());
+                        exitCode = EXITCODE_RUNTIME_ERROR;
+                        if (ee.getSourceName() != null) {
+                            Context.reportError(msg, ee.getSourceName(), 
+                                                ee.getLineNumber(), 
+                                                ee.getLineSource(), 
+                                                ee.getColumnNumber());
+                        } else {
+                            Context.reportError(msg);
+                        }
+                    }
                 }
                 NativeArray h = global.history;
                 h.put((int)h.jsGet_length(), h, source);
-                if (global.quitting) {
-                    // The user executed the quit() function.
-                    break;
-                }
             }
-            getErr().println();
-        } else {
+            global.getErr().println();
+        } else processFile(cx, global, filename);
+        System.gc();
+    }
+    
+    public static void processFile(Context cx, Scriptable scope,
+                                   String filename)
+    {
             Reader in = null;
             try {
                 in = new PushbackReader(new FileReader(filename));
@@ -317,43 +266,40 @@ public class Main {
                     in.close();
                     in = new FileReader(filename);
                 }
-                if (null != stm)
-                    in = new DebugReader(in, stm, filename);           
+                filename = new java.io.File(filename).getCanonicalPath();
             }
             catch (FileNotFoundException ex) {
                 Context.reportError(ToolErrorReporter.getMessage(
                     "msg.couldnt.open",
                     filename));
-                global.exitCode = EXITCODE_FILE_NOT_FOUND;
+                exitCode = EXITCODE_FILE_NOT_FOUND;
                 return;
             } catch (IOException ioe) {
-                getErr().println(ioe.toString());
+                global.getErr().println(ioe.toString());
             }
             
             // Here we evalute the entire contents of the file as
             // a script. Text is printed only if the print() function
             // is called.
-            evaluateReader(cx, global, in, filename, 1);
-        }
-        System.gc();
+            evaluateReader(cx, scope, in, filename, 1);
     }
-    
-    private static Object evaluateReader(Context cx, Scriptable scope, 
-                                         Reader in, String sourceName, 
-                                         int lineno)
+
+    public static Object evaluateReader(Context cx, Scriptable scope, 
+                                        Reader in, String sourceName, 
+                                        int lineno)
     {
         Object result = cx.getUndefinedValue();
         try {
             result = cx.evaluateReader(scope, in, sourceName, lineno, null);
         }
         catch (WrappedException we) {
-            getErr().println(we.getWrappedException().toString());
+            global.getErr().println(we.getWrappedException().toString());
             we.printStackTrace();
         }
         catch (EcmaError ee) {
             String msg = ToolErrorReporter.getMessage(
                 "msg.uncaughtJSException", ee.toString());
-            global.exitCode = EXITCODE_RUNTIME_ERROR;
+            exitCode = EXITCODE_RUNTIME_ERROR;
             if (ee.getSourceName() != null) {
                 Context.reportError(msg, ee.getSourceName(), 
                                     ee.getLineNumber(), 
@@ -365,68 +311,70 @@ public class Main {
         }
         catch (EvaluatorException ee) {
             // Already printed message.
-            global.exitCode = EXITCODE_RUNTIME_ERROR;
+            exitCode = EXITCODE_RUNTIME_ERROR;
         }
         catch (JavaScriptException jse) {
 	    	// Need to propagate ThreadDeath exceptions.
 	    	Object value = jse.getValue();
 	    	if (value instanceof ThreadDeath)
 	    		throw (ThreadDeath) value;
-            global.exitCode = EXITCODE_RUNTIME_ERROR;
+            exitCode = EXITCODE_RUNTIME_ERROR;
             Context.reportError(ToolErrorReporter.getMessage(
                 "msg.uncaughtJSException",
                 jse.getMessage()));
         }
         catch (IOException ioe) {
-            getErr().println(ioe.toString());
+            global.getErr().println(ioe.toString());
         }
         finally {
             try {
                 in.close();
             }
             catch (IOException ioe) {
-                getErr().println(ioe.toString());
+                global.getErr().println(ioe.toString());
             }
         }
         return result;
     }
 
     private static void p(String s) {
-        getOut().println(s);
+        global.getOut().println(s);
+    }
+    
+    public static ScriptableObject getScope() {
+        return global;
     }
 
     public static InputStream getIn() {
-        return inStream == null ? System.in : inStream;
+        return Global.getInstance(global).getIn();
     }
     
-    public static void setIn(InputStream _in) {
-        inStream = _in;
+    public static void setIn(InputStream in) {
+        Global.getInstance(global).setIn(in);
     }
 
     public static PrintStream getOut() {
-        return outStream == null ? System.out : outStream;
+        return Global.getInstance(global).getOut();
     }
     
-    public static void setOut(PrintStream _out) {
-        outStream = _out;
+    public static void setOut(PrintStream out) {
+        Global.getInstance(global).setOut(out);
     }
 
     public static PrintStream getErr() { 
-        return errStream == null ? System.err : errStream;
+        return Global.getInstance(global).getErr();
     }
 
-    public static void setErr(PrintStream _err) {
-        errStream = _err;
+    public static void setErr(PrintStream err) {
+        Global.getInstance(global).setErr(err);
     }
-    
+
     static protected ToolErrorReporter errorReporter;
     static protected Global global;
-    static public InputStream inStream;
-    static public PrintStream outStream;
-    static public PrintStream errStream;
+    static protected int exitCode = 0;
     static private final int EXITCODE_RUNTIME_ERROR = 3;
     static private final int EXITCODE_FILE_NOT_FOUND = 4;
-    
-    SourceTextManager debug_stm;
-    //DebugManager debug_dm; // TODO: enable debugger
+    //static private DebugShell debugShell;
+    static boolean processStdin = true;
+    static Vector fileList = new Vector(5);
 }

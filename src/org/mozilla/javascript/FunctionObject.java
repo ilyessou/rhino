@@ -20,6 +20,8 @@
  *
  * Contributor(s): 
  * Norris Boyd
+ * Igor Bukanov
+ * David C. Navas
  * Ted Neward
  *
  * Alternatively, the contents of this file may be used under the
@@ -38,9 +40,12 @@
 
 package org.mozilla.javascript;
 
-import java.util.Hashtable;
 import java.util.Vector;
-import java.lang.reflect.*;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Member;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
+import java.lang.reflect.InvocationTargetException;
 
 public class FunctionObject extends NativeFunction {
 
@@ -123,8 +128,7 @@ public class FunctionObject extends NativeFunction {
             types = method.getParameterTypes();
             methodName = method.getName();
         }
-        String myNames[] = { name };
-        super.names = myNames;
+        this.functionName = name;
         int length;
         if (types.length == 4 && (types[1].isArray() || types[2].isArray())) {
             // Either variable args or an error.
@@ -135,10 +139,8 @@ public class FunctionObject extends NativeFunction {
                     types[2] != ScriptRuntime.FunctionClass ||
                     types[3] != Boolean.TYPE)
                 {
-                    String[] args = { methodName };
-                    String message = Context.getMessage("msg.varargs.ctor",
-                                                        args);
-                    throw Context.reportRuntimeError(message);
+                    throw Context.reportRuntimeError1(
+                        "msg.varargs.ctor", methodName);
                 }
                 parmsLength = VARARGS_CTOR;
             } else {
@@ -148,10 +150,8 @@ public class FunctionObject extends NativeFunction {
                     types[2].getComponentType() != ScriptRuntime.ObjectClass ||
                     types[3] != ScriptRuntime.FunctionClass)
                 {
-                    String[] args = { methodName };
-                    String message = Context.getMessage("msg.varargs.fun",
-                                                        args);
-                    throw Context.reportRuntimeError(message);
+                    throw Context.reportRuntimeError1(
+                        "msg.varargs.fun", methodName);
                 }
                 parmsLength = VARARGS_METHOD;
             }
@@ -159,45 +159,25 @@ public class FunctionObject extends NativeFunction {
             length = 1;
         } else {
             parmsLength = (short) types.length;
-            boolean hasConversions = false;
             for (int i=0; i < parmsLength; i++) {
                 Class type = types[i];
-                if (type == ScriptRuntime.ObjectClass) {
-                    // may not need conversions
-                } else if (type == ScriptRuntime.StringClass || 
-                           type == ScriptRuntime.BooleanClass ||
-                           ScriptRuntime.NumberClass.isAssignableFrom(type) ||
-                           Scriptable.class.isAssignableFrom(type))
+                if (type != ScriptRuntime.ObjectClass &&
+                    type != ScriptRuntime.StringClass &&
+                    type != ScriptRuntime.BooleanClass &&
+                    !ScriptRuntime.NumberClass.isAssignableFrom(type) &&
+                    !Scriptable.class.isAssignableFrom(type) &&
+                    type != Boolean.TYPE &&
+                    type != Byte.TYPE &&
+                    type != Short.TYPE &&
+                    type != Integer.TYPE &&
+                    type != Float.TYPE && 
+                    type != Double.TYPE)
                 {
-                    hasConversions = true;
-                } else if (type == Boolean.TYPE) {
-                    hasConversions = true;
-                    types[i] = ScriptRuntime.BooleanClass;
-                } else if (type == Byte.TYPE) {
-                    hasConversions = true;
-                    types[i] = ScriptRuntime.ByteClass;
-                } else if (type == Short.TYPE) {
-                    hasConversions = true;
-                    types[i] = ScriptRuntime.ShortClass;
-                } else if (type == Integer.TYPE) {
-                    hasConversions = true;
-                    types[i] = ScriptRuntime.IntegerClass;
-                } else if (type == Float.TYPE) {
-                    hasConversions = true;
-                    types[i] = ScriptRuntime.FloatClass;
-                } else if (type == Double.TYPE) {
-                    hasConversions = true;
-                    types[i] = ScriptRuntime.DoubleClass;
-                } 
-                // Note that long is not supported; see comments above
-                else {
-                    Object[] errArgs = { methodName };
-                    throw Context.reportRuntimeError(
-                        Context.getMessage("msg.bad.parms", errArgs));
+                    // Note that long is not supported.
+                    throw Context.reportRuntimeError1("msg.bad.parms", 
+                                                      methodName);
                 }
             }
-            if (!hasConversions)
-                types = null;
             length = parmsLength;
         }
 
@@ -215,53 +195,16 @@ public class FunctionObject extends NativeFunction {
     }
 
     /**
-     * Override ScriptableObject's has, get, and set in order to define
-     * the "length" property of the function. <p>
-     *
-     * We could also have defined the property using ScriptableObject's
-     * defineProperty method, but that would have consumed a slot in every
-     * FunctionObject. Most FunctionObjects typically don't have any
-     * properties anyway, so having the "length" property would cause us
-     * to allocate an array of slots. <p>
-     *
-     * In particular, this method will return true for 
-     * <code>name.equals("length")</code>
-     * and will delegate to the superclass for all other
-     * values of <code>name</code>.
-     */
-    public boolean has(String name, Scriptable start) {
-        return name.equals("length") || super.has(name, start);
-    }
-
-    /**
-     * Override ScriptableObject's has, get, and set in order to define
-     * the "length" property of the function. <p>
-     *
-     * In particular, this method will return the value defined by
-     * the method used to construct the object (number of parameters
-     * of the method, or 1 if the method is a "varargs" form), unless
-     * setLength has been called with a new value.
+     * Return the value defined by  the method used to construct the object
+     * (number of parameters of the method, or 1 if the method is a "varargs"
+     * form), unless setLength has been called with a new value.
+     * Overrides getLength in BaseFunction.
      *
      * @see org.mozilla.javascript.FunctionObject#setLength
+     * @see org.mozilla.javascript.BaseFunction#getLength
      */
-    public Object get(String name, Scriptable start) {
-        if (name.equals("length"))
-            return new Integer(lengthPropertyValue);
-        return super.get(name, start);
-    }
-
-    /**
-     * Override ScriptableObject's has, get, and set in order to define
-     * the "length" property of the function. <p>
-     *
-     * In particular, this method will ignore all attempts to set the
-     * "length" property and forward all other requests to ScriptableObject.
-     *
-     * @see org.mozilla.javascript.FunctionObject#setLength
-     */
-    public void put(String name, Scriptable start, Object value) {
-        if (!name.equals("length"))
-            super.put(name, start, value);
+    public int getLength() {
+        return lengthPropertyValue;
     }
 
     /**
@@ -389,57 +332,51 @@ public class FunctionObject extends NativeFunction {
     public void addAsConstructor(Scriptable scope, Scriptable prototype) {
         setParentScope(scope);
         setPrototype(getFunctionPrototype(scope));
+        setImmunePrototypeProperty(prototype);
+
         prototype.setParentScope(this);
+        
         final int attr = ScriptableObject.DONTENUM  |
                          ScriptableObject.PERMANENT |
                          ScriptableObject.READONLY;
-        defineProperty("prototype", prototype, attr);
+        defineProperty(prototype, "constructor", this, attr);
+
         String name = prototype.getClassName();
-        if (!name.equals("With")) {
-            // A "With" object would delegate these calls to the prototype:
-            // not the right thing to do here!
-            if (prototype instanceof ScriptableObject) {
-                ((ScriptableObject) prototype).defineProperty("constructor",
-                                                              this, attr);
-            } else {
-                prototype.put("constructor", prototype, this);
-            }
-        }
-        if (scope instanceof ScriptableObject) {
-            ((ScriptableObject) scope).defineProperty(name, this,
-                ScriptableObject.DONTENUM);
-        } else {
-            scope.put(name, scope, this);
-        }
+        defineProperty(scope, name, this, ScriptableObject.DONTENUM);
+
         setParentScope(scope);
     }
 
     static public Object convertArg(Scriptable scope,
                                     Object arg, Class desired)
     {
-        if (desired == ScriptRuntime.BooleanClass 
-                                    || desired == Boolean.TYPE)
-            return ScriptRuntime.toBoolean(arg) ? Boolean.TRUE 
-                                               : Boolean.FALSE;
-        else if (desired == ScriptRuntime.StringClass)
+        if (desired == ScriptRuntime.StringClass) 
             return ScriptRuntime.toString(arg);
-        else if (desired == ScriptRuntime.IntegerClass
-                                        || desired == Integer.TYPE)
+        if (desired == ScriptRuntime.IntegerClass || 
+            desired == Integer.TYPE)
+        {
             return new Integer(ScriptRuntime.toInt32(arg));
-        else if (desired == ScriptRuntime.DoubleClass 
-                                        || desired == Double.TYPE)
+        }
+        if (desired == ScriptRuntime.BooleanClass || 
+            desired == Boolean.TYPE)
+        {
+            return ScriptRuntime.toBoolean(arg) ? Boolean.TRUE 
+                                                : Boolean.FALSE;
+        }
+        if (desired == ScriptRuntime.DoubleClass || 
+            desired == Double.TYPE)
+        {
             return new Double(ScriptRuntime.toNumber(arg));
-        else if (desired == ScriptRuntime.ScriptableClass)
+        }
+        if (desired == ScriptRuntime.ScriptableClass)
             return ScriptRuntime.toObject(scope, arg);
-        else if (desired == ScriptRuntime.ObjectClass)
+        if (desired == ScriptRuntime.ObjectClass)
             return arg;
+        
         // Note that the long type is not supported; see the javadoc for
         // the constructor for this class
-        else {
-            Object[] errArgs = { desired.getName() };
-            throw Context.reportRuntimeError(
-                    Context.getMessage("msg.cant.convert", errArgs));
-        }
+        throw Context.reportRuntimeError1
+            ("msg.cant.convert", desired.getName());
     }
 
     /**
@@ -456,9 +393,9 @@ public class FunctionObject extends NativeFunction {
                        Object[] args)
         throws JavaScriptException
     {
-        if (parmsLength < 0)
+        if (parmsLength < 0) {
             return callVarargs(cx, thisObj, args, false);
-
+        }
         if (!isStatic) {
             // OPT: cache "clazz"?
             Class clazz = method != null ? method.getDeclaringClass()
@@ -467,9 +404,8 @@ public class FunctionObject extends NativeFunction {
                 thisObj = thisObj.getPrototype();
                 if (thisObj == null || !useDynamicScope) {
                     // Couldn't find an object to call this on.
-                    Object[] errArgs = { names[0] };
-                    String msg = Context.getMessage("msg.incompat.call", errArgs);
-                    throw NativeGlobal.constructError(cx, "TypeError", msg, scope);
+                    throw NativeGlobal.typeError1
+                        ("msg.incompat.call", functionName, scope);
                 }
             }
         }
@@ -493,9 +429,8 @@ public class FunctionObject extends NativeFunction {
             invokeArgs[i] = arg;
         }
         try {
-            Object result = (method != null)
-                            ? method.invoke(thisObj, invokeArgs)
-                            : ctor.newInstance(invokeArgs);
+            Object result = method == null ? ctor.newInstance(invokeArgs)
+                                           : doInvoke(thisObj, invokeArgs);
             return hasVoidReturn ? Undefined.instance : result;
         }
         catch (InvocationTargetException e) {
@@ -531,13 +466,7 @@ public class FunctionObject extends NativeFunction {
         if (method == null || parmsLength == VARARGS_CTOR) {
             Scriptable result;
             if (method != null) {
-                // Ugly: allow variable-arg constructors that need access to the 
-                // scope to get it from the Context. Cleanest solution would be
-                // to modify the varargs form, but that would require users with 
-                // the old form to change their code.
-                cx.ctorScope = scope;
                 result = (Scriptable) callVarargs(cx, null, args, true);
-                cx.ctorScope = null;
             } else {
                 result = (Scriptable) call(cx, scope, null, args);
             }
@@ -575,6 +504,23 @@ public class FunctionObject extends NativeFunction {
 
         return super.construct(cx, scope, args);
     }
+        
+    private final Object doInvoke(Object thisObj, Object[] args) 
+        throws IllegalAccessException, InvocationTargetException
+    {
+        Invoker master = invokerMaster;
+        if (master != null) {
+            if (invoker == null) {
+                invoker = master.createInvoker(method, types);
+            }
+            try {
+                return invoker.invoke(thisObj, args);
+            } catch (RuntimeException e) {
+                throw new InvocationTargetException(e);
+            }
+        } 
+        return method.invoke(thisObj, args);
+    }
 
     private Object callVarargs(Context cx, Scriptable thisObj, Object[] args,
                                boolean inNewExpr)
@@ -583,14 +529,14 @@ public class FunctionObject extends NativeFunction {
         try {
             if (parmsLength == VARARGS_METHOD) {
                 Object[] invokeArgs = { cx, thisObj, args, this };
-                Object result = method.invoke(null, invokeArgs);
+                Object result = doInvoke(null, invokeArgs);
                 return hasVoidReturn ? Undefined.instance : result;
             } else {
                 Boolean b = inNewExpr ? Boolean.TRUE : Boolean.FALSE;
                 Object[] invokeArgs = { cx, args, this, b };
                 return (method == null)
                        ? ctor.newInstance(invokeArgs)
-                       : method.invoke(null, invokeArgs);
+                       : doInvoke(null, invokeArgs);
             }
         }
         catch (InvocationTargetException e) {
@@ -617,7 +563,34 @@ public class FunctionObject extends NativeFunction {
     boolean isVarArgsConstructor() { 
         return parmsLength == VARARGS_CTOR;
     }
+    
+    static void setCachingEnabled(boolean enabled) {
+        if (!enabled) {
+            methodsCache = null;
+            invokerMaster = null;
+        } else if (invokerMaster == null) {
+            invokerMaster = newInvokerMaster();
+        }
+    }
 
+    /** Get default master implementation or null if not available */
+    private static Invoker newInvokerMaster() {
+        try {
+            Class cl = ScriptRuntime.loadClassName(INVOKER_MASTER_CLASS);
+            return (Invoker)cl.newInstance();
+        }
+        catch (ClassNotFoundException ex) {}
+        catch (IllegalAccessException ex) {}
+        catch (InstantiationException ex) {}
+        catch (SecurityException ex) {}
+        return null;
+    }
+
+    private static final String 
+        INVOKER_MASTER_CLASS = "org.mozilla.javascript.optimizer.InvokerImpl";
+
+    static Invoker invokerMaster = newInvokerMaster();
+    
     private static final short VARARGS_METHOD = -1;
     private static final short VARARGS_CTOR =   -2;
     
@@ -628,6 +601,7 @@ public class FunctionObject extends NativeFunction {
     Method method;
     Constructor ctor;
     private Class[] types;
+    Invoker invoker;
     private short parmsLength;
     private short lengthPropertyValue;
     private boolean hasVoidReturn;

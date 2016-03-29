@@ -91,7 +91,8 @@ public class NativeJavaPackage extends ScriptableObject {
         for (int i = 0; i < commonPackages.length; i++)
             packages.forcePackage(commonPackages[i]);
 
-        NativeJavaObject.initJSObject();
+        if (Context.useJSObject)
+            NativeJavaObject.initJSObject();
         
         Method[] m = FunctionObject.findMethods(NativeJavaPackage.class, 
                                                 "jsFunction_getClass");
@@ -144,8 +145,7 @@ public class NativeJavaPackage extends ScriptableObject {
     }
 
     public void put(int index, Scriptable start, Object value) {
-        throw Context.reportRuntimeError(
-            Context.getMessage("msg.pkg.int", null));
+        throw Context.reportRuntimeError0("msg.pkg.int");
     }
 
     public Object get(String id, Scriptable start) {
@@ -207,10 +207,9 @@ public class NativeJavaPackage extends ScriptableObject {
                                                  Object[] args, 
                                                  Function funObj)
     {
-        if (args.length > 0  && args[0] instanceof NativeJavaObject) {
-            NativeJavaObject nativeJavaObj = (NativeJavaObject) args[0];
+        if (args.length > 0  && args[0] instanceof Wrapper) {
             Scriptable result = getTopLevelScope(thisObj);
-            Class cl = nativeJavaObj.unwrap().getClass();
+            Class cl = ((Wrapper) args[0]).unwrap().getClass();
             // Evaluate the class name by getting successive properties of 
             // the string to find the appropriate NativeJavaClass object
             String name = "Packages." + cl.getName();
@@ -230,7 +229,7 @@ public class NativeJavaPackage extends ScriptableObject {
             }
         }
         throw Context.reportRuntimeError(
-            Context.getMessage("msg.not.java.obj", null));
+            Context.getMessage0("msg.not.java.obj"));
     }
 
     private String packageName;

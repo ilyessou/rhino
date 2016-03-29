@@ -6,7 +6,7 @@
  * the License at http://www.mozilla.org/NPL/
  *
  * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express oqr
+ * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
  * implied. See the License for the specific language governing
  * rights and limitations under the License.
  *
@@ -35,29 +35,46 @@
 import org.mozilla.javascript.*;
 
 /**
- * RunScript3: Execute scripts in an environment that includes the
- *             example Counter class.
+ * RunScript3: Example of using JavaScript objects
+ * 
+ * Collects its arguments from the command line, executes the 
+ * script, and then ...
  * 
  * @author Norris Boyd
  */
 public class RunScript3 {
     public static void main(String args[]) 
-        throws Exception 
+        throws JavaScriptException 
     {
         Context cx = Context.enter();
         Scriptable scope = cx.initStandardObjects(null);
-
-        // Use the Counter class to define a Counter constructor
-        // and prototype in JavaScript.
-        ScriptableObject.defineClass(scope, Counter.class);
         
+        // Collect the arguments into a single string.
         String s = "";
         for (int i=0; i < args.length; i++)
             s += args[i];
-        Object result = cx.evaluateString(scope, s, "<cmd>", 1, null);
-        System.err.println(cx.toString(result));
+        
+        // Now evaluate the string we've colected. We'll ignore the result.
+        cx.evaluateString(scope, s, "<cmd>", 1, null);
+
+        // Print the value of variable "x"
+        Object x = scope.get("x", scope);
+        if (x == Scriptable.NOT_FOUND)
+            System.out.println("x is not defined.");
+        else
+            System.out.println("x = " + Context.toString(x));
+
+        // Call function "f('my arg')" and print its result.
+        Object f = scope.get("f", scope);
+        if (!(f instanceof Function))
+            System.out.println("f is undefined or not a function.");
+        else {
+            Object functionArgs[] = { "my arg" };
+            Object result = ((Function) f).call(cx, scope, scope, functionArgs);
+            System.out.println("f('my args') = " + Context.toString(result));
+        }
+        
         Context.exit();
     }
-
 }
 

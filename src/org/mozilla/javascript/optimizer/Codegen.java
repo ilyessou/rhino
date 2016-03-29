@@ -79,6 +79,7 @@ public class Codegen extends Interpreter {
         
         Exception e = null;
         Class result = null;
+        DefiningClassLoader classLoader = new DefiningClassLoader();
 
         try {
             if (cx.getOptimizationLevel() > 0) {
@@ -104,12 +105,12 @@ public class Codegen extends Interpreter {
                         throw WrappedException.wrapException(iox);
                     }
                 } else {
+                    boolean isTopLevel = name.equals(generatedName);
                     ClassOutput classOutput = nameHelper.getClassOutput();
-
                     if (classOutput != null) {
                         try {
                             OutputStream out =
-                                classOutput.getOutputStream(name);
+                                classOutput.getOutputStream(name, isTopLevel);
 
                             out.write(classFile);
                             out.close();
@@ -118,21 +119,18 @@ public class Codegen extends Interpreter {
                         }
                     }
                     try {
-                        Class clazz;
-                        if (securitySupport == null) {
-                            if (Context.isSecurityDomainRequired())
-                                throw new SecurityException("Required " +
-                                            "security context missing");
-                            if (classLoader == null)
-                                classLoader = new JavaScriptClassLoader();
-                            clazz = classLoader.defineClass(name, classFile);
-                            ClassLoader loader = clazz.getClassLoader();
-                            clazz = loader.loadClass(name);
-                        } else {
+                        Class clazz = null;
+                        if (securitySupport != null) {
                             clazz = securitySupport.defineClass(name, classFile, 
                                                                 securityDomain);
                         }
-                        if (name.equals(generatedName))
+                        if (clazz == null) {
+                            Context.checkSecurityDomainRequired();
+                            clazz = classLoader.defineClass(name, classFile);
+                            ClassLoader loader = clazz.getClassLoader();
+                            clazz = loader.loadClass(name);
+                        }
+                        if (isTopLevel)
                             result = clazz;
                     } catch (ClassFormatError ex) {
                         throw new RuntimeException(ex.toString());
@@ -389,20 +387,15 @@ public class Codegen extends Interpreter {
         this.classFilesVector = classFiles;
         Context cx = Context.getCurrentContext();
         itsSourceFile = null;
-        if (cx.isGeneratingDebug())
+        // default is to generate debug info
+        if (!cx.isGeneratingDebugChanged() || cx.isGeneratingDebug())
             itsSourceFile = (String) tree.getProp(Node.SOURCENAME_PROP);
         version = cx.getLanguageVersion();
         optLevel = cx.getOptimizationLevel();
         inFunction = tree.getType() == TokenStream.FUNCTION;
-        if (debugLevel >= 3) {
-            superClassName = inFunction
-                             ? debugFunctionSuperClassName
-                             : debugScriptSuperClassName;
-        } else {
-            superClassName = inFunction
-                             ? normalFunctionSuperClassName
-                             : normalScriptSuperClassName;
-        }
+        superClassName = inFunction
+                         ? normalFunctionSuperClassName
+                         : normalScriptSuperClassName;
         superClassSlashName = superClassName.replace('.', '/');
 
         Node codegenBase;
@@ -464,7 +457,7 @@ public class Codegen extends Interpreter {
                     // make sure that all parameters are objects
                     itsForcedObjectParameters = true;
                     for (int i = 0; i < vars.getParameterCount(); i++) {
-                        OptLocalVariable lVar = (OptLocalVariable) vars.get(i);
+                        OptLocalVariable lVar = (OptLocalVariable) vars.getVariable(i);
                         aload(lVar.getJRegister());
                         classFile.add(ByteCode.GETSTATIC,
                                       "java/lang/Void",
@@ -512,6 +505,9 @@ public class Codegen extends Interpreter {
                             "[Ljava/lang/Object;)Ljava/lang/Object;",
                            1, false, true);
             generatePrologue(cx, tree, false, -1);
+            Object linenum = tree.getProp(Node.END_LINENO_PROP);
+            if (linenum != null)
+              classFile.addLineNumberEntry(((Integer) linenum).shortValue());
             tree.addChildToBack(new Node(TokenStream.RETURN));
             codegenBase = tree;
         }
@@ -524,10 +520,6 @@ public class Codegen extends Interpreter {
 
         emitConstantDudeInitializers();
 
-        // this needs to be done after the primary code generation is done
-        if (debugLevel >= 1)
-            generateDebugInit(cx, tree);
-
         ByteArrayOutputStream out = new ByteArrayOutputStream(512);
         try {
             classFile.write(out);
@@ -539,9 +531,12 @@ public class Codegen extends Interpreter {
 
         namesVector.addElement(name);
         classFilesVector.addElement(bytes);
-    	classFile = null;
-    	
-    	return name;
+        
+        classFile = null;
+        namesVector = null;
+        classFilesVector = null;
+        
+        return name;
     }
 
     private void generateCodeFromNode(Node node, Node parent, int trueLabel, 
@@ -1068,31 +1063,18 @@ public class Codegen extends Interpreter {
                           "V");
         }
 
-        if (debugLevel >= 3) {
-            addByteCode(ByteCode.ALOAD_1); // load 'cx'
-            addByteCode(ByteCode.ALOAD_0); // load 'this'
-            addByteCode(ByteCode.ALOAD_2); // load 'scope'
-            addStaticInvoke("org/mozilla/javascript/debug/NativeDelegate",
-                          "executeDebug",
-                          "(Lorg/mozilla/javascript/Context;" +
-                           "Lorg/mozilla/javascript/NativeFunction;" +
-                           "Lorg/mozilla/javascript/Scriptable;)",
-                          "Ljava/lang/Object;");
-        }
-        else {
-            addByteCode(ByteCode.ALOAD_0); // load 'this'
-            addByteCode(ByteCode.ALOAD_1); // load 'cx'
-            addByteCode(ByteCode.ALOAD_2); // load 'scope'
-            addByteCode(ByteCode.DUP);
-            addByteCode(ByteCode.ACONST_NULL);
-            addVirtualInvoke(slashName,
-                          "call",
-                          "(Lorg/mozilla/javascript/Context;" +
-                           "Lorg/mozilla/javascript/Scriptable;" +
-                           "Lorg/mozilla/javascript/Scriptable;" +
-                           "[Ljava/lang/Object;)",
-                          "Ljava/lang/Object;");
-        }
+        addByteCode(ByteCode.ALOAD_0); // load 'this'
+        addByteCode(ByteCode.ALOAD_1); // load 'cx'
+        addByteCode(ByteCode.ALOAD_2); // load 'scope'
+        addByteCode(ByteCode.DUP);
+        addByteCode(ByteCode.ACONST_NULL);
+        addVirtualInvoke(slashName,
+                      "call",
+                      "(Lorg/mozilla/javascript/Context;" +
+                       "Lorg/mozilla/javascript/Scriptable;" +
+                       "Lorg/mozilla/javascript/Scriptable;" +
+                       "[Ljava/lang/Object;)",
+                      "Ljava/lang/Object;");
 
         addByteCode(ByteCode.ARETURN);
         finishMethod(cx, null);
@@ -1152,39 +1134,39 @@ public class Codegen extends Interpreter {
         }
 
         /*
-         * Generate code to initialize names field with a
-         * string array that is the names of the function,
-         * the parameters and the vars. Initialize argCount
+         * Generate code to initialize functionName field with the name 
+         * of the function and argNames string array with the names 
+         * of the parameters and the vars. Initialize argCount
          * to the number of formal parameters.
          */
         
-        if (name.length() != 0 || (vars != null && vars.size() > 0)) {
+        if (name.length() != 0) {
             setNonTrivialInit(methodName);
-            if (vars == null)
-                vars = new OptVariableTable();
-            push(vars.size() + 1);
-            addByteCode(ByteCode.ANEWARRAY, "java/lang/String");
-            addByteCode(ByteCode.DUP);
-            short x = getNewWordLocal();
-            astore(x);
-            addByteCode(ByteCode.DUP);
-            push(0);
+               addByteCode(ByteCode.ALOAD_0);
             classFile.addLoadConstant(name);
-            addByteCode(ByteCode.AASTORE);
-            if (vars != null) {
-                for (int i = 0; i < vars.size(); i++) {
-                    aload(x);
-                    push(i + 1);
+            classFile.add(ByteCode.PUTFIELD,
+                          "org/mozilla/javascript/NativeFunction",
+                          "functionName", "Ljava/lang/String;");
+        }
+
+        if (vars != null) {
+            int N = vars.size();
+            if (N != 0) {
+                setNonTrivialInit(methodName);
+                push(N);
+                addByteCode(ByteCode.ANEWARRAY, "java/lang/String");
+                for (int i = 0; i != N; i++) {
+                    addByteCode(ByteCode.DUP);
+                    push(i);
                     push(vars.getName(i));
                     addByteCode(ByteCode.AASTORE);
                 }
+                addByteCode(ByteCode.ALOAD_0);
+                addByteCode(ByteCode.SWAP);
+                classFile.add(ByteCode.PUTFIELD,
+                              "org/mozilla/javascript/NativeFunction",
+                              "argNames", "[Ljava/lang/String;");
             }
-            releaseWordLocal(x);
-            addByteCode(ByteCode.ALOAD_0);
-            addByteCode(ByteCode.SWAP);
-            classFile.add(ByteCode.PUTFIELD,
-                    "org/mozilla/javascript/NativeFunction",
-                    "names", "[Ljava/lang/String;");
         }
 
         int parmCount = vars == null ? 0 : vars.getParameterCount();
@@ -1256,7 +1238,7 @@ public class Codegen extends Interpreter {
                 String className
                      = classFile.fullyQualifiedForm(fnNode.getClassName());
                 String fieldName = className.replace('/', '_');
-            	classFile.addField(fieldName,
+                classFile.addField(fieldName,
                                        "L" + className + ";",
                    (short)(ClassFileWriter.ACC_PUBLIC
                             + ClassFileWriter.ACC_STATIC));
@@ -1268,93 +1250,12 @@ public class Codegen extends Interpreter {
             }
         }
 
-        // debug stuff ... (should be last thing in method)
-
-        if (debugLevel >= 1) {
-            // save debugLevel 
-            setNonTrivialInit(methodName);
-            addByteCode(ByteCode.ALOAD_0); // 'this'
-            push(debugLevel);
-            classFile.add(ByteCode.PUTFIELD,
-                         "org/mozilla/javascript/NativeFunction",
-                          "debug_level", "I");
-
-            // generate call to "debugInit()"
-            String slashName = this.name.replace('.', '/');
-            addByteCode(ByteCode.ALOAD_0); // load 'this'
-            addVirtualInvoke(slashName,
-                          "debugInit","()", "V");
-        }
-
         if (!trivialInit) {
             addByteCode(ByteCode.RETURN);
             finishMethod(cx, null);
         }
     }
-
-    // this is only called if (debugLevel >= 1)
-    private void generateDebugInit(Context cx, Node tree) {
-        if (debugLevel == 0)
-            return;
-        startNewMethod("debugInit", "()V", 0, false, true);
-
-        // save source name
-        String srcName = (String) tree.getProp(Node.SOURCENAME_PROP);
-        addByteCode(ByteCode.ALOAD_0); // 'this'
-        if (srcName != null)
-            push(srcName);
-        else
-            addByteCode(ByteCode.ACONST_NULL);
-        classFile.add(ByteCode.PUTFIELD,
-                     "org/mozilla/javascript/NativeFunction",
-                     "debug_srcName", "Ljava/lang/String;");
-
-        if (debugLevel >= 3) {
-            // at this debug level we know that our superclass
-            // is debug specific. Generate more debug info into it.
-
-            // save the base and end line numbers
-            Integer prop;
-
-            prop = (Integer) tree.getProp(Node.BASE_LINENO_PROP);
-            if (null != prop) {
-                addByteCode(ByteCode.ALOAD_0); // 'this'
-                push(prop.intValue());
-
-                classFile.add(ByteCode.PUTFIELD,
-                              superClassSlashName,
-                              "debug_baseLineno", "I");
-            }
-
-            prop = (Integer) tree.getProp(Node.END_LINENO_PROP);
-            if (null != prop) {
-                addByteCode(ByteCode.ALOAD_0); // 'this'
-                push(prop.intValue());
-
-                classFile.add(ByteCode.PUTFIELD,
-                              superClassSlashName,
-                              "debug_endLineno", "I");
-            }
-
-            // trap support
-            if (debugLevel >= 6) {
-                writeDebugPCEntries();
-                buildDebugTrapMap();
-            }
-
-            // generate call to script loading hook
-            // *always do this last*
-
-            addByteCode(ByteCode.ALOAD_0); //'this'
-            addVirtualInvoke(superClassSlashName,
-                          "callLoadingScriptHook",
-                           "()", "V");
-        }
-
-        addByteCode(ByteCode.RETURN);
-        finishMethod(cx, null);
-    }
-
+	
     private void generateRegExpLiterals(Vector regexps, boolean inCtor) {
         for (int i=0; i < regexps.size(); i++) {
             Node regexp = (Node) regexps.elementAt(i);
@@ -1449,12 +1350,18 @@ public class Codegen extends Interpreter {
                 addByteCode(ByteCode.ACONST_NULL);
             }
             // load 'cx'
-            aload(contextLocal);           
+            aload(contextLocal);  
+            // load boolean indicating whether fn name should be set in scope
+            boolean setFnName = str != null && str.length() > 0 && 
+                                ((FunctionNode) def).getFunctionType() ==
+                                    FunctionNode.FUNCTION_STATEMENT;
+            addByteCode(setFnName ? ByteCode.ICONST_1 : ByteCode.ICONST_0);
+            
             addScriptRuntimeInvoke("initFunction",
                                    "(Lorg/mozilla/javascript/NativeFunction;" +
                                     "Lorg/mozilla/javascript/Scriptable;" +
                                     "Ljava/lang/String;" +
-                                    "Lorg/mozilla/javascript/Context;)",
+                                    "Lorg/mozilla/javascript/Context;Z)",
                                    "Lorg/mozilla/javascript/NativeFunction;");
             def.putProp(Node.FUNCTION_PROP, new Short(i));
             addByteCode(ByteCode.AASTORE);    // store NativeFunction
@@ -1523,6 +1430,17 @@ public class Codegen extends Interpreter {
             }
         }
 
+        if (inFunction && ((OptFunctionNode)tree).getCheckThis()) {
+            // Nested functions must check their 'this' value to
+            //  insure it is not an activation object:
+            //  see 10.1.6 Activation Object
+            aload(thisObjLocal);
+            addScriptRuntimeInvoke("getThis",
+                      "(Lorg/mozilla/javascript/Scriptable;)",
+                      "Lorg/mozilla/javascript/Scriptable;");
+            astore(thisObjLocal);
+        }
+
         hasVarsInRegs = inFunction && 
                         !((OptFunctionNode)tree).requiresActivation();
         if (hasVarsInRegs) {
@@ -1549,7 +1467,7 @@ public class Codegen extends Interpreter {
             // before the next call and are used in the function
             short firstUndefVar = -1;
             for (int i = 0; i < vars.size(); i++) {
-                OptLocalVariable lVar = (OptLocalVariable) vars.get(i);
+                OptLocalVariable lVar = (OptLocalVariable) vars.getVariable(i);
                 if (lVar.isNumber()) {
                     lVar.assignJRegister(getNewWordPairLocal());
                     push(0.0);
@@ -1641,15 +1559,17 @@ public class Codegen extends Interpreter {
                 FunctionNode fn = (FunctionNode) fns.elementAt(i);
                 if (fn.getFunctionType() == FunctionNode.FUNCTION_STATEMENT) {
                     visitFunction(fn, true);
+                    addByteCode(ByteCode.POP);
                 }
             }
         }
         
         
-        if (cx.isGeneratingDebug()) {
+        // default is to generate debug info
+        if (!cx.isGeneratingDebugChanged() || cx.isGeneratingDebug()) {
             debugVars = new OptVariableTable();
             debugVars.addLocal(debugVariableName);
-            OptLocalVariable lv = (OptLocalVariable) debugVars.get(debugVariableName);
+            OptLocalVariable lv = (OptLocalVariable) debugVars.getVariable(debugVariableName);
             lv.assignJRegister(variableObjectLocal);
             lv.setStartPC(classFile.getCurrentCodeOffset());
         }
@@ -1676,24 +1596,13 @@ public class Codegen extends Interpreter {
                 astore(itsOneArgArray);
             }
         }
-        
-        if (debugLevel > 0) {   // XXX is 0 correct?
-            // setup the local for 'pc' with a default value
-            debug_pcLocal = getNewWordLocal();
-            addByteCode(ByteCode.ICONST_0);
-            istore(debug_pcLocal);
-            if (debugLevel >= 6) {
-                debugStopSubLabel = acquireLabel();
-                generateDebugStopSubroutine();
-            }
-        }
     }
     
     private void generateEpilogue() {
         if (epilogueLabel != -1) {
             classFile.markLabel(epilogueLabel);
         }
-        if (!hasVarsInRegs || !inFunction || debugLevel > 0) {
+        if (!hasVarsInRegs || !inFunction) {
             // restore caller's activation
             aload(contextLocal);
             addScriptRuntimeInvoke("popActivation",
@@ -1701,237 +1610,6 @@ public class Codegen extends Interpreter {
                                    "V");
         }
         addByteCode(ByteCode.ARETURN);
-    }
-
-    private void generateDebugStopSubroutine() {
-        if (debugLevel == 0)
-            return;
-        // local to store our subroutine return address
-//        int stackTop = classFile.getStackTop();
-        debugStopSubRetLocal = getNewWordLocal();
-
-        // generate the code to jump over this subroutine
-        // (needed if generated anyplace other than after the last return)
-        int labelSkip = acquireLabel();
-        addByteCode(ByteCode.GOTO, labelSkip);
-
-        //
-        // the actual subroutine starts here
-        //
-        classFile.adjustStackTop(1);
-        markLabel(debugStopSubLabel);
-        astore(debugStopSubRetLocal);
-//        System.out.println(1+" " +stackTop+" "+classFile.getStackTop());
-        int labelRetPop0 = acquireLabel();
-        int labelRetPop1 = acquireLabel();
-        int labelRetPop2 = acquireLabel();
-        int labelCheckForStopPoint = acquireLabel();
-        int labelHandleHookAnswer  = acquireLabel();
-        int labelNotThrow  = acquireLabel();
-
-        // parse the flag to see what should be done
-        addByteCode(ByteCode.ALOAD_0); // 'this'
-        classFile.add(ByteCode.GETFIELD,
-                    superClassSlashName,
-                     "debug_stopFlags", "I");
-        addByteCode(ByteCode.DUP);
-        addByteCode(ByteCode.ICONST_1);
-        addByteCode(ByteCode.IAND);
-        addByteCode(ByteCode.IFEQ, labelCheckForStopPoint);
-        addByteCode(ByteCode.POP);
-
-        // if here then an immediate interrupt was requested. (stack empty)
-//        System.out.println(2+" " +stackTop+" "+classFile.getStackTop());
-
-        // call our "hook caller" helper in Debug superclass
-        addByteCode(ByteCode.ALOAD_0); // 'this'
-        aload(contextLocal);
-        addByteCode(ByteCode.ICONST_1); // retVal[1] array
-        addByteCode(ByteCode.ANEWARRAY, "java/lang/Object");
-        addByteCode(ByteCode.DUP_X2); //retVal will be on stack after call
-        iload(debug_pcLocal);
-        aload(variableObjectLocal);
-
-        addVirtualInvoke(superClassSlashName,
-                      "callInterruptHook",
-                      "(Lorg/mozilla/javascript/Context;[Ljava/lang/Object;" +
-                       "ILorg/mozilla/javascript/Scriptable;)",
-                      "I");
-        // jump to labelHandleHookAnswer (same code for both hooks)
-        addByteCode(ByteCode.GOTO, labelHandleHookAnswer);
-
-        /********************************************************/
-
-        // if here, check to see if this is our stoppoint
-        // the stack has 'debug_stopFlags'
-        classFile.adjustStackTop(-1);
-        markLabel(labelCheckForStopPoint);
-
-        // sanity check that breakpoint flag is really set
-        addByteCode(ByteCode.ICONST_2);
-        addByteCode(ByteCode.IAND);
-        addByteCode(ByteCode.IFEQ, labelRetPop0);
-
-        // check to see if we are at a pc with a breakpoint (stack empty)
-//        System.out.println(3+" " +stackTop+" "+classFile.getStackTop());
-
-        // We have an array of 32bit ints. We use the pc to index bits in
-        // that array. If the bit is set then we trap, otherwise continue.
-        // To figure out which bit the pc represents we do bitwise work to
-        // calc an index and mask. Similar work is done in Java in the class
-        // org.mozilla.javascript.debug.NativeDelegate to set and clear these
-        // bits.
-
-        // get current pc
-        iload(debug_pcLocal);
-        addByteCode(ByteCode.DUP);
-
-        // calc the index into trapMap
-        addByteCode(ByteCode.ICONST_5);
-        addByteCode(ByteCode.ISHR);
-        addByteCode(ByteCode.SWAP);
-
-        // calc the mask
-        push(0x1f);
-        addByteCode(ByteCode.IAND);
-        addByteCode(ByteCode.ICONST_1);
-        addByteCode(ByteCode.SWAP);
-        addByteCode(ByteCode.ISHL);
-        addByteCode(ByteCode.SWAP);
-
-        // stack has mask, index
-
-        // get refernce to trapMap
-        addByteCode(ByteCode.ALOAD_0); // 'this'
-        classFile.add(ByteCode.GETFIELD,
-                     superClassSlashName,
-                     "debug_trapMap", "[I");
-
-        // get our entry
-        addByteCode(ByteCode.SWAP);
-        addByteCode(ByteCode.IALOAD);
-
-        // 'and' against the map
-        addByteCode(ByteCode.IAND);
-        addByteCode(ByteCode.IFEQ, labelRetPop0);
-
-        // here if we've hit a trap (stack empty)
-//        System.out.println(4+" " +stackTop+" "+classFile.getStackTop());
-
-        // call our "hook caller" helper in Debug superclass
-        addByteCode(ByteCode.ALOAD_0); // 'this'
-        aload(contextLocal);
-        addByteCode(ByteCode.ICONST_1); // retVal[1] array
-        addByteCode(ByteCode.ANEWARRAY, "java/lang/Object");
-        addByteCode(ByteCode.DUP_X2); //retVal will be on stack after call
-        iload(debug_pcLocal);
-        aload(variableObjectLocal);
-
-        addVirtualInvoke(superClassSlashName,
-                      "callTrappedHook",
-                      "(Lorg/mozilla/javascript/Context;[Ljava/lang/Object;" +
-                       "ILorg/mozilla/javascript/Scriptable;)",
-                      "I");
-        // fall through to labelHandleHookAnswer (same code for both hooks)
-
-        // Deal with Hook Answer, stack has retval object, action code int
-        markLabel(labelHandleHookAnswer);
-
-        // available actions...
-        // org.mozilla.javascript.DeepBytecodeHook.CONTINUE     = 0;
-        // org.mozilla.javascript.DeepBytecodeHook.THROW        = 1;
-        // org.mozilla.javascript.DeepBytecodeHook.RETURN_VALUE = 2;
-
-        // is it just 'continue'?
-        addByteCode(ByteCode.DUP);
-        addByteCode(ByteCode.IFEQ, labelRetPop2);
-
-        // either a throw or return value -- get the value (Object[0])
-        addByteCode(ByteCode.SWAP);
-        addByteCode(ByteCode.ICONST_0);
-        addByteCode(ByteCode.AALOAD);
-        addByteCode(ByteCode.SWAP);
-
-        addByteCode(ByteCode.DUP);
-        addByteCode(ByteCode.ICONST_1);
-        addByteCode(ByteCode.IF_ICMPNE, labelNotThrow);
-        addByteCode(ByteCode.POP);    // get the object to the top
-        addByteCode(ByteCode.CHECKCAST, "java/lang/Throwable");
-        addByteCode(ByteCode.ATHROW);
-
-        classFile.adjustStackTop(2);
-        markLabel(labelNotThrow);
-        // sanity check
-        addByteCode(ByteCode.ICONST_2);
-        addByteCode(ByteCode.IF_ICMPNE, labelRetPop1);
-        addByteCode(ByteCode.ARETURN);
-
-        classFile.adjustStackTop(2);
-        markLabel(labelRetPop2);
-        addByteCode(ByteCode.POP);
-        markLabel(labelRetPop1);
-        addByteCode(ByteCode.POP);
-        markLabel(labelRetPop0);
-        addByteCode(ByteCode.RET, debugStopSubRetLocal);
-
-        // target for jumping over the subroutine
-        markLabel(labelSkip);
-        addByteCode(ByteCode.NOP);
-//        System.out.println(5+" " +stackTop+" "+classFile.getStackTop());
-    }
-
-    private short addDebugPCEntry(short lineno) {
-        if (debugLevel == 0)
-            return -1;
-        if (0 == debugLineEntryCount) {
-            debugLineMap = new short[DEBUG_LINE_MAP_INITIAL_SIZE];
-        }
-        if (debugLineMap.length == debugLineEntryCount+1) {
-            short[] newMap =
-                new short[debugLineMap.length+DEBUG_LINE_MAP_RESIZE_INCREMENT];
-            for (short i = 0; i < debugLineMap.length; i++)
-                newMap[i] = debugLineMap[i];
-            debugLineMap = newMap;
-        }
-        debugLineMap[++debugLineEntryCount] = lineno;
-        return debugLineEntryCount;
-    }
-    private void writeDebugPCEntries() {
-        if (debugLevel == 0)
-            return;
-        String s = null;
-        if (null != debugLineMap && 0 != debugLineEntryCount) {
-            // I have a short[]. I want a char[]. Java won't let me cast.
-            char[] ca = new char[debugLineEntryCount+1];
-            for (short i = 0; i < debugLineEntryCount+1; i++)
-                ca[i] = (char) debugLineMap[i];
-            s = new String(ca);
-        }
-
-        addByteCode(ByteCode.ALOAD_0); // 'this'
-        if (s == null)
-            addByteCode(ByteCode.ACONST_NULL);
-        else
-            push(s);
-        classFile.add(ByteCode.PUTFIELD,
-                superClassSlashName,
-                "debug_linenoMap", "Ljava/lang/String;");
-    }
-    private void buildDebugTrapMap() {
-        if (debugLevel == 0)
-            return;
-        if (null != debugLineMap && 0 != debugLineEntryCount) {
-            short count = (short)((debugLineEntryCount+1)/32);
-            if (0 != (debugLineEntryCount+1)%32)
-                count++;
-
-            addByteCode(ByteCode.ALOAD_0); // 'this'
-            push(count);
-            addByteCode(ByteCode.NEWARRAY, 10); // array of int
-            classFile.add(ByteCode.PUTFIELD,
-                          superClassSlashName,
-                          "debug_trapMap", "[I");
-        }
     }
 
     private void visitFunction(Node fn, boolean setName) {
@@ -2220,7 +1898,6 @@ public class Codegen extends Interpreter {
     
     */
     {
-if (true) {        
         Node callBase = callNode.getFirstChild();
         if (callBase.getType() == TokenStream.GETPROP) {
             Node callBaseChild = callBase.getFirstChild();
@@ -2247,7 +1924,6 @@ if (true) {
                 }
             }
         }
-}        
         return null;
     }
     
@@ -2324,7 +2000,7 @@ if (true) {
         String simpleCallName = null;
         if (type != TokenStream.NEW) {
             simpleCallName = getSimpleCallName(node);
-            if (simpleCallName != null && !isSpecialCall && debugLevel < 3) {
+            if (simpleCallName != null && !isSpecialCall) {
                 isSimpleCall = true;
                 push(simpleCallName);
                 aload(variableObjectLocal);
@@ -2388,17 +2064,6 @@ if (true) {
             child = child.getNextSibling();
         }
 
-        // set our pc into the top frame
-        if (debugLevel >= 1) {
-            aload(contextLocal);
-            aload(variableObjectLocal);
-            iload(debug_pcLocal);            
-            addStaticInvoke("org/mozilla/javascript/debug/NativeDelegate",
-                "setPC",
-                "(Lorg/mozilla/javascript/Context;Lorg/mozilla/javascript/Scriptable;I)",
-                "V");
-        }
-
         String className;
         String methodNameNewObj;
         String methodNameCall;
@@ -2455,20 +2120,6 @@ if (true) {
             }
         }
         
-        /* NOTE: we assure above !(isSimpleCall && debugLevel >= 3). So
-         * we don't need to worry about the SimpleCall case in debug code.
-         */
-        if (debugLevel >= 3) {
-            className     = "org/mozilla/javascript/debug/NativeDelegate";
-            if (isSpecialCall) {
-                methodNameNewObj = "newObjectSpecialDebug";
-                methodNameCall   = "callSpecialDebug";
-            } else  {
-                methodNameNewObj = "newObjectDebug";
-                methodNameCall   = "callDebug";
-            }
-        }        
-
         if (type == TokenStream.NEW) {
             addStaticInvoke(className,
                 methodNameNewObj,
@@ -2490,32 +2141,6 @@ if (true) {
         if (itsLineNumber == -1)
             return;
         classFile.addLineNumberEntry((short)itsLineNumber);
-
-        if (debugLevel >= 1) {
-            if (debugLevel >= 6) {
-                int pc = addDebugPCEntry((short)itsLineNumber);
-                push(pc);
-                istore(debug_pcLocal);
-
-                // see if a stop is requested anywhere in this function.
-                // if the flag is non-zero, then let the subroutine decide
-                // what to do.
-
-                addByteCode(ByteCode.ALOAD_0); // load 'this'
-                classFile.add(ByteCode.GETFIELD,
-                             superClassSlashName,
-                             "debug_stopFlags", "I");
-                int label = acquireLabel();
-                addByteCode(ByteCode.IFEQ, label);
-                addByteCode(ByteCode.JSR, debugStopSubLabel);
-                classFile.adjustStackTop(-1);
-                markLabel(label);
-            }
-            else {
-                push(itsLineNumber);
-                istore(debug_pcLocal);
-            }
-        }
     }
 
 
@@ -2559,44 +2184,29 @@ if (true) {
         int realEnd = acquireLabel();
         addByteCode(ByteCode.GOTO, realEnd);
 
+
         // javascript handler; unwrap exception and GOTO to javascript
         // catch area.
         if (catchTarget != null) {
-            int jsHandler = classFile.markHandler(acquireLabel());
-
-            // MS JVM gets cranky if the exception object is left on the stack
-            short exceptionObject = getNewWordLocal();
-            astore(exceptionObject);
-            
-            // reset the variable object local
-            aload(savedVariableObject);
-            astore(variableObjectLocal);
-
-            aload(exceptionObject);
-            releaseWordLocal(exceptionObject);
-
-            // unwrap the exception...
-            addScriptRuntimeInvoke("unwrapJavaScriptException",
-                          "(Lorg/mozilla/javascript/JavaScriptException;)",
-                          "Ljava/lang/Object;");
-
             // get the label to goto
             int catchLabel =
                 ((Integer)catchTarget.getProp(Node.LABEL_PROP)).intValue();
-            addByteCode(ByteCode.GOTO, catchLabel);
 
-            // mark the handler
-            classFile.addExceptionHandler
-                (startLabel, catchLabel, jsHandler,
-                 "org/mozilla/javascript/JavaScriptException");
-
+            generateCatchBlock(JAVASCRIPTEXCEPTION, savedVariableObject, 
+                               catchLabel, startLabel);
+            /*
+             * catch WrappedExceptions, see if they are wrapped 
+             * JavaScriptExceptions. Otherwise, rethrow.
+             */
+            generateCatchBlock(WRAPPEDEXCEPTION, savedVariableObject,
+                               catchLabel, startLabel);
             
             /*
                 we also need to catch EcmaErrors and feed the 
                 associated error object to the handler
             */
-            jsHandler = classFile.markHandler(acquireLabel());
-            exceptionObject = getNewWordLocal();
+            int jsHandler = classFile.markHandler(acquireLabel());
+            short exceptionObject = getNewWordLocal();
             astore(exceptionObject);
             aload(savedVariableObject);
             astore(variableObjectLocal);
@@ -2641,6 +2251,51 @@ if (true) {
         }
         releaseWordLocal(savedVariableObject);
         markLabel(realEnd);
+    }
+
+    private final int JAVASCRIPTEXCEPTION = 0;
+    private final int WRAPPEDEXCEPTION    = 1;
+
+    private void generateCatchBlock(int exceptionType, 
+                                    short savedVariableObject,
+                                    int catchLabel,
+                                    int startLabel)
+    {
+        int handler = classFile.markHandler(acquireLabel());
+
+        // MS JVM gets cranky if the exception object is left on the stack
+        short exceptionObject = getNewWordLocal();
+        astore(exceptionObject);
+        
+        // reset the variable object local
+        aload(savedVariableObject);
+        astore(variableObjectLocal);
+
+        aload(exceptionObject);
+        releaseWordLocal(exceptionObject);
+
+        if (exceptionType == JAVASCRIPTEXCEPTION) {
+            // unwrap the exception...
+            addScriptRuntimeInvoke("unwrapJavaScriptException",
+                          "(Lorg/mozilla/javascript/JavaScriptException;)",
+                          "Ljava/lang/Object;");
+        } else {
+            // unwrap the exception...
+            addScriptRuntimeInvoke("unwrapWrappedException",
+                          "(Lorg/mozilla/javascript/WrappedException;)",
+                          "Ljava/lang/Object;");
+        }
+
+
+        String exceptionName = exceptionType == JAVASCRIPTEXCEPTION
+                               ? "org/mozilla/javascript/JavaScriptException"
+                               : "org/mozilla/javascript/WrappedException";
+
+        // mark the handler
+        classFile.addExceptionHandler(startLabel, catchLabel, handler, 
+                                      exceptionName);
+
+        addByteCode(ByteCode.GOTO, catchLabel);
     }
 
     private void visitThrow(Node node, Node child) {
@@ -2820,7 +2475,7 @@ if (true) {
         }
         String name = node.getString();
         if (hasVarsInRegs) {
-            OptLocalVariable lVar = (OptLocalVariable) vars.get(name);
+            OptLocalVariable lVar = (OptLocalVariable) vars.getVariable(name);
             if (lVar != null) {
                 if (lVar.isNumber()) {
                     push("number");
@@ -2858,7 +2513,7 @@ if (true) {
             String routine = (isInc) ? "postIncrement" : "postDecrement";
             if (hasVarsInRegs && child.getType() == TokenStream.GETVAR) {
                 if (lVar == null) 
-                    lVar = (OptLocalVariable) vars.get(child.getString());
+                    lVar = (OptLocalVariable) vars.getVariable(child.getString());
                 if (lVar.getJRegister() == -1)
                     lVar.assignJRegister(getNewWordLocal());
                 aload(lVar.getJRegister());
@@ -3056,8 +2711,10 @@ if (true) {
             } else if (op == TokenStream.IN) {
                 generateCodeFromNode(child, node, -1, -1);
                 generateCodeFromNode(child.getNextSibling(), node, -1, -1);
+                aload(variableObjectLocal);
                 addScriptRuntimeInvoke("in",
-                              "(Ljava/lang/Object;Ljava/lang/Object;)","Z");
+                              "(Ljava/lang/Object;Ljava/lang/Object;"+
+                               "Lorg/mozilla/javascript/Scriptable;)","Z");
                 addByteCode(ByteCode.IFNE, trueGOTO);
                 addByteCode(ByteCode.GOTO, falseGOTO);
             } else {
@@ -3198,8 +2855,10 @@ if (true) {
             }
             else {
                 if (op == TokenStream.IN) {
+                    aload(variableObjectLocal);
                     addScriptRuntimeInvoke("in",
-                                  "(Ljava/lang/Object;Ljava/lang/Object;)","Z");
+                                  "(Ljava/lang/Object;Ljava/lang/Object;" +
+                                   "Lorg/mozilla/javascript/Scriptable;)","Z");
                     addByteCode(ByteCode.IFNE, trueGOTO);
                 }
                 else {
@@ -3568,6 +3227,10 @@ if (true) {
             aload(thisObjLocal);
             break;
 
+          case TokenStream.THISFN:
+            classFile.add(ByteCode.ALOAD_0);
+            break;
+
           case TokenStream.NULL:
             addByteCode(ByteCode.ACONST_NULL);
             break;
@@ -3627,7 +3290,7 @@ if (true) {
     {
         // TODO: Clean up use of lVar here and in set.
         if (hasVarsInRegs && lVar == null)
-            lVar = (OptLocalVariable) vars.get(name);
+            lVar = (OptLocalVariable) vars.getVariable(name);
         if (lVar != null) {
             if (lVar.getJRegister() == -1)
                 if (lVar.isNumber())
@@ -3698,7 +3361,7 @@ if (true) {
         OptLocalVariable lVar = (OptLocalVariable)(node.getProp(Node.VARIABLE_PROP));
         // XXX is this right? If so, clean up.
         if (hasVarsInRegs && lVar == null)
-            lVar = (OptLocalVariable) vars.get(child.getString());
+            lVar = (OptLocalVariable) vars.getVariable(child.getString());
         if (lVar != null) {
             generateCodeFromNode(child.getNextSibling(), node, -1, -1);
             if (lVar.getJRegister() == -1) {
@@ -3948,18 +3611,18 @@ if (true) {
     }
 
     private void dstore(short local) {
-        xstore(ByteCode.DSTORE_0, ByteCode.DSTORE, local);
+        xop(ByteCode.DSTORE_0, ByteCode.DSTORE, local);
     }
 
     private void istore(short local) {
-        xstore(ByteCode.ISTORE_0, ByteCode.ISTORE, local);
+        xop(ByteCode.ISTORE_0, ByteCode.ISTORE, local);
     }
 
     private void astore(short local) {
-        xstore(ByteCode.ASTORE_0, ByteCode.ASTORE, local);
+        xop(ByteCode.ASTORE_0, ByteCode.ASTORE, local);
     }
 
-    private void xstore(byte shortOp, byte op, short local) {
+    private void xop(byte shortOp, byte op, short local) {
         switch (local) {
           case 0:
             addByteCode(shortOp);
@@ -3974,45 +3637,31 @@ if (true) {
             addByteCode((byte)(shortOp + 3));
             break;
           default:
-            if (local < 0 || local >= Byte.MAX_VALUE)
+            if (local < 0 || local >= Short.MAX_VALUE)
                 throw new RuntimeException("bad local");
-            addByteCode(op, (byte)local);
+            if (local < Byte.MAX_VALUE) {
+                addByteCode(op, (byte)local);
+            } else {
+                // Add wide opcode.
+                addByteCode(ByteCode.WIDE);
+                addByteCode(op);
+                addByteCode((byte)(local >> 8));
+                addByteCode((byte)(local & 0xff));
+            }
             break;
         }
     }
 
     private void dload(short local) {
-        xload(ByteCode.DLOAD_0, ByteCode.DLOAD, local);
+        xop(ByteCode.DLOAD_0, ByteCode.DLOAD, local);
     }
 
     private void iload(short local) {
-        xload(ByteCode.ILOAD_0, ByteCode.ILOAD, local);
+        xop(ByteCode.ILOAD_0, ByteCode.ILOAD, local);
     }
 
     private void aload(short local) {
-        xload(ByteCode.ALOAD_0, ByteCode.ALOAD, local);
-    }
-
-    private void xload(byte shortOp, byte op, short local) {
-        switch (local) {
-          case 0:
-            addByteCode(shortOp);
-            break;
-          case 1:
-            addByteCode((byte)(shortOp + 1));
-            break;
-          case 2:
-            addByteCode((byte)(shortOp + 2));
-            break;
-          case 3:
-            addByteCode((byte)(shortOp + 3));
-            break;
-          default:
-            if (local < 0 || local >= Byte.MAX_VALUE)
-                throw new RuntimeException("bad local");
-            addByteCode(op, (byte) local);
-            break;
-        }
+        xop(ByteCode.ALOAD_0, ByteCode.ALOAD, local);
     }
 
     private short getNewWordPairLocal() {
@@ -4144,7 +3793,6 @@ if (true) {
     private short scriptRuntimeIndex;
     private int version;
     private OptClassNameHelper itsNameHelper;
-    private static JavaScriptClassLoader classLoader;
     
     private String itsSourceFile;
     private int itsLineNumber;
@@ -4180,17 +3828,6 @@ if (true) {
     private OptVariableTable debugVars;
     private int epilogueLabel;
     private int optLevel;
-    
-    // Debugging is currently *not* supported. We'll leave in the 
-    // support code, just make it unreachable, in case we get the
-    // time to get it working again.
-    private static final int debugLevel = 0;
-    private int debugStopSubLabel;
-
-    private short[] debugLineMap;
-    private short debugLineEntryCount;
-    private static final int DEBUG_LINE_MAP_INITIAL_SIZE = 100;
-    private static final int DEBUG_LINE_MAP_RESIZE_INCREMENT = 100;
 }
 
 class ConstantList {

@@ -40,13 +40,11 @@ import java.util.*;
 
 public class VariableTable {
 
-    public int size()
-    {
+    public int size() {
         return itsVariables.size();
     }
 
-    public int getParameterCount()
-    {
+    public int getParameterCount(){
         return varStart;
     }
     
@@ -55,13 +53,11 @@ public class VariableTable {
         return new LocalVariable(name, isParameter);
     }
 
-    public LocalVariable get(int index)
-    {
+    public LocalVariable getVariable(int index) {
         return (LocalVariable)(itsVariables.elementAt(index));
     }
 
-    public LocalVariable get(String name)
-    {
+    public LocalVariable getVariable(String name) {
         Integer vIndex = (Integer)(itsVariableNames.get(name));
         if (vIndex != null)
             return (LocalVariable)(itsVariables.elementAt(vIndex.intValue()));
@@ -77,28 +73,36 @@ public class VariableTable {
             return -1;
     }
 
-    public String getName(int index)
-    {
+    public String getName(int index) {
         return ((LocalVariable)(itsVariables.elementAt(index))).getName();
     }
 
-    public void establishIndices()
-    {
+    public String[] getAllNames() {    
+        int N = size();
+        String[] result = null;
+        if (N != 0) {
+            result = new String[N];
+            for (int i = 0; i != N; i++) {
+                result[i] = getName(i);
+            }
+        }
+        return result;
+    }
+
+    public void establishIndices() {
         for (int i = 0; i < itsVariables.size(); i++) {
             LocalVariable lVar = (LocalVariable)(itsVariables.elementAt(i));
             lVar.setIndex(i);
         }
     }
 
-    public void addParameter(String pName)
-    {
+    public void addParameter(String pName) {
         Integer pIndex = (Integer)(itsVariableNames.get(pName));
         if (pIndex != null) {
             LocalVariable p = (LocalVariable)
                                 (itsVariables.elementAt(pIndex.intValue()));
             if (p.isParameter()) {
-                Object[] errorArgs = { pName };
-                String message = Context.getMessage("msg.dup.parms", errorArgs);
+                String message = Context.getMessage1("msg.dup.parms", pName);
                 Context.reportWarning(message, null, 0, null, 0);
             }
             else {  // there's a local variable with this name, blow it off
@@ -111,18 +115,11 @@ public class VariableTable {
         itsVariableNames.put(pName, new Integer(curIndex));
     }
 
-    public void addLocal(String vName)
-    {
+    public void addLocal(String vName) {
         Integer vIndex = (Integer)(itsVariableNames.get(vName));
         if (vIndex != null) {
-            LocalVariable v = (LocalVariable)
-                            (itsVariables.elementAt(vIndex.intValue()));
-            if (v.isParameter()) {
-                // this is o.k. the parameter subsumes the variable def.
-            }
-            else {
-                return;
-            }
+            // There's already a variable or parameter with this name.
+            return;
         }
         int index = itsVariables.size();
         LocalVariable lVar = createLocalVariable(vName, false);

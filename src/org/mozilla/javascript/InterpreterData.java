@@ -19,6 +19,7 @@
  * Rights Reserved.
  *
  * Contributor(s): 
+ * Norris Boyd
  * Roger Lawrence
  *
  * Alternatively, the contents of this file may be used under the
@@ -45,7 +46,7 @@ class InterpreterData {
     
     InterpreterData(int lastICodeTop, int lastStringTableIndex, 
                     int lastNumberTableIndex, Object securityDomain,
-                    boolean useDynamicScope)
+                    boolean useDynamicScope, boolean checkThis)
     {
         itsICodeTop = lastICodeTop == 0 
                       ? INITIAL_MAX_ICODE_LENGTH
@@ -56,17 +57,45 @@ class InterpreterData {
                                     ? INITIAL_STRINGTABLE_SIZE
                                     : lastStringTableIndex * 2];
 
-        itsNumberTable = new Number[lastNumberTableIndex == 0
+        itsNumberTable = new double[lastNumberTableIndex == 0
                                     ? INITIAL_NUMBERTABLE_SIZE
                                     : lastNumberTableIndex * 2];
         
         itsUseDynamicScope = useDynamicScope;
-        if (securityDomain == null && Context.isSecurityDomainRequired())
-            throw new SecurityException("Required security context missing");
+        itsCheckThis = checkThis;
+        if (securityDomain == null)
+            Context.checkSecurityDomainRequired();
         this.securityDomain = securityDomain;
     }
     
-    VariableTable itsVariableTable;
+    public boolean placeBreakpoint(int line) { // XXX throw exn?
+        int offset = getOffset(line);
+        if (offset != -1 && (itsICode[offset] == (byte)TokenStream.LINE ||
+                             itsICode[offset] == (byte)TokenStream.BREAKPOINT))
+        {
+            itsICode[offset] = (byte) TokenStream.BREAKPOINT;
+            return true;
+        }
+        return false;
+    }
+    
+    public boolean removeBreakpoint(int line) {
+        int offset = getOffset(line);
+        if (offset != -1 && itsICode[offset] == (byte) TokenStream.BREAKPOINT)
+        {
+            itsICode[offset] = (byte) TokenStream.LINE;
+            return true;
+        }
+        return false;
+    }
+    
+    private int getOffset(int line) {
+        int offset = itsLineNumberTable.getInt(line, -1);
+        if (0 <= offset && offset <= itsICode.length) {
+            return offset;
+        }
+        return -1;
+    }    
     
     String itsName;
     String itsSource;
@@ -74,12 +103,13 @@ class InterpreterData {
     boolean itsNeedsActivation;
     boolean itsFromEvalCode;
     boolean itsUseDynamicScope;
+    boolean itsCheckThis;
     byte itsFunctionType;
 
     String[] itsStringTable;
     int itsStringTableIndex;
 
-    Number[] itsNumberTable;
+    double[] itsNumberTable;
     int itsNumberTableIndex;
     
     InterpretedFunction[] itsNestedFunctions;
@@ -93,11 +123,8 @@ class InterpreterData {
     int itsMaxArgs;
     int itsMaxStack;
     int itsMaxTryDepth;
+    
+    UintMap itsLineNumberTable;
 
     Object securityDomain;
-    
-    Context itsCX;
-    Scriptable itsScope;
-    Scriptable itsThisObj;
-    Object[] itsInArgs;
 }

@@ -39,11 +39,20 @@ package org.mozilla.javascript.optimizer;
 
 import org.mozilla.javascript.*;
 import java.io.*;
+import java.util.Hashtable;
 
 public class OptClassNameHelper implements ClassNameHelper {
+  
+    public OptClassNameHelper() {
+        setTargetClassFileName(null);
+    }
 
     public String getGeneratingDirectory() {
         return generatingDirectory;
+    }
+    
+    public void reset() {
+        classNames = null;
     }
 
     public synchronized String getJavaScriptClassName(String functionName, 
@@ -65,7 +74,21 @@ public class OptClassNameHelper implements ClassNameHelper {
         } else {
             s.append(globalSerial++);
         }
-        return s.toString();
+        
+        // We wish to produce unique class names between calls to reset()
+        // we disregard case since we may write the class names to file
+        // systems that are case insensitive
+        String result = s.toString();
+        String lowerResult = result.toLowerCase();
+        String base = lowerResult;
+        int count = 0;
+        if (classNames == null)
+            classNames = new Hashtable();
+        while (classNames.get(lowerResult) != null) {
+            lowerResult = base + ++count;
+        }
+        classNames.put(lowerResult, Boolean.TRUE);
+        return count == 0 ? result : (result + count);
     }
 
     public String getTargetClassFileName() {
@@ -73,6 +96,11 @@ public class OptClassNameHelper implements ClassNameHelper {
     }
 
     public void setTargetClassFileName(String classFileName) {
+        if (classFileName == null) {
+            packageName = "org.mozilla.javascript.gen";
+            initialName = "c";
+            return;
+        }
         int lastSeparator = classFileName.lastIndexOf(File.separatorChar);
         String initialName;
         if (lastSeparator == -1) {
@@ -142,11 +170,12 @@ public class OptClassNameHelper implements ClassNameHelper {
     }
 
     private String generatingDirectory;
-    private String packageName = "org.mozilla.javascript.gen";
-    private String initialName = "c";
+    private String packageName;
+    private String initialName;
     private static int globalSerial=1;
     private int serial=1;
     private Class targetExtends;
     private Class[] targetImplements;
     private ClassOutput classOutput;
+    private Hashtable classNames;
 }

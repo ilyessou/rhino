@@ -35,15 +35,20 @@
 
 package org.mozilla.javascript;
 
-public class InterpretedScript extends NativeScript {
+import org.mozilla.javascript.debug.*;
 
-    InterpretedScript(InterpreterData theData, Context cx)
+import java.util.*;
+
+public class InterpretedScript extends NativeScript implements DebuggableScript {
+
+    InterpretedScript(Context cx,
+                      InterpreterData theData, 
+                      String[] argNames, short argCount)
     {
         itsData = theData;
-        names = new String[itsData.itsVariableTable.size() + 1];
-        names[0] = "";
-        for (int i = 0; i < itsData.itsVariableTable.size(); i++)
-            names[i + 1] = itsData.itsVariableTable.getName(i);
+        this.argNames = argNames;
+        this.argCount = argCount;
+        functionName = "";
         nestedFunctions = itsData.itsNestedFunctions;
         version = (short)cx.getLanguageVersion();   
     }
@@ -60,14 +65,33 @@ public class InterpretedScript extends NativeScript {
     {
         scope = ScriptRuntime.initScript(cx, scope, this, thisObj, 
                                          itsData.itsFromEvalCode);
-        itsData.itsCX = cx;
-        itsData.itsScope = scope;
-        itsData.itsThisObj = thisObj;
-        itsData.itsInArgs = args;
-        return Interpreter.interpret(itsData);    
+        return Interpreter.interpret(cx, scope, thisObj, args, this, itsData);    
     }
-
+    
+    public boolean isFunction() {
+        return false;
+    }
+    
+    public Scriptable getScriptable() {
+        return this;
+    }
+    
+    public String getSourceName() {
+        return itsData.itsSourceFile;
+    }
+    
+    public int[] getLineNumbers() {
+        return itsData.itsLineNumberTable.getKeys();
+    }
+    
+    public boolean placeBreakpoint(int line) { // XXX throw exn?
+        return itsData.placeBreakpoint(line);
+    }
+    
+    public boolean removeBreakpoint(int line) {
+        return itsData.removeBreakpoint(line);
+    }
+    
     InterpreterData itsData;
-   
 }
 

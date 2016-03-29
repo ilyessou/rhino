@@ -20,6 +20,7 @@
  *
  * Contributor(s): 
  * Norris Boyd
+ * Igor Bukanov
  * Roger Lawrence
  *
  * Alternatively, the contents of this file may be used under the
@@ -113,7 +114,7 @@ public abstract class ScriptableObject implements Scriptable {
      * @return true if and only if the property was found in the object
      */
     public boolean has(String name, Scriptable start) {
-        return getSlot(name, name.hashCode()) != SLOT_NOT_FOUND;
+        return getSlot(name, name.hashCode(), false) != null;
     }
 
     /**
@@ -124,7 +125,7 @@ public abstract class ScriptableObject implements Scriptable {
      * @return true if and only if the property was found in the object
      */
     public boolean has(int index, Scriptable start) {
-        return getSlot(null, index) != SLOT_NOT_FOUND;
+        return getSlot(null, index, false) != null;
     }
 
     /**
@@ -138,18 +139,14 @@ public abstract class ScriptableObject implements Scriptable {
      * @return the value of the property (may be null), or NOT_FOUND
      */
     public Object get(String name, Scriptable start) {
-        int hashCode;
-        if (name == lastName) {
-            if (lastValue != REMOVED)
-                return lastValue;
-            hashCode = lastHash;
-        } else {
-            hashCode = name.hashCode();
-        }
-        int slotIndex = getSlot(name, hashCode);
-        if (slotIndex == SLOT_NOT_FOUND)
+        Slot slot = lastAccess; // Get local copy
+        if (name == slot.stringKey) {
+            if (slot.wasDeleted == 0) { return slot.value; }
+        } 
+        int hashCode = name.hashCode();
+        slot = getSlot(name, hashCode, false);
+        if (slot == null)
             return Scriptable.NOT_FOUND;
-        Slot slot = slots[slotIndex];
         if ((slot.flags & Slot.HAS_GETTER) != 0) {
             GetterSlot getterSlot = (GetterSlot) slot;
             try {
@@ -176,13 +173,14 @@ public abstract class ScriptableObject implements Scriptable {
                 throw WrappedException.wrapException(e);
             }
         }
-        // Update cache. Assign REMOVED to invalidate the cache while
-        // we update it in case there are accesses from another thread.
-        lastValue = REMOVED;
-        lastName = name;
-        lastHash = hashCode;
-        lastValue = slot.value;
-        return lastValue;
+        // Here stringKey.equals(name) holds, but it can be that 
+        // slot.stringKey != name. To make last name cache work, need
+        // to change the key
+        slot.stringKey = name;
+
+        // Update cache. 
+        lastAccess = slot;
+        return slot.value;
     }
 
     /**
@@ -193,10 +191,10 @@ public abstract class ScriptableObject implements Scriptable {
      * @return the value of the property (may be null), or NOT_FOUND
      */
     public Object get(int index, Scriptable start) {
-        int slotIndex = getSlot(null, index);
-        if (slotIndex == SLOT_NOT_FOUND)
+        Slot slot = getSlot(null, index, false);
+        if (slot == null)
             return Scriptable.NOT_FOUND;
-        return slots[slotIndex].value;
+        return slot.value;
     }
     
     /**
@@ -216,15 +214,14 @@ public abstract class ScriptableObject implements Scriptable {
      */
     public void put(String name, Scriptable start, Object value) {
         int hash = name.hashCode();
-        int slotIndex = getSlot(name, hash);
-        if (slotIndex == SLOT_NOT_FOUND) {
+        Slot slot = getSlot(name, hash, false);
+        if (slot == null) {
             if (start != this) {
                 start.put(name, start, value);
                 return;
             }
-            slotIndex = getSlotToSet(name, hash, false);
+            slot = getSlotToSet(name, hash, false);
         }
-        Slot slot = slots[slotIndex];
         if ((slot.attributes & ScriptableObject.READONLY) != 0)
             return;
         if ((slot.flags & Slot.HAS_SETTER) != 0) {
@@ -246,11 +243,21 @@ public abstract class ScriptableObject implements Scriptable {
                             break;
                         }
                     }
-                    getterSlot.setter.invoke(start, arg);
+                    Object v = getterSlot.setter.invoke(start, arg);
+                    if (getterSlot.setterReturnsValue) {
+                        slot.value = v;
+                        if (!(v instanceof Method))
+                            slot.flags = 0;
+                    }
                     return;
                 }
                 Object[] args = { this, actualArg };
-                getterSlot.setter.invoke(getterSlot.delegateTo, args);
+                Object v = getterSlot.setter.invoke(getterSlot.delegateTo, args);
+                if (getterSlot.setterReturnsValue) {
+                    slot.value = v;
+                    if (!(v instanceof Method))
+                        slot.flags = 0;
+                }
                 return;
             }
             catch (InvocationTargetException e) {
@@ -262,11 +269,9 @@ public abstract class ScriptableObject implements Scriptable {
         }
         if (this == start) {
             slot.value = value;
-            // It could be the case that name.equals(lastName)
-            // even if name != lastName. However, it is more
-            // expensive to call String.equals than it is to
-            // just invalidate the cache.
-            lastValue = name == lastName ? value : REMOVED;
+            // Make cache work
+            slot.stringKey = name;
+            lastAccess = slot;
         } else {
             start.put(name, start, value);
         }
@@ -280,15 +285,14 @@ public abstract class ScriptableObject implements Scriptable {
      * @param value value to set the property to
      */
     public void put(int index, Scriptable start, Object value) {
-        int slotIndex = getSlot(null, index);
-        if (slotIndex == SLOT_NOT_FOUND) {
+        Slot slot = getSlot(null, index, false);
+        if (slot == null) {
             if (start != this) {
                 start.put(index, start, value);
                 return;
             }
-            slotIndex = getSlotToSet(null, index, false);
+            slot = getSlotToSet(null, index, false);
         }
-        Slot slot = slots[slotIndex];
         if ((slot.attributes & ScriptableObject.READONLY) != 0)
             return;
         if (this == start) {
@@ -307,8 +311,6 @@ public abstract class ScriptableObject implements Scriptable {
      * @param name the name of the property
      */
     public void delete(String name) {
-        if (name.equals(lastName))
-            lastValue = REMOVED;   // invalidate cache
         removeSlot(name, name.hashCode());
     }
 
@@ -344,12 +346,11 @@ public abstract class ScriptableObject implements Scriptable {
     public int getAttributes(String name, Scriptable start)
         throws PropertyException
     {
-        int slotIndex = getSlot(name, name.hashCode());
-        if (slotIndex == SLOT_NOT_FOUND) {
-            throw new PropertyException(
-                Context.getMessage("msg.prop.not.found", null));
+        Slot slot = getSlot(name, name.hashCode(), false);
+        if (slot == null) {
+            throw PropertyException.withMessage0("msg.prop.not.found");
         }
-        return slots[slotIndex].attributes;
+        return slot.attributes;
     }
 
     /**
@@ -369,12 +370,11 @@ public abstract class ScriptableObject implements Scriptable {
     public int getAttributes(int index, Scriptable start)
         throws PropertyException
     {
-        int slotIndex = getSlot(null, index);
-        if (slotIndex == SLOT_NOT_FOUND) {
-            throw new PropertyException(
-                Context.getMessage("msg.prop.not.found", null));
+        Slot slot = getSlot(null, index, false);
+        if (slot == null) {
+            throw PropertyException.withMessage0("msg.prop.not.found");
         }
-        return slots[slotIndex].attributes;
+        return slot.attributes;
     }
 
     /**
@@ -406,12 +406,11 @@ public abstract class ScriptableObject implements Scriptable {
     {
         final int mask = READONLY | DONTENUM | PERMANENT;
         attributes &= mask; // mask out unused bits
-        int slotIndex = getSlot(name, name.hashCode());
-        if (slotIndex == SLOT_NOT_FOUND) {
-            throw new PropertyException(
-                Context.getMessage("msg.prop.not.found", null));
+        Slot slot = getSlot(name, name.hashCode(), false);
+        if (slot == null) {
+            throw PropertyException.withMessage0("msg.prop.not.found");
         }
-        slots[slotIndex].attributes = (short) attributes;
+        slot.attributes = (short) attributes;
     }
 
     /**
@@ -432,12 +431,11 @@ public abstract class ScriptableObject implements Scriptable {
                               int attributes)
         throws PropertyException
     {
-        int slotIndex = getSlot(null, index);
-        if (slotIndex == SLOT_NOT_FOUND) {
-            throw new PropertyException(
-                Context.getMessage("msg.prop.not.found", null));
+        Slot slot = getSlot(null, index, false);
+        if (slot == null) {
+            throw PropertyException.withMessage0("msg.prop.not.found");
         }
-        slots[slotIndex].attributes = (short) attributes;
+        slot.attributes = (short) attributes;
     }
 
     /**
@@ -514,17 +512,17 @@ public abstract class ScriptableObject implements Scriptable {
      */
     public Object getDefaultValue(Class typeHint) {
         Object val;
-        FlattenedObject f = new FlattenedObject(this);
         Context cx = null;
         try {
             for (int i=0; i < 2; i++) {
                 if (typeHint == ScriptRuntime.StringClass ? i == 0 : i == 1) {
-                    Function fun = getFunctionProperty(f, "toString");
-                    if (fun == null)
+                    Object v = getProperty(this, "toString");
+                    if (!(v instanceof Function))
                         continue;
+                    Function fun = (Function) v;
                     if (cx == null)
                         cx = Context.getContext();
-                    val = fun.call(cx, fun.getParentScope(), f.getObject(),
+                    val = fun.call(cx, fun.getParentScope(), this,
                                    ScriptRuntime.emptyArgs);
                 } else {
                     String hint;
@@ -552,18 +550,17 @@ public abstract class ScriptableObject implements Scriptable {
                              typeHint == Double.TYPE)
                         hint = "number";
                     else {
-                        Object[] args = { typeHint.toString() };
-                        throw Context.reportRuntimeError(
-                            Context.getMessage("msg.invalid.type", args));
+                        throw Context.reportRuntimeError1(
+                            "msg.invalid.type", typeHint.toString());
                     }
-                    Function fun = getFunctionProperty(f, "valueOf");
-                    if (fun == null)
+                    Object v = getProperty(this, "valueOf");
+                    if (!(v instanceof Function))
                         continue;
+                    Function fun = (Function) v;
                     Object[] args = { hint };
                     if (cx == null)
                         cx = Context.getContext();
-                    val = fun.call(cx, fun.getParentScope(), f.getObject(), 
-                                   args);
+                    val = fun.call(cx, fun.getParentScope(), this, args);
                 }
                 if (val != null && (val == Undefined.instance ||
                                     !(val instanceof Scriptable) ||
@@ -585,12 +582,8 @@ public abstract class ScriptableObject implements Scriptable {
         catch (JavaScriptException jse) {
             // fall through to error 
         }
-        Object arg = typeHint == null ? "undefined" : typeHint.toString();
-        Object[] args = { arg };
-        throw NativeGlobal.constructError(
-                    Context.getContext(), "TypeError",
-                    ScriptRuntime.getMessage("msg.default.value", args),
-                    this);
+        Object arg = (typeHint == null) ? "undefined" : typeHint.toString();
+        throw NativeGlobal.typeError1("msg.default.value", arg, this);
     }
 
     /**
@@ -611,14 +604,17 @@ public abstract class ScriptableObject implements Scriptable {
     }
 
     /**
-     * Defines JavaScript objects from a Java class.
+     * Defines JavaScript objects from a Java class that implements Scriptable.
      *
      * If the given class has a method
      * <pre>
+     * static void init(Context cx, Scriptable scope, boolean sealed);</pre>
+     *
+     * or its compatibility form 
+     * <pre>
      * static void init(Scriptable scope);</pre>
      *
-     * then it is invoked and no further initialization is done and the
-     * result of the invocation will be returned.<p>
+     * then it is invoked and no further initialization is done.<p>
      *
      * However, if no such a method is found, then the class's constructors and
      * methods are used to initialize a class in the following manner.<p>
@@ -722,7 +718,7 @@ public abstract class ScriptableObject implements Scriptable {
      * 
      * @param scope The scope in which to define the constructor
      * @param clazz The Java class to use to define the JavaScript objects
-     *              and properties
+     *              and properties. The class must implement Scriptable.
      * @param sealed whether or not to create sealed standard objects that
      *               cannot be modified. 
      * @exception IllegalAccessException if access is not available
@@ -746,17 +742,30 @@ public abstract class ScriptableObject implements Scriptable {
     {
         Method[] methods = FunctionObject.getMethodList(clazz);
         for (int i=0; i < methods.length; i++) {
-            if (!methods[i].getName().equals("init"))
+            Method method = methods[i];
+            if (!method.getName().equals("init"))
                 continue;
-            Class[] parmTypes = methods[i].getParameterTypes();
-            if (parmTypes.length == 1 &&
-                parmTypes[0] == ScriptRuntime.ScriptableClass &&
-                Modifier.isStatic(methods[i].getModifiers()))
+            Class[] parmTypes = method.getParameterTypes();
+            if (parmTypes.length == 3 &&
+                parmTypes[0] == ContextClass &&
+                parmTypes[1] == ScriptRuntime.ScriptableClass &&
+                parmTypes[2] == Boolean.TYPE &&
+                Modifier.isStatic(method.getModifiers()))
             {
-                Object args[] = { scope };
-                methods[i].invoke(null, args);
+                Object args[] = { Context.getContext(), scope, 
+                                  sealed ? Boolean.TRUE : Boolean.FALSE };
+                method.invoke(null, args);
                 return;
             }
+            if (parmTypes.length == 1 &&
+                parmTypes[0] == ScriptRuntime.ScriptableClass &&
+                Modifier.isStatic(method.getModifiers()))
+            {
+                Object args[] = { scope };
+                method.invoke(null, args);
+                return;
+            }
+            
         }
 
         // If we got here, there isn't an "init" method with the right
@@ -772,9 +781,8 @@ public abstract class ScriptableObject implements Scriptable {
             }
         }
         if (protoCtor == null) {
-            Object[] args = { clazz.getName() };
             throw new ClassDefinitionException(
-                    Context.getMessage("msg.zero.arg.ctor", args));
+                    Context.getMessage1("msg.zero.arg.ctor", clazz.getName()));
         }
 
         Scriptable proto = (Scriptable) 
@@ -794,20 +802,21 @@ public abstract class ScriptableObject implements Scriptable {
         final String setterPrefix = "jsSet_";
         final String ctorName = "jsConstructor";
 
+        boolean hasPrefix = false;
         Method[] ctorMeths = FunctionObject.findMethods(clazz, ctorName);
         Member ctorMember = null;
         if (ctorMeths != null) {
             if (ctorMeths.length > 1) {
-                Object[] args = { ctorMeths[0], ctorMeths[1] };
                 throw new ClassDefinitionException(
-                    Context.getMessage("msg.multiple.ctors", args));
+                    Context.getMessage2("msg.multiple.ctors", 
+                                        ctorMeths[0], ctorMeths[1]));
             }
             ctorMember = ctorMeths[0];
+            hasPrefix = true;
         }
 
         // Deprecated: look for functions with the same name as the class
         // and consider them constructors.
-        boolean hasPrefix = false;
         for (int i=0; i < methods.length; i++) {
             String name = methods[i].getName();
             String prefix = null;
@@ -831,9 +840,9 @@ public abstract class ScriptableObject implements Scriptable {
             }
             if (name.equals(className)) {
                 if (ctorMember != null) {
-                    Object[] args = { ctorMember, methods[i] };
                     throw new ClassDefinitionException(
-                        Context.getMessage("msg.multiple.ctors", args));
+                        Context.getMessage2("msg.multiple.ctors", 
+                                            ctorMember, methods[i]));
                 }
                 ctorMember = methods[i];
             }
@@ -849,17 +858,16 @@ public abstract class ScriptableObject implements Scriptable {
                     ctorMember = ctors[0];
             }
             if (ctorMember == null) {
-                Object[] args = { clazz.getName() };
                 throw new ClassDefinitionException(
-                    Context.getMessage("msg.ctor.multiple.parms", args));
+                    Context.getMessage1("msg.ctor.multiple.parms",
+                                        clazz.getName()));
             }
         }
 
         FunctionObject ctor = new FunctionObject(className, ctorMember, scope);
         if (ctor.isVarArgsMethod()) {
-            Object[] args = { ctorMember.getName() };
-            String message = Context.getMessage("msg.varargs.ctor", args);
-            throw Context.reportRuntimeError(message);
+            throw Context.reportRuntimeError1
+                ("msg.varargs.ctor", ctorMember.getName());
         }
         ctor.addAsConstructor(scope, proto);
 
@@ -882,6 +890,9 @@ public abstract class ScriptableObject implements Scriptable {
                     continue;
                 }
             }
+            // ignore any compiler generated methods.
+            if (name.indexOf('$') != -1)
+                continue;
             if (name.equals(ctorName))
                 continue;
             String prefix = null;
@@ -915,17 +926,15 @@ public abstract class ScriptableObject implements Scriptable {
                 continue;   // deal with set when we see get
             if (prefix != null && prefix.equals(getterPrefix)) {
                 if (!(proto instanceof ScriptableObject)) {
-                    Object[] args = { proto.getClass().toString(), name };
-                    throw new PropertyException(
-                        Context.getMessage("msg.extend.scriptable", args));
+                    throw PropertyException.withMessage2
+                        ("msg.extend.scriptable",                                                         proto.getClass().toString(), name);
                 }
                 Method[] setter = FunctionObject.findMethods(
                                     clazz,
                                     setterPrefix + name);
                 if (setter != null && setter.length != 1) {
-                    Object[] errArgs = { name, clazz.getName() };
-                    throw new PropertyException(
-                        Context.getMessage("msg.no.overload", errArgs));
+                    throw PropertyException.withMessage2
+                        ("msg.no.overload", name, clazz.getName());
                 }
                 int attr = ScriptableObject.PERMANENT |
                            ScriptableObject.DONTENUM  |
@@ -943,9 +952,9 @@ public abstract class ScriptableObject implements Scriptable {
                                 prefix.equals(staticFunctionPrefix))))
             {
                 if (!(proto instanceof ScriptableObject)) {
-                    Object[] args = { proto.getClass().toString(), name };
-                    throw new PropertyException(
-                        Context.getMessage("msg.extend.scriptable", args));
+                    throw PropertyException.withMessage2
+                        ("msg.extend.scriptable",
+                         proto.getClass().toString(), name);
                 }
                 if (name.startsWith("set"))
                     continue;   // deal with set when we see get
@@ -963,9 +972,8 @@ public abstract class ScriptableObject implements Scriptable {
                                     hasPrefix ? genericPrefix + setterName
                                               : setterName);
                 if (setter != null && setter.length != 1) {
-                    Object[] errArgs = { name, clazz.getName() };
-                    throw new PropertyException(
-                        Context.getMessage("msg.no.overload", errArgs));
+                    throw PropertyException.withMessage2
+                        ("msg.no.overload", name, clazz.getName());
                 }
                 if (setter == null && hasPrefix)
                     setter = FunctionObject.findMethods(
@@ -983,18 +991,13 @@ public abstract class ScriptableObject implements Scriptable {
             }
             FunctionObject f = new FunctionObject(name, methods[i], proto);
             if (f.isVarArgsConstructor()) {
-                Object[] args = { ctorMember.getName() };
-                String message = Context.getMessage("msg.varargs.fun", args);
-                throw Context.reportRuntimeError(message);
+                throw Context.reportRuntimeError1
+                    ("msg.varargs.fun", ctorMember.getName());
             }
             Scriptable dest = prefix == staticFunctionPrefix
                               ? ctor
                               : proto;
-            if (dest instanceof ScriptableObject) {
-                ((ScriptableObject) dest).defineProperty(name, f, DONTENUM);
-            } else {
-                dest.put(name, dest, f);
-            }
+            defineProperty(dest, name, f, DONTENUM);
             if (sealed) {
                 f.sealObject();
                 f.addPropertyAttribute(READONLY);
@@ -1040,6 +1043,25 @@ public abstract class ScriptableObject implements Scriptable {
     }
 
     /**
+     * Utility method to add properties to arbitrary Scriptable object.
+     * If destination is instance of ScriptableObject, calls 
+     * defineProperty there, otherwise calls put in destination 
+     * ignoring attributes
+     */
+    public static void defineProperty(Scriptable destination, 
+                                      String propertyName, Object value,
+                                      int attributes)
+    {
+        if (destination instanceof ScriptableObject) {
+            ScriptableObject obj = (ScriptableObject)destination;
+            obj.defineProperty(propertyName, value, attributes);
+        }
+        else {
+            destination.put(propertyName, destination, value);
+        }
+    }
+ 
+    /**
      * Define a JavaScript property with getter and setter side effects.
      *
      * If the setter is not found, the attribute READONLY is added to
@@ -1074,9 +1096,8 @@ public abstract class ScriptableObject implements Scriptable {
         if (setter == null)
             attributes |= ScriptableObject.READONLY;
         if (getter.length != 1 || (setter != null && setter.length != 1)) {
-            Object[] errArgs = { propertyName, clazz.getName() };
-            throw new PropertyException(
-                Context.getMessage("msg.no.overload", errArgs));
+            throw PropertyException.withMessage2
+                ("msg.no.overload", propertyName, clazz.getName());
         }
         defineProperty(propertyName, null, getter[0],
                        setter == null ? null : setter[0], attributes);
@@ -1129,7 +1150,7 @@ public abstract class ScriptableObject implements Scriptable {
                                Method getter, Method setter, int attributes)
         throws PropertyException
     {
-        short flags = Slot.HAS_GETTER;
+        int flags = Slot.HAS_GETTER;
         if (delegateTo == null && (Modifier.isStatic(getter.getModifiers())))
             delegateTo = HAS_STATIC_ACCESSORS;
         Class[] parmTypes = getter.getParameterTypes();
@@ -1137,55 +1158,48 @@ public abstract class ScriptableObject implements Scriptable {
             if (parmTypes.length != 1 ||
                 parmTypes[0] != ScriptableObject.class)
             {
-                Object[] args = { getter.toString() };
-                throw new PropertyException(
-                    Context.getMessage("msg.bad.getter.parms", args));
+                throw PropertyException.withMessage1
+                    ("msg.bad.getter.parms", getter.toString());
             }
         } else if (delegateTo != null) {
-            Object[] args = { getter.toString() };
-            throw new PropertyException(
-                Context.getMessage("msg.obj.getter.parms", args));
+            throw PropertyException.withMessage1
+                ("msg.obj.getter.parms", getter.toString());
         }
         if (setter != null) {
             flags |= Slot.HAS_SETTER;
             if ((delegateTo == HAS_STATIC_ACCESSORS) !=
                 (Modifier.isStatic(setter.getModifiers())))
             {
-                throw new PropertyException(
-                    Context.getMessage("msg.getter.static", null));
+                throw PropertyException.withMessage0("msg.getter.static");
             }
             parmTypes = setter.getParameterTypes();
             if (parmTypes.length == 2) {
                 if (parmTypes[0] != ScriptableObject.class) {
-                    throw new PropertyException(
-                        Context.getMessage("msg.setter2.parms", null));
+                    throw PropertyException.withMessage0("msg.setter2.parms");
                 }
                 if (delegateTo == null) {
-                    Object[] args = { setter.toString() };
-                    throw new PropertyException(
-                        Context.getMessage("msg.setter1.parms", args));
+                    throw PropertyException.withMessage1
+                        ("msg.setter1.parms", setter.toString());
                 }
             } else if (parmTypes.length == 1) {
                 if (delegateTo != null) {
-                    Object[] args = { setter.toString() };
-                    throw new PropertyException(
-                        Context.getMessage("msg.setter2.expected", args));
+                    throw PropertyException.withMessage1
+                        ("msg.setter2.expected", setter.toString());
                 }
             } else {
-                throw new PropertyException(
-                    Context.getMessage("msg.setter.parms", null));
+                throw PropertyException.withMessage0("msg.setter.parms");
             }
         }
-        int slotIndex = getSlotToSet(propertyName,
-                                     propertyName.hashCode(),
-                                     true);
-        GetterSlot slot = (GetterSlot) slots[slotIndex];
+        GetterSlot slot = (GetterSlot)getSlotToSet(propertyName,
+                                                   propertyName.hashCode(),
+                                                   true);
         slot.delegateTo = delegateTo;
         slot.getter = getter;
         slot.setter = setter;
+        slot.setterReturnsValue = setter != null && setter.getReturnType() != Void.TYPE;
         slot.value = null;
         slot.attributes = (short) attributes;
-        slot.flags = flags;
+        slot.flags = (byte)flags;
     }
 
     /**
@@ -1212,14 +1226,12 @@ public abstract class ScriptableObject implements Scriptable {
             String name = names[i];
             Method[] m = FunctionObject.findMethods(clazz, name);
             if (m == null) {
-                Object[] errArgs = { name, clazz.getName() };
-                throw new PropertyException(
-                    Context.getMessage("msg.method.not.found", errArgs));
+                throw PropertyException.withMessage2
+                    ("msg.method.not.found", name, clazz.getName());
             }
             if (m.length > 1) {
-                Object[] errArgs = { name, clazz.getName() };
-                throw new PropertyException(
-                    Context.getMessage("msg.no.overload", errArgs));
+                throw PropertyException.withMessage2
+                    ("msg.no.overload", name, clazz.getName());
             }
             FunctionObject f = new FunctionObject(name, m[0], this);
             defineProperty(name, f, attributes);
@@ -1315,7 +1327,244 @@ public abstract class ScriptableObject implements Scriptable {
     public boolean isSealed() {
         return count == -1;
     }
-        
+
+    /**
+     * Gets a named property from an object or any object in its prototype chain.
+     * <p>
+     * Searches the prototype chain for a property named <code>name</code>.
+     * <p>
+     * @param obj a JavaScript object 
+     * @param name a property name 
+     * @return the value of a property with name <code>name</code> found in 
+     *         <code>obj</code> or any object in its prototype chain, or 
+     *         <code>Scriptable.NOT_FOUND</code> if not found
+     * @since 1.5R2
+     */
+    public static Object getProperty(Scriptable obj, String name) {
+        Scriptable start = obj;
+        Object result;
+        do {
+            result = obj.get(name, start);
+            if (result != Scriptable.NOT_FOUND)
+                break;
+            obj = obj.getPrototype();
+        } while (obj != null);
+        return result;
+    }
+    
+    /**
+     * Gets an indexed property from an object or any object in its prototype chain.
+     * <p>
+     * Searches the prototype chain for a property with integral index 
+     * <code>index</code>. Note that if you wish to look for properties with numerical
+     * but non-integral indicies, you should use getProperty(Scriptable,String) with
+     * the string value of the index.
+     * <p>
+     * @param obj a JavaScript object 
+     * @param index an integral index 
+     * @return the value of a property with index <code>index</code> found in 
+     *         <code>obj</code> or any object in its prototype chain, or 
+     *         <code>Scriptable.NOT_FOUND</code> if not found
+     * @since 1.5R2
+     */
+    public static Object getProperty(Scriptable obj, int index) {
+        Scriptable start = obj;
+        Object result;
+        do {
+            result = obj.get(index, start);
+            if (result != Scriptable.NOT_FOUND)
+                break;
+            obj = obj.getPrototype();
+        } while (obj != null);
+        return result;
+    }
+    
+    /**
+     * Returns whether a named property is defined in an object or any object 
+     * in its prototype chain.
+     * <p>
+     * Searches the prototype chain for a property named <code>name</code>.
+     * <p>
+     * @param obj a JavaScript object 
+     * @param name a property name 
+     * @return the true if property was found
+     * @since 1.5R2
+     */
+    public static boolean hasProperty(Scriptable obj, String name) {
+        Scriptable start = obj;
+        do {
+            if (obj.has(name, start))
+                return true;
+            obj = obj.getPrototype();
+        } while (obj != null);
+        return false;
+    }
+    
+    /**
+     * Returns whether an indexed property is defined in an object or any object 
+     * in its prototype chain.
+     * <p>
+     * Searches the prototype chain for a property with index <code>index</code>.
+     * <p>
+     * @param obj a JavaScript object 
+     * @param index a property index 
+     * @return the true if property was found
+     * @since 1.5R2
+     */
+    public static boolean hasProperty(Scriptable obj, int index) {
+        Scriptable start = obj;
+        do {
+            if (obj.has(index, start))
+                return true;
+            obj = obj.getPrototype();
+        } while (obj != null);
+        return false;
+    }
+
+    /**
+     * Puts a named property in an object or in an object in its prototype chain.
+     * <p>
+     * Seaches for the named property in the prototype chain. If it is found,
+     * the value of the property is changed. If it is not found, a new
+     * property is added in <code>obj</code>.
+     * @param obj a JavaScript object 
+     * @param name a property name
+     * @param value any JavaScript value accepted by Scriptable.put 
+     * @since 1.5R2
+     */
+    public static void putProperty(Scriptable obj, String name, Object value) {
+        Scriptable base = getBase(obj, name);
+        if (base == null)
+            base = obj;
+        base.put(name, obj, value);
+    }
+
+    /**
+     * Puts an indexed property in an object or in an object in its prototype chain.
+     * <p>
+     * Seaches for the indexed property in the prototype chain. If it is found,
+     * the value of the property is changed. If it is not found, a new
+     * property is added in <code>obj</code>.
+     * @param obj a JavaScript object 
+     * @param index a property index
+     * @param value any JavaScript value accepted by Scriptable.put 
+     * @since 1.5R2
+     */
+    public static void putProperty(Scriptable obj, int index, Object value) {
+        Scriptable base = getBase(obj, index);
+        if (base == null)
+            base = obj;
+        base.put(index, obj, value);
+    }
+
+    /**
+     * Removes the property from an object or its prototype chain.
+     * <p>
+     * Searches for a property with <code>name</code> in obj or
+     * its prototype chain. If it is found, the object's delete
+     * method is called. 
+     * @param obj a JavaScript object
+     * @param name a property name
+     * @return true if the property doesn't exist or was successfully removed
+     * @since 1.5R2
+     */
+    public static boolean deleteProperty(Scriptable obj, String name) {
+        Scriptable base = getBase(obj, name);
+        if (base == null)
+            return true;
+        base.delete(name);
+        return base.get(name, obj) == NOT_FOUND;
+    }
+                
+    /**
+     * Removes the property from an object or its prototype chain.
+     * <p>
+     * Searches for a property with <code>index</code> in obj or
+     * its prototype chain. If it is found, the object's delete
+     * method is called. 
+     * @param obj a JavaScript object
+     * @param index a property index
+     * @return true if the property doesn't exist or was successfully removed
+     * @since 1.5R2
+     */
+    public static boolean deleteProperty(Scriptable obj, int index) {
+        Scriptable base = getBase(obj, index);
+        if (base == null)
+            return true;
+        base.delete(index);
+        return base.get(index, obj) == NOT_FOUND;
+    }
+    
+    /**
+     * Returns an array of all ids from an object and its prototypes.
+     * <p>
+     * @param obj a JavaScript object
+     * @return an array of all ids from all object in the prototype chain.
+     *         If a given id occurs multiple times in the prototype chain,
+     *         it will occur only once in this list.
+     * @since 1.5R2
+     */
+    public static Object[] getPropertyIds(Scriptable obj) {
+        Hashtable h = new Hashtable();  // JDK1.2: use HashSet
+        while (obj != null) {
+            Object[] ids = obj.getIds();
+            for (int i=0; i < ids.length; i++) {
+                h.put(ids[i], ids[i]);
+            }
+            obj = (Scriptable)obj.getPrototype();
+        }
+        Object[] result = new Object[h.size()];
+        java.util.Enumeration e = h.elements();
+        int n = 0;
+        while (e.hasMoreElements()) {
+            result[n++] = e.nextElement();
+        }
+        return result;
+    }
+    
+    /**
+     * Call a method of an object.
+     * <p>
+     * @param obj the JavaScript object
+     * @param methodName the name of the function property
+     * @param args the arguments for the call
+     * @exception JavaScriptException thrown if there were errors in the call
+     */
+    public static Object callMethod(Scriptable obj, String methodName, 
+                                    Object[] args)
+        throws JavaScriptException
+    {
+        Context cx = Context.enter();
+        try {
+            Object fun = getProperty(obj, methodName);
+            if (fun == NOT_FOUND)
+                fun = Undefined.instance;
+            return ScriptRuntime.call(cx, fun, obj, args, getTopLevelScope(obj));
+        } finally {
+          Context.exit();
+        }
+    }
+                
+    private static Scriptable getBase(Scriptable obj, String s) {
+        Scriptable m = obj;
+        while (m != null) {
+            if (m.has(s, obj))
+                return m;
+            m = m.getPrototype();
+        }
+        return null;
+    }
+
+    private static Scriptable getBase(Scriptable obj, int index) {
+        Scriptable m = obj;
+        while (m != null) {
+            if (m.has(index, obj))
+                return m;
+            m = m.getPrototype();
+        }
+        return null;
+    }
+    
     /**
      * Adds a property attribute to all properties.
      */
@@ -1332,48 +1581,68 @@ public abstract class ScriptableObject implements Scriptable {
         }
     }
     
-    private static final int SLOT_NOT_FOUND = -1;
-
-    private int getSlot(String id, int index) {
+    private Slot getSlot(String id, int index, boolean shouldDelete) {
+        Slot[] slots = this.slots;
         if (slots == null)
-            return SLOT_NOT_FOUND;
+            return null;
         int start = (index & 0x7fffffff) % slots.length;
         int i = start;
         do {
             Slot slot = slots[i];
             if (slot == null)
-                return SLOT_NOT_FOUND;
+                return null;
             if (slot != REMOVED && slot.intKey == index && 
                 (slot.stringKey == id || (id != null && 
                                           id.equals(slot.stringKey))))
             {
-                return i;
+                if (shouldDelete) {
+                    if ((slot.attributes & PERMANENT) == 0) {
+                        // Mark the slot as removed to handle a case when
+                        // another thread manages to put just removed slot
+                        // into lastAccess cache.
+                        slot.wasDeleted = (byte)1;
+                        slots[i] = REMOVED;
+                        count--;
+                        if (slot == lastAccess)
+                            lastAccess = REMOVED;
+                    }
+                }
+                return slot;
             }
             if (++i == slots.length)
                 i = 0;
         } while (i != start);
-        return SLOT_NOT_FOUND;
+        return null;
     }
 
-    private int getSlotToSet(String id, int index, boolean getterSlot) {
+    private Slot getSlotToSet(String id, int index, boolean getterSlot) {
         if (slots == null)
             slots = new Slot[5];
         int start = (index & 0x7fffffff) % slots.length;
+        boolean sawRemoved = false;
         int i = start;
         do {
             Slot slot = slots[i];
             if (slot == null) {
                 return addSlot(id, index, getterSlot);
             }
-            if (slot != REMOVED && slot.intKey == index && 
-                (slot.stringKey == id || (id != null && 
-                                          id.equals(slot.stringKey))))
+            if (slot == REMOVED) {
+                sawRemoved = true;
+            } else if (slot.intKey == index && 
+                       (slot.stringKey == id || 
+                        (id != null && id.equals(slot.stringKey))))
             {
-                return i;
+                return slot;
             }
             if (++i == slots.length)
                 i = 0;
         } while (i != start);
+        if (sawRemoved) {
+            // Table could be full, but with some REMOVED elements. 
+            // Call to addSlot will use a slot currently taken by 
+            // a REMOVED.
+            return addSlot(id, index, getterSlot);
+        }
         throw new RuntimeException("Hashtable internal error");
     }
 
@@ -1385,18 +1654,16 @@ public abstract class ScriptableObject implements Scriptable {
      * since another thread could have added the given property or
      * caused the table to grow while this thread was searching.
      */
-    private synchronized int addSlot(String id, int index, boolean getterSlot)
+    private synchronized Slot addSlot(String id, int index, boolean getterSlot)
     {
         if (count == -1)
-            throw Context.reportRuntimeError(Context.getMessage
-                                             ("msg.add.sealed", null));
+            throw Context.reportRuntimeError0("msg.add.sealed");
         int start = (index & 0x7fffffff) % slots.length;
         int i = start;
         do {
             Slot slot = slots[i];
             if (slot == null || slot == REMOVED) {
-                count++;
-                if ((4 * count) > (3 * slots.length)) {
+                if ((4 * (count+1)) > (3 * slots.length)) {
                     grow();
                     return getSlotToSet(id, index, getterSlot);
                 }
@@ -1404,13 +1671,14 @@ public abstract class ScriptableObject implements Scriptable {
                 slot.stringKey = id;
                 slot.intKey = index;
                 slots[i] = slot;
-                return i;
+                count++;
+                return slot;
             }
             if (slot.intKey == index && 
                 (slot.stringKey == id || (id != null && 
                                           id.equals(slot.stringKey)))) 
             {
-                return i;
+                return slot;
             }
             if (++i == slots.length)
                 i = 0;
@@ -1427,15 +1695,8 @@ public abstract class ScriptableObject implements Scriptable {
      */
     private synchronized void removeSlot(String name, int index) {
         if (count == -1)
-            throw Context.reportRuntimeError(Context.getMessage
-                                             ("msg.remove.sealed", null));
-        int slotIndex = getSlot(name, index);
-        if (slotIndex == SLOT_NOT_FOUND)
-            return;
-        if ((slots[slotIndex].attributes & ScriptableObject.PERMANENT) != 0)
-            return;
-        slots[slotIndex] = REMOVED;
-        count--;
+            throw Context.reportRuntimeError0("msg.remove.sealed");
+        getSlot(name, index, true);
     }
 
     /**
@@ -1465,16 +1726,6 @@ public abstract class ScriptableObject implements Scriptable {
         slots = newSlots;
     }
 
-    private Function getFunctionProperty(FlattenedObject f, String name) {
-        Object val = f.getProperty(name);
-        if (val == null || !(val instanceof FlattenedObject))
-            return null;
-        Scriptable s = ((FlattenedObject) val).getObject();
-        if (s instanceof Function)
-            return (Function) s;
-        return null;
-    }
-
     private static Hashtable getExclusionList() {
         if (exclusionList != null)
             return exclusionList;
@@ -1487,27 +1738,28 @@ public abstract class ScriptableObject implements Scriptable {
         return result;
     }
         
-    private Object[] getIds(boolean getAll) {
-        if (slots == null)
-            return ScriptRuntime.emptyArgs;
-        int count = 0;
-        for (int i=slots.length-1; i >= 0; i--) {
-            Slot slot = slots[i];
+    Object[] getIds(boolean getAll) {
+        Slot[] s = slots;
+        Object[] a = ScriptRuntime.emptyArgs;
+        if (s == null)
+            return a;
+        int c = 0;
+        for (int i=0; i < s.length; i++) {
+            Slot slot = s[i];
             if (slot == null || slot == REMOVED)
                 continue;
-            if (getAll || (slot.attributes & DONTENUM) == 0)
-                count++;
+            if (getAll || (slot.attributes & DONTENUM) == 0) {
+                if (c == 0)
+                    a = new Object[s.length - i];
+                a[c++] = slot.stringKey != null
+                             ? (Object) slot.stringKey
+                             : new Integer(slot.intKey);
+            }
         }
-        Object[] result = new Object[count];
-        for (int i=slots.length-1; i >= 0; i--) {
-            Slot slot = slots[i];
-            if (slot == null || slot == REMOVED)
-                continue;
-            if (getAll || (slot.attributes & DONTENUM) == 0)
-                result[--count] = slot.stringKey != null
-                                  ? (Object) slot.stringKey
-                                  : new Integer(slot.intKey);
-        }
+        if (c == a.length)
+            return a;
+        Object[] result = new Object[c];
+        System.arraycopy(a, 0, result, 0, c);
         return result;
     }
 
@@ -1530,27 +1782,26 @@ public abstract class ScriptableObject implements Scriptable {
     private int count;
 
     // cache; may be removed for smaller memory footprint
-    private String lastName;
-    private int lastHash;
-    private Object lastValue = REMOVED;
+    private Slot lastAccess = REMOVED;
+
+    private static class Slot {
+        static final int HAS_GETTER  = 0x01;
+        static final int HAS_SETTER  = 0x02;
+        
+        int intKey;
+        String stringKey;
+        Object value;
+        short attributes;
+        byte flags;
+        byte wasDeleted;
+    }
+
+    private static class GetterSlot extends Slot {
+        Object delegateTo;  // OPT: merge with "value"
+        Method getter;
+        Method setter;
+        boolean setterReturnsValue;
+    }
+
+    private static final Class ContextClass = Context.class;
 }
-
-
-class Slot {
-    static final int HAS_GETTER  = 0x01;
-    static final int HAS_SETTER  = 0x02;
-    
-    int intKey;
-    String stringKey;
-    Object value;
-    short attributes;
-    short flags;
-}
-
-class GetterSlot extends Slot {
-    Object delegateTo;  // OPT: merge with "value"
-    Method getter;
-    Method setter;
-}
-
-

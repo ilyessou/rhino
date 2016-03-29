@@ -20,6 +20,7 @@
  *
  * Contributor(s): 
  * Norris Boyd
+ * Matthias Radestock
  *
  * Alternatively, the contents of this file may be used under the
  * terms of the GNU Public License (the "GPL"), in which case the
@@ -48,7 +49,7 @@ import java.util.Vector;
  * <p>
  * This class can be used to create a top-level scope using the following code: 
  * <pre>
- *  Scriptable scope = cx.initStandardObjects(new ImporterTopLevel());
+ *  Scriptable scope = new ImporterTopLevel(cx);
  * </pre>
  * Then JavaScript code will have access to the following methods:
  * <ul>
@@ -71,7 +72,19 @@ import java.util.Vector;
  */
 public class ImporterTopLevel extends ScriptableObject {
     
+    /**
+     * @deprecated
+     */
     public ImporterTopLevel() {
+        init();
+    }
+
+    public ImporterTopLevel(Context cx) {
+        cx.initStandardObjects(this);
+        init();
+    }
+    
+    private void init() {
         String[] names = { "importClass", "importPackage" };
 
         try {
@@ -81,64 +94,83 @@ public class ImporterTopLevel extends ScriptableObject {
             throw new Error();  // should never happen
         }
     }
-    
+
     public String getClassName() { 
         return "global";
     }
     
     public Object get(String name, Scriptable start) {
         Object result = super.get(name, start);
-        if (result == NOT_FOUND && importedPackages != null) {
-            for (int i=0; i < importedPackages.size(); i++) {
-                Object o = importedPackages.elementAt(i);
-                NativeJavaPackage p = (NativeJavaPackage) o;
-                Object v = p.getPkgProperty(name, start, false);
-                if (v != null && !(v instanceof NativeJavaPackage)) {
-                    if (result == NOT_FOUND) {
-                        result = v;
-                    } else {
-                        String[] args = { result.toString(), v.toString() };
-                        throw Context.reportRuntimeError(
-                            Context.getMessage("msg.ambig.import", 
-                                               args));
-                    }
+        if (result != NOT_FOUND) 
+            return result;
+        if (name.equals("_packages_")) 
+            return result;
+        Object plist = ScriptableObject.getProperty(start,"_packages_");
+        if (plist == NOT_FOUND) 
+            return result;
+        Context cx = Context.enter();
+        Object[] elements = cx.getElements((Scriptable)plist);
+        Context.exit();
+        for (int i=0; i < elements.length; i++) {
+            NativeJavaPackage p = (NativeJavaPackage) elements[i];
+            Object v = p.getPkgProperty(name, start, false);
+            if (v != null && !(v instanceof NativeJavaPackage)) {
+                if (result == NOT_FOUND) {
+                    result = v;
+                } else {
+                    throw Context.reportRuntimeError2(
+                        "msg.ambig.import", result.toString(), v.toString());
                 }
             }
         }
-        return result;          
+        return result;
     }
     
-    public void importClass(Object cl) {
-        if (!(cl instanceof NativeJavaClass)) {
-            String[] args = { Context.toString(cl) };
-            throw Context.reportRuntimeError(
-                Context.getMessage("msg.not.class", args));
+    public static void importClass(Context cx, Scriptable thisObj,
+                                   Object[] args, Function funObj) {
+        for (int i=0; i<args.length; i++) {
+            Object cl = args[i];
+            if (!(cl instanceof NativeJavaClass)) {
+                throw Context.reportRuntimeError1(
+                    "msg.not.class", Context.toString(cl));
+            }
+            String s = ((NativeJavaClass) cl).getClassObject().getName();
+            String n = s.substring(s.lastIndexOf('.')+1);
+            Object val = thisObj.get(n, thisObj);
+            if (val != NOT_FOUND && val != cl) {
+                throw Context.reportRuntimeError1("msg.prop.defined", n);
+            }
+            //thisObj.defineProperty(n, cl, DONTENUM);
+            thisObj.put(n,thisObj,cl);
         }
-        String s = ((NativeJavaClass) cl).getClassObject().getName();
-        String n = s.substring(s.lastIndexOf('.')+1);
-        Object val = this.get(n, this);
-        if (val != NOT_FOUND && val != cl) {
-            String[] args = { n };
-            throw Context.reportRuntimeError(
-                Context.getMessage("msg.prop.defined", args));
-        }
-        this.defineProperty(n, cl, DONTENUM);
     }
     
-    public void importPackage(Object pkg) {
-        if (importedPackages == null)
-            importedPackages = new Vector();
-        if (!(pkg instanceof NativeJavaPackage)) {
-            String[] args = { Context.toString(pkg) };
-            throw Context.reportRuntimeError(
-                Context.getMessage("msg.not.pkg", args));
+    public static void importPackage(Context cx, Scriptable thisObj,
+                                   Object[] args, Function funObj) {
+        Scriptable importedPackages;
+        Object plist = thisObj.get("_packages_", thisObj);
+        if (plist == NOT_FOUND) {
+            importedPackages = cx.newArray(thisObj,0);
+            thisObj.put("_packages_", thisObj, importedPackages);
         }
-        for (int i=0; i < importedPackages.size(); i++) {
-            if (pkg == importedPackages.elementAt(i))
-                return;     // allready in list
+        else {
+            importedPackages = (Scriptable)plist;
         }
-        importedPackages.addElement(pkg);
+        for (int i=0; i<args.length; i++) {
+            Object pkg = args[i];
+            if (!(pkg instanceof NativeJavaPackage)) {
+                throw Context.reportRuntimeError1(
+                    "msg.not.pkg", Context.toString(pkg));
+            }
+            Object[] elements = cx.getElements(importedPackages);
+            for (int j=0; j < elements.length; j++) {
+                if (pkg == elements[j]) {
+                    pkg = null;
+                    break;
+                }
+            }
+            if (pkg != null)
+                importedPackages.put(elements.length,importedPackages,pkg);
+        }
     }
-    
-    private Vector importedPackages;
 }
