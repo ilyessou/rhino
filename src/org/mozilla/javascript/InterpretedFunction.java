@@ -43,12 +43,11 @@ final class InterpretedFunction extends NativeFunction
 
     static final long serialVersionUID = -6235150451107527319L;
 
-    InterpretedFunction(Context cx, InterpreterData theData) {
+    InterpretedFunction(InterpreterData theData)
+    {
         itsData = theData;
-        functionName = itsData.itsName;
-        version = (short)cx.getLanguageVersion();
-        argNames = itsData.argNames;
-        argCount = (short)itsData.argCount;
+        initScriptFunction(itsData.languageVersion, itsData.itsName,
+                           itsData.argNames, itsData.argCount);
     }
 
     public Object call(Context cx, Scriptable scope, Scriptable thisObj,
@@ -60,11 +59,13 @@ final class InterpretedFunction extends NativeFunction
                                      this, itsData);
     }
 
-    protected Object getSourcesTree() {
-        return Interpreter.getSourcesTree(itsData);
+    public String getEncodedSource()
+    {
+        return Interpreter.getEncodedSource(itsData);
     }
 
     InterpreterData itsData;
     boolean itsUseDynamicScope;
+    Scriptable[] itsRegExps;
 }
 

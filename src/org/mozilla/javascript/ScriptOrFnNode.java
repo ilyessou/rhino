@@ -47,23 +47,20 @@ public class ScriptOrFnNode extends Node {
         this.sourceName = sourceName;
     }
 
-    public final String getEncodedSource() { return encodedSource; }
+    public final int getEncodedSourceStart() { return encodedSourceStart; }
 
-    public final void setEncodedSource(String encodedSource) {
-        this.encodedSource = encodedSource;
-    }
+    public final int getEncodedSourceEnd() { return encodedSourceEnd; }
 
-    public final String getOriginalSource() { return originalSource; }
-
-    public final void setOriginalSource(String originalSource) {
-        this.originalSource = originalSource;
+    public final void setEncodedSourceBounds(int start, int end) {
+        this.encodedSourceStart = start;
+        this.encodedSourceEnd = end;
     }
 
     public final int getBaseLineno() { return baseLineno; }
 
     public final void setBaseLineno(int lineno) {
         // One time action
-        if (lineno < 0 || baseLineno >= 0) Context.codeBug();
+        if (lineno < 0 || baseLineno >= 0) Kit.codeBug();
         baseLineno = lineno;
     }
 
@@ -71,7 +68,7 @@ public class ScriptOrFnNode extends Node {
 
     public final void setEndLineno(int lineno) {
         // One time action
-        if (lineno < 0 || endLineno >= 0) Context.codeBug();
+        if (lineno < 0 || endLineno >= 0) Kit.codeBug();
         endLineno = lineno;
     }
 
@@ -84,13 +81,8 @@ public class ScriptOrFnNode extends Node {
         return (FunctionNode)functions.get(i);
     }
 
-    public final void replaceFunctionNode(int i, FunctionNode fnNode) {
-        if (fnNode == null) Context.codeBug();
-        functions.set(i, fnNode);
-    }
-
     public final int addFunction(FunctionNode fnNode) {
-        if (fnNode == null) Context.codeBug();
+        if (fnNode == null) Kit.codeBug();
         if (functions == null) { functions = new ObjArray(); }
         functions.add(fnNode);
         return functions.size() - 1;
@@ -110,7 +102,7 @@ public class ScriptOrFnNode extends Node {
     }
 
     public final int addRegexp(String string, String flags) {
-        if (string == null) Context.codeBug();
+        if (string == null) Kit.codeBug();
         if (regexps == null) { regexps = new ObjArray(); }
         regexps.add(string);
         regexps.add(flags);
@@ -138,14 +130,18 @@ public class ScriptOrFnNode extends Node {
     }
 
     public final String[] getParamAndVarNames() {
-        String[] array = new String[itsVariables.size()];
+        int N = itsVariables.size();
+        if (N == 0) {
+            return ScriptRuntime.emptyStrings;
+        }
+        String[] array = new String[N];
         itsVariables.toArray(array);
         return array;
     }
 
     public final void addParam(String name) {
         // Check addparam is not called after addLocal
-        if (varStart != itsVariables.size()) Context.codeBug();
+        if (varStart != itsVariables.size()) Kit.codeBug();
         // Allow non-unique parameter names: use the last occurrence
         int index = varStart++;
         itsVariables.add(name);
@@ -178,16 +174,21 @@ public class ScriptOrFnNode extends Node {
         }
     }
 
-    public final int getLocalCount() { return localCount; }
-
-    public final void incrementLocalCount() {
-        ++localCount;
+    public final Object getCompilerData()
+    {
+        return compilerData;
     }
 
-    protected void finishParsing(IRFactory irFactory) { }
+    public final void setCompilerData(Object data)
+    {
+        if (data == null) Kit.argBug();
+        // Can only call once
+        if (compilerData != null) Kit.stateBug();
+        compilerData = data;
+    }
 
-    private String encodedSource;
-    private String originalSource;
+    private int encodedSourceStart;
+    private int encodedSourceEnd;
     private String sourceName;
     private int baseLineno = -1;
     private int endLineno = -1;
@@ -204,6 +205,5 @@ public class ScriptOrFnNode extends Node {
 
     private int varStart;               // index in list of first variable
 
-    private int localCount;
-
+    private Object compilerData;
 }

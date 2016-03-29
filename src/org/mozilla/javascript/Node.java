@@ -44,20 +44,21 @@ package org.mozilla.javascript;
  * @author Mike McCabe
  */
 
-public class Node implements Cloneable {
-
-    private static class NumberNode extends Node {
-
-        NumberNode(double number) {
-            super(TokenStream.NUMBER);
+public class Node
+{
+    private static class NumberNode extends Node
+    {
+        NumberNode(double number)
+        {
+            super(Token.NUMBER);
             this.number = number;
         }
 
         double number;
     }
 
-    private static class StringNode extends Node {
-
+    private static class StringNode extends Node
+    {
         StringNode(int type, String str) {
             super(type);
             this.str = str;
@@ -65,6 +66,100 @@ public class Node implements Cloneable {
 
         String str;
     }
+
+    public static class Jump extends Node
+    {
+        public Jump(int type)
+        {
+            super(type);
+        }
+
+        Jump(int type, int lineno)
+        {
+            super(type, lineno);
+        }
+
+        Jump(int type, Node child)
+        {
+            super(type, child);
+        }
+
+        Jump(int type, Node child, int lineno)
+        {
+            super(type, child, lineno);
+        }
+
+        public final String getLabel()
+        {
+            if (!(type == Token.BREAK || type == Token.CONTINUE
+                  || type == Token.LABEL))
+            {
+                Kit.codeBug();
+            }
+            return label;
+        }
+
+        public final void setLabel(String label)
+        {
+            if (!(type == Token.BREAK || type == Token.CONTINUE
+                  || type == Token.LABEL))
+            {
+                Kit.codeBug();
+            }
+            if (label == null) Kit.codeBug();
+            if (this.label != null) Kit.codeBug(); //only once
+            this.label = label;
+        }
+
+        public final Target getFinally()
+        {
+            if (!(type == Token.TRY)) Kit.codeBug();
+            return target2;
+        }
+
+        public final void setFinally(Target finallyTarget)
+        {
+            if (!(type == Token.TRY)) Kit.codeBug();
+            if (finallyTarget == null) Kit.codeBug();
+            if (target2 != null) Kit.codeBug(); //only once
+            target2 = finallyTarget;
+        }
+
+        public final Target getContinue()
+        {
+            if (!(type == Token.LABEL || type == Token.LOOP)) Kit.codeBug();                return target2;
+        }
+
+        public final void setContinue(Target continueTarget)
+        {
+            if (!(type == Token.LABEL || type == Token.LOOP)) Kit.codeBug();                if (continueTarget == null) Kit.codeBug();
+            if (target2 != null) Kit.codeBug(); //only once
+            target2 = continueTarget;
+        }
+
+        public Target target;
+        private Target target2;
+        private String label;
+    }
+
+    public static class Target extends Node
+    {
+        public Target()
+        {
+            super(Token.TARGET);
+        }
+
+        public int labelId = -1;
+    }
+
+    private static class PropListItem
+    {
+        PropListItem next;
+        int type;
+        int intValue;
+        Object objectValue;
+    }
+
 
     public Node(int nodeType) {
         type = nodeType;
@@ -93,24 +188,24 @@ public class Node implements Cloneable {
         right.next = null;
     }
 
-    public Node(int nodeType, int value) {
+    public Node(int nodeType, int line) {
         type = nodeType;
-        intDatum = value;
+        lineno = line;
     }
 
-    public Node(int nodeType, Node child, int value) {
+    public Node(int nodeType, Node child, int line) {
         this(nodeType, child);
-        intDatum = value;
+        lineno = line;
     }
 
-    public Node(int nodeType, Node left, Node right, int value) {
+    public Node(int nodeType, Node left, Node right, int line) {
         this(nodeType, left, right);
-        intDatum = value;
+        lineno = line;
     }
 
-    public Node(int nodeType, Node left, Node mid, Node right, int value) {
+    public Node(int nodeType, Node left, Node mid, Node right, int line) {
         this(nodeType, left, mid, right);
-        intDatum = value;
+        lineno = line;
     }
 
     public static Node newNumber(double number) {
@@ -118,7 +213,7 @@ public class Node implements Cloneable {
     }
 
     public static Node newString(String str) {
-        return new StringNode(TokenStream.STRING, str);
+        return new StringNode(Token.STRING, str);
     }
 
     public static Node newString(int type, String str) {
@@ -268,24 +363,17 @@ public class Node implements Cloneable {
     }
 
     public static final int
-        TARGET_PROP       =  1,
-        BREAK_PROP        =  2,
-        CONTINUE_PROP     =  3,
-        ENUM_PROP         =  4,
-        FUNCTION_PROP     =  5,
-        TEMP_PROP         =  6,
-        LOCAL_PROP        =  7,
-        CODEOFFSET_PROP   =  8,
-        FIXUPS_PROP       =  9,
-        USES_PROP         = 10,
-        REGEXP_PROP       = 11,
-        CASES_PROP        = 12,
-        DEFAULT_PROP      = 13,
-        CASEARRAY_PROP    = 14,
-        TYPE_PROP         = 15,
-        SPECIAL_PROP_PROP = 16,
-        LABEL_PROP        = 17,
-        FINALLY_PROP      = 18,
+        FUNCTION_PROP     =  1,
+        TEMP_PROP         =  2,
+        LOCAL_PROP        =  3,
+        LOCAL_BLOCK_PROP  =  4,
+        FIXUPS_PROP       =  5,
+        USES_PROP         =  6,
+        REGEXP_PROP       =  7,
+        CASES_PROP        =  8,
+        DEFAULT_PROP      =  9,
+        CASEARRAY_PROP    = 10,
+        SPECIAL_PROP_PROP = 11,
     /*
         the following properties are defined and manipulated by the
         optimizer -
@@ -300,42 +388,43 @@ public class Node implements Cloneable {
                           matches.
     */
 
-        TARGETBLOCK_PROP  = 19,
-        VARIABLE_PROP     = 20,
-        LASTUSE_PROP      = 21,
-        ISNUMBER_PROP     = 22,
-        DIRECTCALL_PROP   = 23,
+        TARGETBLOCK_PROP  = 12,
+        VARIABLE_PROP     = 13,
+        LASTUSE_PROP      = 14,
+        ISNUMBER_PROP     = 15,
+        DIRECTCALL_PROP   = 16,
+        SPECIALCALL_PROP  = 17;
 
-        SPECIALCALL_PROP  = 24;
+    public static final int    // this value of the SPECIAL_PROP_PROP specifies
+        SPECIAL_PROP_PROTO  = 1,
+        SPECIAL_PROP_PARENT = 2;
 
     public static final int    // this value of the ISNUMBER_PROP specifies
         BOTH = 0,               // which of the children are Number types
         LEFT = 1,
         RIGHT = 2;
 
+    public static final int    // this value of the SPECIALCALL_PROP specifies
+        NON_SPECIALCALL  = 0,
+        SPECIALCALL_EVAL = 1,
+        SPECIALCALL_WITH = 2;
+
     private static final String propToString(int propType) {
-        if (Context.printTrees) {
+        if (Token.printTrees) {
             // If Context.printTrees is false, the compiler
             // can remove all these strings.
             switch (propType) {
-                case TARGET_PROP:        return "target";
-                case BREAK_PROP:         return "break";
-                case CONTINUE_PROP:      return "continue";
-                case ENUM_PROP:          return "enum";
                 case FUNCTION_PROP:      return "function";
                 case TEMP_PROP:          return "temp";
                 case LOCAL_PROP:         return "local";
-                case CODEOFFSET_PROP:    return "codeoffset";
+                case LOCAL_BLOCK_PROP:   return "local_block";
                 case FIXUPS_PROP:        return "fixups";
                 case USES_PROP:          return "uses";
                 case REGEXP_PROP:        return "regexp";
                 case CASES_PROP:         return "cases";
                 case DEFAULT_PROP:       return "default";
                 case CASEARRAY_PROP:     return "casearray";
-                case TYPE_PROP:          return "type";
                 case SPECIAL_PROP_PROP:  return "special_prop";
-                case LABEL_PROP:         return "label";
-                case FINALLY_PROP:       return "finally";
 
                 case TARGETBLOCK_PROP:   return "targetblock";
                 case VARIABLE_PROP:      return "variable";
@@ -345,102 +434,115 @@ public class Node implements Cloneable {
 
                 case SPECIALCALL_PROP:   return "specialcall";
 
-                default: Context.codeBug();
+                default: Kit.codeBug();
             }
         }
         return null;
     }
 
-    public Object getProp(int propType) {
-        if (props == null)
-            return null;
-        return props.getObject(propType);
+    private PropListItem lookupProperty(int propType)
+    {
+        PropListItem x = propListHead;
+        while (x != null && propType != x.type) {
+            x = x.next;
+        }
+        return x;
     }
 
-    public int getIntProp(int propType, int defaultValue) {
-        if (props == null)
-            return defaultValue;
-        return props.getInt(propType, defaultValue);
+    private PropListItem ensureProperty(int propType)
+    {
+        PropListItem item = lookupProperty(propType);
+        if (item == null) {
+            item = new PropListItem();
+            item.type = propType;
+            item.next = propListHead;
+            propListHead = item;
+        }
+        return item;
     }
 
-    public int getExistingIntProp(int propType) {
-        return props.getExistingInt(propType);
+    public void removeProp(int propType)
+    {
+        PropListItem x = propListHead;
+        if (x != null) {
+            PropListItem prev = null;
+            while (x.type != propType) {
+                prev = x;
+                x = x.next;
+                if (x == null) { return; }
+            }
+            if (prev == null) {
+                propListHead = x.next;
+            } else {
+                prev.next = x.next;
+            }
+        }
     }
 
-    public void putProp(int propType, Object prop) {
+    public Object getProp(int propType)
+    {
+        PropListItem item = lookupProperty(propType);
+        if (item == null) { return null; }
+        return item.objectValue;
+    }
+
+    public int getIntProp(int propType, int defaultValue)
+    {
+        PropListItem item = lookupProperty(propType);
+        if (item == null) { return defaultValue; }
+        return item.intValue;
+    }
+
+    public int getExistingIntProp(int propType)
+    {
+        PropListItem item = lookupProperty(propType);
+        if (item == null) { Kit.codeBug(); }
+        return item.intValue;
+    }
+
+    public void putProp(int propType, Object prop)
+    {
         if (prop == null) {
             removeProp(propType);
-        }
-        else {
-            if (props == null) {
-                props = new UintMap(2);
-            }
-            props.put(propType, prop);
+        } else {
+            PropListItem item = ensureProperty(propType);
+            item.objectValue = prop;
         }
     }
 
-    public void putIntProp(int propType, int prop) {
-        if (props == null)
-            props = new UintMap(2);
-        props.put(propType, prop);
-    }
-
-    public void removeProp(int propType) {
-        if (props != null) {
-            props.remove(propType);
-        }
-    }
-
-    public int getOperation() {
-        switch (type) {
-            case TokenStream.EQOP:
-            case TokenStream.RELOP:
-            case TokenStream.UNARYOP:
-            case TokenStream.PRIMARY:
-                return intDatum;
-        }
-        Context.codeBug();
-        return 0;
+    public void putIntProp(int propType, int prop)
+    {
+        PropListItem item = ensureProperty(propType);
+        item.intValue = prop;
     }
 
     public int getLineno() {
-        switch (type) {
-            case TokenStream.EQOP:
-            case TokenStream.RELOP:
-            case TokenStream.UNARYOP:
-            case TokenStream.PRIMARY:
-                Context.codeBug();
-        }
-        return intDatum;
+        return lineno;
     }
 
-    /** Can only be called when <tt>getType() == TokenStream.NUMBER</tt> */
-    public double getDouble() {
+    /** Can only be called when <tt>getType() == Token.NUMBER</tt> */
+    public final double getDouble() {
         return ((NumberNode)this).number;
     }
 
+    public final void setDouble(double number) {
+        ((NumberNode)this).number = number;
+    }
+
     /** Can only be called when node has String context. */
-    public String getString() {
+    public final String getString() {
         return ((StringNode)this).str;
     }
 
-    public Node cloneNode() {
-        Node result;
-        try {
-            result = (Node) super.clone();
-            result.next = null;
-            result.first = null;
-            result.last = null;
-        }
-        catch (CloneNotSupportedException e) {
-            throw new RuntimeException(e.getMessage());
-        }
-        return result;
+    /** Can only be called when node has String context. */
+    public final void setString(String s) {
+        if (s == null) Kit.codeBug();
+        ((StringNode)this).str = s;
     }
 
     public String toString() {
-        if (Context.printTrees) {
-            StringBuffer sb = new StringBuffer(TokenStream.tokenToName(type));
+        if (Token.printTrees) {
+            StringBuffer sb = new StringBuffer(Token.name(type));
             if (this instanceof StringNode) {
                 sb.append(' ');
                 sb.append(getString());
@@ -454,52 +556,136 @@ public class Node implements Cloneable {
                 sb.append(" [source name: ");
                 sb.append(sof.getSourceName());
                 sb.append("] [encoded source length: ");
-                String encodedSource = sof.getEncodedSource();
-                sb.append(encodedSource != null ? encodedSource.length() : 0);
+                sb.append(sof.getEncodedSourceEnd()
+                          - sof.getEncodedSourceStart());
                 sb.append("] [base line: ");
                 sb.append(sof.getBaseLineno());
                 sb.append("] [end line: ");
                 sb.append(sof.getEndLineno());
                 sb.append(']');
-            } else if (type == TokenStream.TARGET) {
+            } else if (this instanceof Jump) {
+                Jump jump = (Jump)this;
+                if (type == Token.BREAK || type == Token.CONTINUE) {
+                    String label = jump.getLabel();
+                    if (label != null) {
+                        sb.append(" [label: ");
+                        sb.append(label);
+                        sb.append(']');
+                    }
+                } else if (type == Token.TRY) {
+                    Node catchNode = jump.target;
+                    Node.Target finallyTarget = jump.getFinally();
+                    if (catchNode != null) {
+                        sb.append(" [catch: ");
+                        sb.append(catchNode);
+                        sb.append(']');
+                    }
+                    if (finallyTarget != null) {
+                        sb.append(" [finally: ");
+                        sb.append(finallyTarget);
+                        sb.append(']');
+                    }
+                } else if (type == Token.LABEL || type == Token.LOOP
+                           || type == Token.SWITCH)
+                {
+                    sb.append(" [break: ");
+                    sb.append(jump.target);
+                    sb.append(']');
+                    if (type == Token.LOOP) {
+                        sb.append(" [continue: ");
+                        sb.append(jump.getContinue());
+                        sb.append(']');
+                    }
+                } else {
+                    sb.append(" [target: ");
+                    sb.append(jump.target);
+                    sb.append(']');
+                }
+            } else if (this instanceof Target) {
+                Target target = (Target)this;
                 sb.append(' ');
                 sb.append(hashCode());
-            } else if (type == TokenStream.NUMBER) {
+                sb.append(" [labelId: ");
+                sb.append(target.labelId);
+                sb.append(']');
+            } else if (type == Token.NUMBER) {
                 sb.append(' ');
                 sb.append(getDouble());
             }
-            if (intDatum != -1) {
+            if (lineno != -1) {
                 sb.append(' ');
-                sb.append(intDatum);
+                sb.append(lineno);
             }
-            if (props == null)
-                return sb.toString();
 
-            int[] keys = props.getKeys();
-            for (int i = 0; i != keys.length; ++i) {
-                int key = keys[i];
+            for (PropListItem x = propListHead; x != null; x = x.next) {
+                int type = x.type;
                 sb.append(" [");
-                sb.append(propToString(key));
+                sb.append(propToString(type));
                 sb.append(": ");
-                switch (key) {
-                    case FIXUPS_PROP : // can't add this as it recurses
-                        sb.append("fixups property");
+                String value;
+                switch (type) {
+                  case FIXUPS_PROP : // can't add this as it recurses
+                    value = "fixups property";
+                    break;
+                  case TARGETBLOCK_PROP : // can't add this as it recurses
+                    value = "target block property";
+                    break;
+                  case LASTUSE_PROP :     // can't add this as it is dull
+                    value = "last use property";
+                    break;
+                  case LOCAL_BLOCK_PROP :     // can't add this as it is dull
+                    value = "last local block";
+                    break;
+                  case SPECIAL_PROP_PROP:
+                    switch (x.intValue) {
+                      case SPECIAL_PROP_PROTO:
+                        value = "__proto__";
                         break;
-                    case TARGETBLOCK_PROP : // can't add this as it recurses
-                        sb.append("target block property");
+                      case SPECIAL_PROP_PARENT:
+                        value = "__parent__";
                         break;
-                    case LASTUSE_PROP :     // can't add this as it is dull
-                        sb.append("last use property");
+                      default:
+                        throw Kit.codeBug();
+                    }
+                    break;
+                  case ISNUMBER_PROP:
+                    switch (x.intValue) {
+                      case BOTH:
+                        value = "both";
                         break;
-                    default :
-                        Object obj = props.getObject(key);
-                        if (obj != null) {
-                            sb.append(obj.toString());
-                        } else {
-                            sb.append(props.getExistingInt(key));
-                        }
+                      case RIGHT:
+                        value = "right";
                         break;
+                      case LEFT:
+                        value = "left";
+                        break;
+                      default:
+                        throw Kit.codeBug();
+                    }
+                    break;
+                  case SPECIALCALL_PROP:
+                    switch (x.intValue) {
+                      case SPECIALCALL_EVAL:
+                        value = "eval";
+                        break;
+                      case SPECIALCALL_WITH:
+                        value = "with";
+                        break;
+                      default:
+                        // NON_SPECIALCALL should not be stored
+                        throw Kit.codeBug();
+                    }
+                    break;
+                  default :
+                    Object obj = x.objectValue;
+                    if (obj != null) {
+                        value = obj.toString();
+                    } else {
+                        value = String.valueOf(x.intValue);
+                    }
+                    break;
                 }
+                sb.append(value);
                 sb.append(']');
             }
             return sb.toString();
@@ -507,40 +693,50 @@ public class Node implements Cloneable {
         return null;
     }
 
-    public String toStringTree() {
-        return toStringTreeHelper(0);
+    public String toStringTree(ScriptOrFnNode treeTop) {
+        if (Token.printTrees) {
+            StringBuffer sb = new StringBuffer();
+            toStringTreeHelper(treeTop, this, 0, sb);
+            return sb.toString();
+        }
+        return null;
     }
 
-
-    private String toStringTreeHelper(int level) {
-        if (Context.printTrees) {
-            StringBuffer s = new StringBuffer();
-            for (int i=0; i < level; i++) {
-                s.append("    ");
+    private static void toStringTreeHelper(ScriptOrFnNode treeTop, Node n,
+                                           int level, StringBuffer sb)
+    {
+        if (Token.printTrees) {
+            for (int i = 0; i != level; ++i) {
+                sb.append("    ");
             }
-            s.append(toString());
-            s.append('\n');
-            for (Node cursor = getFirstChild(); cursor != null;
+            sb.append(n.toString());
+            sb.append('\n');
+            for (Node cursor = n.getFirstChild(); cursor != null;
                  cursor = cursor.getNext())
             {
-                Node n = cursor;
-                if (cursor.getType() == TokenStream.FUNCTION) {
-                    Node p = (Node) cursor.getProp(Node.FUNCTION_PROP);
-                    if (p != null)
-                        n = p;
+                if (cursor.getType() == Token.FUNCTION) {
+                    int fnIndex = cursor.getExistingIntProp(Node.FUNCTION_PROP);
+                    FunctionNode fn = treeTop.getFunctionNode(fnIndex);
+                    toStringTreeHelper(fn, fn, level + 1, sb);
+                } else {
+                    toStringTreeHelper(treeTop, cursor, level + 1, sb);
                 }
-                s.append(n.toStringTreeHelper(level+1));
             }
-            return s.toString();
         }
-        return "";
     }
 
-    int type;              // type of the node; TokenStream.NAME for example
+    int type;              // type of the node; Token.NAME for example
     Node next;             // next sibling
     private Node first;    // first element of a linked list of children
     private Node last;     // last element of a linked list of children
-    private int intDatum = -1;    // encapsulated int data; depends on type
-    private UintMap props;
+    private int lineno = -1;    // encapsulated int data; depends on type
+
+    /**
+     * Linked list of properties. Since vast majority of nodes would have
+     * no more then 2 properties, linked list saves memory and provides
+     * fast lookup. If this does not holds, propListHead can be replaced
+     * by UintMap.
+     */
+    private PropListItem propListHead;
 }
 

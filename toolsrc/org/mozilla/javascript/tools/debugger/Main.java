@@ -21,6 +21,7 @@
  *
  * Contributor(s):
  * Christopher Oliver
+ * Matt Gould
  *
  * Alternatively, the contents of this file may be used under the
  * terms of the GNU Public License (the "GPL"), in which case the
@@ -753,28 +754,38 @@ class FindFunction extends JDialog implements ActionListener {
 };
 
 class FileHeader extends JPanel implements MouseListener {
-
+    private int pressLine = -1;
     FileWindow fileWindow;
 
     public void mouseEntered(MouseEvent e) {
     }
     public void mousePressed(MouseEvent e) {
+        Font font = fileWindow.textArea.getFont();
+        FontMetrics metrics = getFontMetrics(font);
+        int h = metrics.getHeight();
+        pressLine = e.getY() / h;
     }
     public void mouseClicked(MouseEvent e) {
+    }
+    public void mouseExited(MouseEvent e) {
+    }
+    public void mouseReleased(MouseEvent e) {
         if (e.getComponent() == this &&
-          (e.getModifiers() & MouseEvent.BUTTON1_MASK) != 0) {
+          (e.getModifiers() & MouseEvent.BUTTON1_MASK) != 0)
+        {
             int x = e.getX();
             int y = e.getY();
             Font font = fileWindow.textArea.getFont();
             FontMetrics metrics = getFontMetrics(font);
             int h = metrics.getHeight();
             int line = y/h;
-            fileWindow.toggleBreakPoint(line + 1);
+            if (line == pressLine) {
+                fileWindow.toggleBreakPoint(line + 1);
+            }
+            else {
+                pressLine = -1;
+            }
         }
-    }
-    public void mouseExited(MouseEvent e) {
-    }
-    public void mouseReleased(MouseEvent e) {
     }
 
     FileHeader(FileWindow fileWindow) {
@@ -1001,6 +1012,12 @@ class FileWindow extends JInternalFrame implements ActionListener {
         textArea.select(docEnd, docEnd);
         textArea.select(start, end);
     }
+
+    public void dispose() {
+        db.removeWindow(this);
+        super.dispose();
+    }
+
 };
 
 class MyTableModel extends AbstractTableModel {
@@ -1967,12 +1984,12 @@ class ExitInterrupt implements Runnable {
     }
 };
 
-class OpenFile implements Runnable {
-    Scriptable scope;
+class OpenFile implements Runnable
+{
     String fileName;
     Main db;
-    OpenFile(Main db, Scriptable scope, String fileName) {
-        this.scope = scope;
+    OpenFile(Main db, String fileName)
+    {
         this.fileName = fileName;
         this.db = db;
     }
@@ -1981,8 +1998,7 @@ class OpenFile implements Runnable {
         ContextData contextData = ContextData.get(cx);
         contextData.breakNextLine = true;
         try {
-            cx.compileReader(scope, new FileReader(fileName),
-                             fileName, 1, null);
+            cx.compileReader(new FileReader(fileName), fileName, 1, null);
         } catch (Exception exc) {
             String msg = exc.getMessage();
             if (exc instanceof EcmaError) {
@@ -2311,7 +2327,7 @@ class SourceInfo {
     synchronized boolean removeBreakpoint(int line) {
         boolean wasBreakpoint = false;
         if (breakpoints != null && line < breakpoints.length) {
-            wasBreakpoint = (breakpoints[line] != BREAK_FLAG);
+            wasBreakpoint = (breakpoints[line] == BREAK_FLAG);
             breakpoints[line] = 0;
         }
         return wasBreakpoint;
@@ -2608,34 +2624,28 @@ public class Main extends JFrame implements Debugger, ContextListener {
         return item;
     }
 
-
     void handleBreakpointHit(Context cx) {
         breakFlag = false;
         interrupted(cx);
     }
 
-    private static Object unwrapException(Object ex) {
-        for (;;) {
-            if (ex instanceof JavaScriptException) {
-                ex = ScriptRuntime.unwrapJavaScriptException
-                            ((JavaScriptException)ex);
-            }else if (ex instanceof EcmaError) {
-                ex = ((EcmaError)ex).getErrorObject();
-            }else if (ex instanceof NativeJavaObject) {
-                ex = ((NativeJavaObject)ex).unwrap();
-                break;
-            }else if (ex instanceof WrappedException) {
-                Object w = ((WrappedException)ex).unwrap();
-                if (w instanceof Throwable) {
-                    ex = w;
-                    continue;
-                }
-                break;
-            }else {
-                break;
+    private static String exceptionString(Throwable ex) {
+        if (ex instanceof JavaScriptException) {
+            JavaScriptException jse = (JavaScriptException)ex;
+            return ScriptRuntime.toString(jse.getValue());
+        } else if (ex instanceof EcmaError) {
+            return ex.toString();
+        } else if (ex instanceof WrappedException) {
+            Throwable wrapped = ((WrappedException)ex).getWrappedException();
+            if (wrapped != null) {
+                ex = wrapped;
             }
         }
-        return ex;
+        String msg = ex.toString();
+        if (msg == null || msg.length() == 0) {
+            msg = ex.getClass().toString();
+        }
+        return msg;
     }
 
     void handleExceptionThrown(Context cx, Throwable ex, FrameHelper frame) {
@@ -2643,11 +2653,7 @@ public class Main extends JFrame implements Debugger, ContextListener {
             String url = frame.getUrl();
             int lineNumber = frame.getLineNumber();
             FileWindow w = getFileWindow(url);
-            Object e = unwrapException(ex);
-            String msg = e.toString();
-            if (msg == null || msg.length() == 0) {
-                msg = e.getClass().toString();
-            }
+            String msg = exceptionString(ex);
             msg += " (" + url + ", line " + lineNumber + ")";
             if (w != null) {
                 swingInvoke(new SetFilePosition(this, w, lineNumber));
@@ -3196,15 +3202,9 @@ public class Main extends JFrame implements Debugger, ContextListener {
         } else if (cmd.equals("Exit")) {
             Exit();
         } else if (cmd.equals("Open")) {
-            Scriptable scope = getScope();
-            if (scope == null) {
-                MessageDialogWrapper.showMessageDialog(this, "Can't compile scripts: no scope available", "Open", JOptionPane.ERROR_MESSAGE);
-            } else {
-                String fileName = chooseFile("Select a file to compile");
-                if (fileName != null) {
-                    new Thread(new OpenFile(this, scope,
-                                            fileName)).start();
-                }
+            String fileName = chooseFile("Select a file to compile");
+            if (fileName != null) {
+                new Thread(new OpenFile(this, fileName)).start();
             }
         } else if (cmd.equals("Load")) {
             Scriptable scope = getScope();
@@ -3411,18 +3411,26 @@ public class Main extends JFrame implements Debugger, ContextListener {
         boolean savedBreakNextLine = contextData.breakNextLine;
         contextData.breakNextLine = false;
         try {
-            Scriptable scope;
+            Script script;
+            int savedLevel = cx.getOptimizationLevel();
+            try {
+                cx.setOptimizationLevel(-1);
+                script = cx.compileString(expr, "", 0, null);
+            } finally {
+                cx.setOptimizationLevel(savedLevel);
+            }
             FrameHelper frame = contextData.getFrame(frameIndex);
-            scope = frame.getVariableObject();
+            Scriptable scope = frame.getVariableObject();
             Object result;
-            if (scope instanceof NativeCall) {
+            if (scope instanceof NativeCall
+                && script instanceof Function)
+            {
                 NativeCall call = (NativeCall)scope;
-                result = NativeGlobal.evalSpecial(cx, call,
-                                                  call.getThisObj(),
-                                                  new Object[]{expr},
-                                                  "", 1);
+                Function f = (Function)script;
+                result = f.call(cx, scope, call.getThisObj(),
+                                ScriptRuntime.emptyArgs);
             } else {
-                result = cx.evaluateString(scope, expr, "", 0, null);
+                result = script.exec(cx, scope);
             }
             if (result == Undefined.instance) {
                 result = "";

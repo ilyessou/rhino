@@ -20,6 +20,7 @@
  *
  * Contributor(s):
  * Norris Boyd
+ * Igor Bukanov
  *
  * Alternatively, the contents of this file may be used under the
  * terms of the GNU Public License (the "GPL"), in which case the
@@ -42,88 +43,85 @@ package org.mozilla.javascript;
  * @author Mike McCabe
  * @author Norris Boyd
  */
-public class IRFactory {
-
-    public IRFactory(Interpreter compiler, TokenStream ts) {
-        this.compiler = compiler;
-        this.ts = ts;
+class IRFactory
+{
+    IRFactory(Parser parser)
+    {
+        this.parser = parser;
     }
 
-    public ScriptOrFnNode createScript() {
-        return new ScriptOrFnNode(TokenStream.SCRIPT);
+    ScriptOrFnNode createScript()
+    {
+        return new ScriptOrFnNode(Token.SCRIPT);
     }
 
     /**
      * Script (for associating file/url names with toplevel scripts.)
      */
-    public void
-    initScript(ScriptOrFnNode scriptNode, Object body,
-               String sourceName, int baseLineno, int endLineno, String source)
+    void initScript(ScriptOrFnNode scriptNode, Object body)
     {
-        scriptNode.setEncodedSource(source);
-        scriptNode.setSourceName(sourceName);
-        scriptNode.setBaseLineno(baseLineno);
-        scriptNode.setEndLineno(endLineno);
-
         Node children = ((Node) body).getFirstChild();
         if (children != null) { scriptNode.addChildrenToBack(children); }
-        scriptNode.finishParsing(this);
     }
 
     /**
      * Leaf
      */
-    public Object createLeaf(int nodeType) {
+    Object createLeaf(int nodeType)
+    {
         return new Node(nodeType);
     }
 
-    public Object createLeaf(int nodeType, int nodeOp) {
+    Object createLeaf(int nodeType, int nodeOp)
+    {
         return new Node(nodeType, nodeOp);
-    }
-
-    public int getLeafType(Object leaf) {
-        Node n = (Node) leaf;
-        return n.getType();
     }
 
     /**
      * Statement leaf nodes.
      */
 
-    public Object createSwitch(int lineno) {
-        return new Node(TokenStream.SWITCH, lineno);
+    Object createSwitch(int lineno)
+    {
+        return new Node.Jump(Token.SWITCH, lineno);
     }
 
-    public Object createVariables(int lineno) {
-        return new Node(TokenStream.VAR, lineno);
+    Object createVariables(int lineno)
+    {
+        return new Node(Token.VAR, lineno);
     }
 
-    public Object createExprStatement(Object expr, int lineno) {
-        return new Node(TokenStream.EXPRSTMT, (Node) expr, lineno);
+    Object createExprStatement(Object expr, int lineno)
+    {
+        return new Node(Token.EXPRSTMT, (Node) expr, lineno);
     }
 
-    public Object createExprStatementNoReturn(Object expr, int lineno) {
-        return new Node(TokenStream.POP, (Node) expr, lineno);
+    Object createExprStatementNoReturn(Object expr, int lineno)
+    {
+        return new Node(Token.POP, (Node) expr, lineno);
     }
 
     /**
      * Name
      */
-    public Object createName(String name) {
-        return Node.newString(TokenStream.NAME, name);
+    Object createName(String name)
+    {
+        return Node.newString(Token.NAME, name);
     }
 
     /**
      * String (for literals)
      */
-    public Object createString(String string) {
+    Object createString(String string)
+    {
         return Node.newString(string);
     }
 
     /**
      * Number (for literals)
      */
-    public Object createNumber(double number) {
+    Object createNumber(double number)
+    {
         return Node.newNumber(number);
     }
 
@@ -135,68 +133,66 @@ public class IRFactory {
      * @param stmts the statements in the catch clause
      * @param lineno the starting line number of the catch clause
      */
-    public Object createCatch(String varName, Object catchCond, Object stmts,
-                              int lineno)
+    Object createCatch(String varName, Object catchCond, Object stmts,
+                       int lineno)
     {
         if (catchCond == null) {
-            catchCond = new Node(TokenStream.PRIMARY, TokenStream.TRUE);
+            catchCond = new Node(Token.EMPTY);
         }
-        return new Node(TokenStream.CATCH, (Node)createName(varName),
+        return new Node(Token.CATCH, (Node)createName(varName),
                                (Node)catchCond, (Node)stmts, lineno);
     }
 
     /**
      * Throw
      */
-    public Object createThrow(Object expr, int lineno) {
-        return new Node(TokenStream.THROW, (Node)expr, lineno);
+    Object createThrow(Object expr, int lineno)
+    {
+        return new Node(Token.THROW, (Node)expr, lineno);
     }
 
     /**
      * Return
      */
-    public Object createReturn(Object expr, int lineno) {
+    Object createReturn(Object expr, int lineno)
+    {
         return expr == null
-            ? new Node(TokenStream.RETURN, lineno)
-            : new Node(TokenStream.RETURN, (Node)expr, lineno);
+            ? new Node(Token.RETURN, lineno)
+            : new Node(Token.RETURN, (Node)expr, lineno);
     }
 
     /**
      * Label
      */
-    public Object createLabel(String label, int lineno) {
-        Node result = new Node(TokenStream.LABEL, lineno);
-        Node name = Node.newString(TokenStream.NAME, label);
-        result.addChildToBack(name);
-        return result;
+    Object createLabel(String label, int lineno)
+    {
+        Node.Jump n = new Node.Jump(Token.LABEL, lineno);
+        n.setLabel(label);
+        return n;
     }
 
     /**
      * Break (possibly labeled)
      */
-    public Object createBreak(String label, int lineno) {
-        Node result = new Node(TokenStream.BREAK, lineno);
-        if (label == null) {
-            return result;
-        } else {
-            Node name = Node.newString(TokenStream.NAME, label);
-            result.addChildToBack(name);
-            return result;
+    Object createBreak(String label, int lineno)
+    {
+        Node.Jump n = new Node.Jump(Token.BREAK, lineno);
+        if (label != null) {
+            n.setLabel(label);
         }
+        return n;
     }
 
     /**
      * Continue (possibly labeled)
      */
-    public Object createContinue(String label, int lineno) {
-        Node result = new Node(TokenStream.CONTINUE, lineno);
-        if (label == null) {
-            return result;
-        } else {
-            Node name = Node.newString(TokenStream.NAME, label);
-            result.addChildToBack(name);
-            return result;
+    Object createContinue(String label, int lineno)
+    {
+        Node.Jump n = new Node.Jump(Token.CONTINUE, lineno);
+        if (label != null) {
+            n.setLabel(label);
         }
+        return n;
     }
 
     /**
@@ -204,29 +200,66 @@ public class IRFactory {
      * Creates the empty statement block
      * Must make subsequent calls to add statements to the node
      */
-    public Object createBlock(int lineno) {
-        return new Node(TokenStream.BLOCK, lineno);
-    }
-
-    public FunctionNode createFunction(String name) {
-        return compiler.createFunctionNode(this, name);
-    }
-
-    public Object initFunction(FunctionNode fnNode, int functionIndex,
-                               Object statements,
-                               String sourceName, int baseLineno,
-                               int endLineno, String source,
-                               int functionType)
+    Object createBlock(int lineno)
     {
-        fnNode.setEncodedSource(source);
-        fnNode.setSourceName(sourceName);
-        fnNode.setBaseLineno(baseLineno);
-        fnNode.setEndLineno(endLineno);
-        fnNode.setFunctionType(functionType);
-        fnNode.addChildToBack((Node)statements);
-        fnNode.finishParsing(this);
+        return new Node(Token.BLOCK, lineno);
+    }
 
-        Node result = Node.newString(TokenStream.FUNCTION,
+    FunctionNode createFunction(String name)
+    {
+        return new FunctionNode(name);
+    }
+
+    Object initFunction(FunctionNode fnNode, int functionIndex,
+                        Object statements, int functionType)
+    {
+        Node stmts = (Node)statements;
+        fnNode.setFunctionType(functionType);
+        fnNode.addChildToBack(stmts);
+
+        int functionCount = fnNode.getFunctionCount();
+        if (functionCount != 0) {
+            // Functions containing other functions require activation objects
+            fnNode.setRequiresActivation(true);
+            for (int i = 0; i != functionCount; ++i) {
+                FunctionNode fn = fnNode.getFunctionNode(i);
+                // nested function expression statements overrides var
+                if (fn.getFunctionType()
+                        == FunctionNode.FUNCTION_EXPRESSION_STATEMENT)
+                {
+                    String name = fn.getFunctionName();
+                    if (name != null && name.length() != 0) {
+                        fnNode.removeParamOrVar(name);
+                    }
+                }
+            }
+        }
+
+        if (functionType == FunctionNode.FUNCTION_EXPRESSION) {
+            String name = fnNode.getFunctionName();
+            if (name != null && name.length() != 0
+                && !fnNode.hasParamOrVar(name))
+            {
+                // A function expression needs to have its name as a
+                // variable (if it isn't already allocated as a variable).
+                // See ECMA Ch. 13.  We add code to the beginning of the
+                // function to initialize a local variable of the
+                // function's name to the function value.
+                fnNode.addVar(name);
+                Node setFn = new Node(Token.POP,
+                                new Node(Token.SETVAR, Node.newString(name),
+                                         new Node(Token.THISFN)));
+                stmts.addChildrenToFront(setFn);
+            }
+        }
+
+        // Add return to end if needed.
+        Node lastStmt = stmts.getLastChild();
+        if (lastStmt == null || lastStmt.getType() != Token.RETURN) {
+            stmts.addChildToBack(new Node(Token.RETURN));
+        }
+
+        Node result = Node.newString(Token.FUNCTION,
                                      fnNode.getFunctionName());
         result.putIntProp(Node.FUNCTION_PROP, functionIndex);
         return result;
@@ -237,14 +270,16 @@ public class IRFactory {
      * breaks the Factory abstraction, but it removes a requirement
      * from implementors of Node.
      */
-    public void addChildToBack(Object parent, Object child) {
+    void addChildToBack(Object parent, Object child)
+    {
         ((Node)parent).addChildToBack((Node)child);
     }
 
     /**
      * While
      */
-    public Object createWhile(Object cond, Object body, int lineno) {
+    Object createWhile(Object cond, Object body, int lineno)
+    {
         return createLoop(LOOP_WHILE, (Node)body, (Node)cond, null, null,
                           lineno);
     }
@@ -252,7 +287,8 @@ public class IRFactory {
     /**
      * DoWhile
      */
-    public Object createDoWhile(Object body, Object cond, int lineno) {
+    Object createDoWhile(Object body, Object cond, int lineno)
+    {
         return createLoop(LOOP_DO_WHILE, (Node)body, (Node)cond, null, null,
                           lineno);
     }
@@ -260,8 +296,8 @@ public class IRFactory {
     /**
      * For
      */
-    public Object createFor(Object init, Object test, Object incr,
-                            Object body, int lineno)
+    Object createFor(Object init, Object test, Object incr, Object body,
+                     int lineno)
     {
         return createLoop(LOOP_FOR, (Node)body, (Node)test,
                           (Node)init, (Node)incr, lineno);
@@ -270,49 +306,53 @@ public class IRFactory {
     private Node createLoop(int loopType, Node body, Node cond,
                             Node init, Node incr, int lineno)
     {
-        Node bodyTarget = new Node(TokenStream.TARGET);
-        Node condTarget = new Node(TokenStream.TARGET);
-        if (loopType == LOOP_FOR && cond.getType() == TokenStream.VOID) {
-            cond = new Node(TokenStream.PRIMARY, TokenStream.TRUE);
+        Node.Target bodyTarget = new Node.Target();
+        Node.Target condTarget = new Node.Target();
+        if (loopType == LOOP_FOR && cond.getType() == Token.EMPTY) {
+            cond = new Node(Token.TRUE);
         }
-        Node IFEQ = new Node(TokenStream.IFEQ, (Node)cond);
-        IFEQ.putProp(Node.TARGET_PROP, bodyTarget);
-        Node breakTarget = new Node(TokenStream.TARGET);
+        Node.Jump IFEQ = new Node.Jump(Token.IFEQ, (Node)cond);
+        IFEQ.target = bodyTarget;
+        Node.Target breakTarget = new Node.Target();
 
-        Node result = new Node(TokenStream.LOOP, lineno);
+        Node.Jump result = new Node.Jump(Token.LOOP, lineno);
         result.addChildToBack(bodyTarget);
         result.addChildrenToBack(body);
+        if (loopType == LOOP_WHILE || loopType == LOOP_FOR) {
+            // propagate lineno to condition
+            result.addChildrenToBack(new Node(Token.EMPTY, lineno));
+        }
         result.addChildToBack(condTarget);
         result.addChildToBack(IFEQ);
         result.addChildToBack(breakTarget);
 
-        result.putProp(Node.BREAK_PROP, breakTarget);
-        Node continueTarget = condTarget;
+        result.target = breakTarget;
+        Node.Target continueTarget = condTarget;
 
         if (loopType == LOOP_WHILE || loopType == LOOP_FOR) {
             // Just add a GOTO to the condition in the do..while
-            Node GOTO = new Node(TokenStream.GOTO);
-            GOTO.putProp(Node.TARGET_PROP, condTarget);
+            Node.Jump GOTO = new Node.Jump(Token.GOTO);
+            GOTO.target = condTarget;
             result.addChildToFront(GOTO);
 
             if (loopType == LOOP_FOR) {
-                if (init.getType() != TokenStream.VOID) {
-                    if (init.getType() != TokenStream.VAR) {
-                        init = new Node(TokenStream.POP, init);
+                if (init.getType() != Token.EMPTY) {
+                    if (init.getType() != Token.VAR) {
+                        init = new Node(Token.POP, init);
                     }
                     result.addChildToFront(init);
                 }
-                Node incrTarget = new Node(TokenStream.TARGET);
+                Node.Target incrTarget = new Node.Target();
                 result.addChildAfter(incrTarget, body);
-                if (incr.getType() != TokenStream.VOID) {
-                    incr = (Node)createUnary(TokenStream.POP, incr);
+                if (incr.getType() != Token.EMPTY) {
+                    incr = (Node)createUnary(Token.POP, incr);
                     result.addChildAfter(incr, incrTarget);
                 }
                 continueTarget = incrTarget;
             }
         }
 
-        result.putProp(Node.CONTINUE_PROP, continueTarget);
+        result.setContinue(continueTarget);
 
         return result;
     }
@@ -321,7 +361,8 @@ public class IRFactory {
      * For .. In
      *
      */
-    public Object createForIn(Object lhs, Object obj, Object body, int lineno) {
+    Object createForIn(Object lhs, Object obj, Object body, int lineno)
+    {
         String name;
         Node lhsNode = (Node) lhs;
         Node objNode = (Node) obj;
@@ -330,12 +371,12 @@ public class IRFactory {
         Node lvalue = lhsNode;
         switch (type) {
 
-          case TokenStream.NAME:
-          case TokenStream.GETPROP:
-          case TokenStream.GETELEM:
+          case Token.NAME:
+          case Token.GETPROP:
+          case Token.GETELEM:
             break;
 
-          case TokenStream.VAR:
+          case Token.VAR:
             /*
              * check that there was only one variable given.
              * we can't do this in the parser, because then the
@@ -344,40 +385,37 @@ public class IRFactory {
              */
             Node lastChild = lhsNode.getLastChild();
             if (lhsNode.getFirstChild() != lastChild) {
-                ts.reportCurrentLineError("msg.mult.index", null);
+                parser.reportError("msg.mult.index");
             }
-            lvalue = Node.newString(TokenStream.NAME, lastChild.getString());
+            lvalue = Node.newString(Token.NAME, lastChild.getString());
             break;
 
           default:
-            ts.reportCurrentLineError("msg.bad.for.in.lhs", null);
+            parser.reportError("msg.bad.for.in.lhs");
             return objNode;
         }
 
-        Node init = new Node(TokenStream.ENUMINIT, objNode);
-        Node next = new Node(TokenStream.ENUMNEXT);
-        next.putProp(Node.ENUM_PROP, init);
-        Node temp = createNewTemp(next);
-        Node cond = new Node(TokenStream.EQOP, TokenStream.NE);
-        cond.addChildToBack(temp);
-        cond.addChildToBack(new Node(TokenStream.PRIMARY, TokenStream.NULL));
-        Node newBody = new Node(TokenStream.BLOCK);
-        Node assign = (Node) createAssignment(TokenStream.NOP, lvalue,
-                                              createUseTemp(temp), null,
-                                              false);
-        newBody.addChildToBack(new Node(TokenStream.POP, assign));
+        Node localBlock = new Node(Token.LOCAL_BLOCK);
+
+        Node init = new Node(Token.ENUM_INIT, objNode);
+        init.putProp(Node.LOCAL_BLOCK_PROP, localBlock);
+        Node cond = new Node(Token.ENUM_NEXT);
+        cond.putProp(Node.LOCAL_BLOCK_PROP, localBlock);
+        Node id = new Node(Token.ENUM_ID);
+        id.putProp(Node.LOCAL_BLOCK_PROP, localBlock);
+
+        Node newBody = new Node(Token.BLOCK);
+        Node assign = (Node) createAssignment(lvalue, id);
+        newBody.addChildToBack(new Node(Token.POP, assign));
         newBody.addChildToBack((Node) body);
-        Node result = (Node) createWhile(cond, newBody, lineno);
 
-        result.addChildToFront(init);
-        if (type == TokenStream.VAR)
-            result.addChildToFront(lhsNode);
+        Node loop = (Node) createWhile(cond, newBody, lineno);
+        loop.addChildToFront(init);
+        if (type == Token.VAR)
+            loop.addChildToFront(lhsNode);
+        localBlock.addChildToBack(loop);
 
-        Node done = new Node(TokenStream.ENUMDONE);
-        done.putProp(Node.ENUM_PROP, init);
-        result.addChildToBack(done);
-
-        return result;
+        return localBlock;
     }
 
     /**
@@ -389,53 +427,60 @@ public class IRFactory {
      * be defined)
 
      * - a catch handler for javascript exceptions that unwraps the
-     * exception onto the stack and GOTOes to the catch target -
-     * TARGET_PROP in the try node.
+     * exception onto the stack and GOTOes to the catch target
 
-     * - a finally handler that catches any exception, stores it to a
-     * temporary, and JSRs to the finally target - FINALLY_PROP in the
-     * try node - before re-throwing the exception.
+     * - a finally handler
 
      * ... and a goto to GOTO around these handlers.
      */
-    public Object createTryCatchFinally(Object tryblock, Object catchblocks,
-                                        Object finallyblock, int lineno)
+    Object createTryCatchFinally(Object tryblock, Object catchblocks,
+                                 Object finallyblock, int lineno)
     {
         Node trynode = (Node)tryblock;
-
-        // short circuit
-        if (trynode.getType() == TokenStream.BLOCK && !trynode.hasChildren())
-            return trynode;
-
-        Node pn = new Node(TokenStream.TRY, trynode, lineno);
-        Node catchNodes = (Node)catchblocks;
-        boolean hasCatch = catchNodes.hasChildren();
         boolean hasFinally = false;
         Node finallyNode = null;
-        Node finallyTarget = null;
         if (finallyblock != null) {
             finallyNode = (Node)finallyblock;
-            hasFinally = (finallyNode.getType() != TokenStream.BLOCK
+            hasFinally = (finallyNode.getType() != Token.BLOCK
                           || finallyNode.hasChildren());
-            if (hasFinally) {
-                // make a TARGET for the finally that the tcf node knows about
-                finallyTarget = new Node(TokenStream.TARGET);
-                pn.putProp(Node.FINALLY_PROP, finallyTarget);
-
-                // add jsr finally to the try block
-                Node jsrFinally = new Node(TokenStream.JSR);
-                jsrFinally.putProp(Node.TARGET_PROP, finallyTarget);
-                pn.addChildToBack(jsrFinally);
-            }
         }
 
         // short circuit
-        if (!hasFinally && !hasCatch)  // bc finally might be an empty block...
+        if (trynode.getType() == Token.BLOCK && !trynode.hasChildren()
+            && !hasFinally)
+        {
             return trynode;
+        }
 
-        Node endTarget = new Node(TokenStream.TARGET);
-        Node GOTOToEnd = new Node(TokenStream.GOTO);
-        GOTOToEnd.putProp(Node.TARGET_PROP, endTarget);
+        Node catchNodes = (Node)catchblocks;
+        boolean hasCatch = catchNodes.hasChildren();
+
+        // short circuit
+        if (!hasFinally && !hasCatch)  {
+            // bc finally might be an empty block...
+            return trynode;
+        }
+
+
+        Node localBlock  = new Node(Token.LOCAL_BLOCK);
+        Node.Jump pn = new Node.Jump(Token.TRY, trynode, lineno);
+        pn.putProp(Node.LOCAL_BLOCK_PROP, localBlock);
+
+        Node.Target finallyTarget = null;
+        if (hasFinally) {
+            // make a TARGET for the finally that the tcf node knows about
+            finallyTarget = new Node.Target();
+            pn.setFinally(finallyTarget);
+
+            // add jsr finally to the try block
+            Node.Jump jsrFinally = new Node.Jump(Token.JSR);
+            jsrFinally.target = finallyTarget;
+            pn.addChildToBack(jsrFinally);
+        }
+
+        Node.Target endTarget = new Node.Target();
+        Node.Jump GOTOToEnd = new Node.Jump(Token.GOTO);
+        GOTOToEnd.target = endTarget;
         pn.addChildToBack(GOTOToEnd);
 
         if (hasCatch) {
@@ -445,7 +490,7 @@ public class IRFactory {
 
                 try {
                         throw 3;
-                } catch (e: e instanceof Object) {
+                } catch (e if e instanceof Object) {
                         print("object");
                 } catch (e2) {
                         print(e2);
@@ -456,16 +501,12 @@ public class IRFactory {
                 try {
                         throw 3;
                 } catch (x) {
-                        o = newScope();
-                        o.e = x;
-                        with (o) {
+                        with (newCatchScope(e, x)) {
                                 if (e instanceof Object) {
                                         print("object");
                                 }
                         }
-                        o2 = newScope();
-                        o2.e2 = x;
-                        with (o2) {
+                        with (newCatchScope(e2, x)) {
                                 if (true) {
                                         print(e2);
                                 }
@@ -473,22 +514,18 @@ public class IRFactory {
                 }
             */
             // make a TARGET for the catch that the tcf node knows about
-            Node catchTarget = new Node(TokenStream.TARGET);
-            pn.putProp(Node.TARGET_PROP, catchTarget);
+            Node.Target catchTarget = new Node.Target();
+            pn.target = catchTarget;
             // mark it
             pn.addChildToBack(catchTarget);
 
-            // get the exception object and store it in a temp
-            Node exn = createNewLocal(new Node(TokenStream.VOID));
-            pn.addChildToBack(new Node(TokenStream.POP, exn));
-
-            Node endCatch = new Node(TokenStream.TARGET);
+            Node.Target endCatch = new Node.Target();
 
             // add [jsr finally?] goto end to each catch block
             // expects catchNode children to be (cond block) pairs.
             Node cb = catchNodes.getFirstChild();
+            boolean hasDefault = false;
             while (cb != null) {
-                Node catchStmt = new Node(TokenStream.BLOCK);
                 int catchLineNo = cb.getLineno();
 
                 Node name = cb.getFirstChild();
@@ -498,64 +535,61 @@ public class IRFactory {
                 cb.removeChild(cond);
                 cb.removeChild(catchBlock);
 
-                Node newScope = createNewLocal(new Node(TokenStream.NEWSCOPE));
-                Node initScope = new Node(TokenStream.SETPROP, newScope,
-                                          Node.newString(
-                                                   name.getString()),
-                                          createUseLocal(exn));
-                catchStmt.addChildToBack(new Node(TokenStream.POP, initScope));
-
-                catchBlock.addChildToBack(new Node(TokenStream.LEAVEWITH));
-                Node GOTOToEndCatch = new Node(TokenStream.GOTO);
-                GOTOToEndCatch.putProp(Node.TARGET_PROP, endCatch);
+                catchBlock.addChildToBack(new Node(Token.LEAVEWITH));
+                Node.Jump GOTOToEndCatch = new Node.Jump(Token.GOTO);
+                GOTOToEndCatch.target = endCatch;
                 catchBlock.addChildToBack(GOTOToEndCatch);
-
-                Node ifStmt = (Node) createIf(cond, catchBlock, null, catchLineNo);
+                Node condStmt;
+                if (cond.getType() == Token.EMPTY) {
+                    condStmt = catchBlock;
+                    hasDefault = true;
+                } else {
+                    condStmt = (Node) createIf(cond, catchBlock, null,
+                                               catchLineNo);
+                }
                 // Try..catch produces "with" code in order to limit
                 // the scope of the exception object.
                 // OPT: We should be able to figure out the correct
                 //      scoping at compile-time and avoid the
                 //      runtime overhead.
-                Node withStmt = (Node) createWith(createUseLocal(newScope),
-                                                  ifStmt, catchLineNo);
-                catchStmt.addChildToBack(withStmt);
-
-                pn.addChildToBack(catchStmt);
+                Node catchScope = Node.newString(Token.CATCH_SCOPE,
+                                                 name.getString());
+                catchScope.addChildToBack(createUseLocal(localBlock));
+                Node withStmt = (Node) createWith(catchScope, condStmt,
+                                                  catchLineNo);
+                pn.addChildToBack(withStmt);
 
                 // move to next cb
                 cb = cb.getNext();
             }
-
-            // Generate code to rethrow if no catch clause was executed
-            Node rethrow = new Node(TokenStream.THROW, createUseLocal(exn));
-            pn.addChildToBack(rethrow);
+            if (!hasDefault) {
+                // Generate code to rethrow if no catch clause was executed
+                Node rethrow = new Node(Token.THROW,
+                                        createUseLocal(localBlock));
+                pn.addChildToBack(rethrow);
+            }
 
             pn.addChildToBack(endCatch);
             // add a JSR finally if needed
             if (hasFinally) {
-                Node jsrFinally = new Node(TokenStream.JSR);
-                jsrFinally.putProp(Node.TARGET_PROP, finallyTarget);
+                Node.Jump jsrFinally = new Node.Jump(Token.JSR);
+                jsrFinally.target = finallyTarget;
                 pn.addChildToBack(jsrFinally);
-                Node GOTO = new Node(TokenStream.GOTO);
-                GOTO.putProp(Node.TARGET_PROP, endTarget);
+                Node.Jump GOTO = new Node.Jump(Token.GOTO);
+                GOTO.target = endTarget;
                 pn.addChildToBack(GOTO);
             }
         }
 
         if (hasFinally) {
             pn.addChildToBack(finallyTarget);
-            Node returnTemp = createNewLocal(new Node(TokenStream.VOID));
-            Node popAndMake = new Node(TokenStream.POP, returnTemp);
-            pn.addChildToBack(popAndMake);
-            pn.addChildToBack(finallyNode);
-            Node ret = createUseLocal(returnTemp);
-
-            // add the magic prop that makes it output a RET
-            ret.putProp(Node.TARGET_PROP, Boolean.TRUE);
-            pn.addChildToBack(ret);
+            Node fBlock = new Node(Token.FINALLY, finallyNode);
+            fBlock.putProp(Node.LOCAL_BLOCK_PROP, localBlock);
+            pn.addChildToBack(fBlock);
         }
         pn.addChildToBack(endTarget);
-        return pn;
+        localBlock.addChildToBack(pn);
+        return localBlock;
     }
 
     /**
@@ -565,12 +599,13 @@ public class IRFactory {
     /**
      * With
      */
-    public Object createWith(Object obj, Object body, int lineno) {
-        Node result = new Node(TokenStream.BLOCK, lineno);
-        result.addChildToBack(new Node(TokenStream.ENTERWITH, (Node)obj));
-        Node bodyNode = new Node(TokenStream.WITH, (Node) body, lineno);
+    Object createWith(Object obj, Object body, int lineno)
+    {
+        Node result = new Node(Token.BLOCK, lineno);
+        result.addChildToBack(new Node(Token.ENTERWITH, (Node)obj));
+        Node bodyNode = new Node(Token.WITH, (Node) body, lineno);
         result.addChildrenToBack(bodyNode);
-        result.addChildToBack(new Node(TokenStream.LEAVEWITH));
+        result.addChildToBack(new Node(Token.LEAVEWITH));
         return result;
     }
 
@@ -580,30 +615,27 @@ public class IRFactory {
      * plus a series of array element entries, so later compiler
      * stages don't need to know about array literals.
      */
-    public Object createArrayLiteral(Object obj) {
+    Object createArrayLiteral(Object obj)
+    {
         Node array;
-        array = new Node(TokenStream.NEW,
-                         Node.newString(TokenStream.NAME, "Array"));
-        Node temp = createNewTemp(array);
+        array = new Node(Token.NEW, Node.newString(Token.NAME, "Array"));
+        Node list = new Node(Token.INIT_LIST, array);
 
         Node elem = null;
         int i = 0;
-        Node comma = new Node(TokenStream.COMMA, temp);
         for (Node cursor = ((Node) obj).getFirstChild(); cursor != null;) {
             // Move cursor to cursor.next before elem.next can be
             // altered in new Node constructor
             elem = cursor;
             cursor = cursor.getNext();
-            if (elem.getType() == TokenStream.PRIMARY &&
-                elem.getOperation() == TokenStream.UNDEFINED)
-            {
+            if (elem.getType() == Token.UNDEFINED) {
                 i++;
                 continue;
             }
-            Node addelem = new Node(TokenStream.SETELEM, createUseTemp(temp),
+            Node addelem = new Node(Token.SETELEM, new Node(Token.USE_STACK),
                                     Node.newNumber(i), elem);
             i++;
-            comma.addChildToBack(addelem);
+            list.addChildToBack(addelem);
         }
 
         /*
@@ -616,26 +648,22 @@ public class IRFactory {
          * (Which will make Array optimizations involving allocating a
          * Java array to back the javascript array work better.)
          */
-        if (Context.getContext().getLanguageVersion() == Context.VERSION_1_2) {
+        if (parser.compilerEnv.languageVersion == Context.VERSION_1_2) {
             /* When last array element is empty, we need to set the
              * length explicitly, because we can't depend on SETELEM
              * to do it for us - because empty [,,] array elements
              * never set anything at all. */
-            if (elem != null &&
-                elem.getType() == TokenStream.PRIMARY &&
-                elem.getOperation() == TokenStream.UNDEFINED)
-            {
-                Node setlength = new Node(TokenStream.SETPROP,
-                                          createUseTemp(temp),
+            if (elem != null && elem.getType() == Token.UNDEFINED) {
+                Node setlength = new Node(Token.SETPROP,
+                                          new Node(Token.USE_STACK),
                                           Node.newString("length"),
                                           Node.newNumber(i));
-                comma.addChildToBack(setlength);
+                list.addChildToBack(setlength);
             }
         } else {
             array.addChildToBack(Node.newNumber(i));
         }
-        comma.addChildToBack(createUseTemp(temp));
-        return comma;
+        return list;
     }
 
     /**
@@ -644,33 +672,33 @@ public class IRFactory {
      * creation plus object property entries, so later compiler
      * stages don't need to know about object literals.
      */
-    public Object createObjectLiteral(Object obj) {
-        Node result = new Node(TokenStream.NEW, Node.newString(TokenStream.NAME,
-                                                         "Object"));
-        Node temp = createNewTemp(result);
+    Object createObjectLiteral(Object obj)
+    {
+        Node result = new Node(Token.NEW,
+                               Node.newString(Token.NAME, "Object"));
+        Node list = new Node(Token.INIT_LIST, result);
 
-        Node comma = new Node(TokenStream.COMMA, temp);
         for (Node cursor = ((Node) obj).getFirstChild(); cursor != null;) {
             Node n = cursor;
             cursor = cursor.getNext();
-            int op = (n.getType() == TokenStream.NAME)
-                   ? TokenStream.SETPROP
-                   : TokenStream.SETELEM;
+            int op = (n.getType() == Token.NAME)
+                   ? Token.SETPROP
+                   : Token.SETELEM;
             // Move cursor before next.next can be altered in new Node
             Node next = cursor;
             cursor = cursor.getNext();
-            Node addelem = new Node(op, createUseTemp(temp), n, next);
-            comma.addChildToBack(addelem);
+            Node addelem = new Node(op, new Node(Token.USE_STACK), n, next);
+            list.addChildToBack(addelem);
         }
-        comma.addChildToBack(createUseTemp(temp));
-        return comma;
+        return list;
     }
 
     /**
      * Regular expressions
      */
-    public Object createRegExp(int regexpIndex) {
-        Node n = new Node(TokenStream.REGEXP);
+    Object createRegExp(int regexpIndex)
+    {
+        Node n = new Node(Token.REGEXP);
         n.putIntProp(Node.REGEXP_PROP, regexpIndex);
         return n;
     }
@@ -678,21 +706,32 @@ public class IRFactory {
     /**
      * If statement
      */
-    public Object createIf(Object cond, Object ifTrue, Object ifFalse,
-                           int lineno)
+    Object createIf(Object condObj, Object ifTrue, Object ifFalse, int lineno)
     {
-        Node result = new Node(TokenStream.BLOCK, lineno);
-        Node ifNotTarget = new Node(TokenStream.TARGET);
-        Node IFNE = new Node(TokenStream.IFNE, (Node) cond);
-        IFNE.putProp(Node.TARGET_PROP, ifNotTarget);
+        Node cond = (Node)condObj;
+        int condStatus = isAlwaysDefinedBoolean(cond);
+        if (condStatus == ALWAYS_TRUE_BOOLEAN) {
+            return ifTrue;
+        } else if (condStatus == ALWAYS_FALSE_BOOLEAN) {
+            if (ifFalse != null) {
+                return ifFalse;
+            }
+            // Replace if (false) xxx by empty block
+            return new Node(Token.BLOCK, lineno);
+        }
+
+        Node result = new Node(Token.BLOCK, lineno);
+        Node.Target ifNotTarget = new Node.Target();
+        Node.Jump IFNE = new Node.Jump(Token.IFNE, (Node) cond);
+        IFNE.target = ifNotTarget;
 
         result.addChildToBack(IFNE);
         result.addChildrenToBack((Node)ifTrue);
 
         if (ifFalse != null) {
-            Node GOTOToEnd = new Node(TokenStream.GOTO);
-            Node endTarget = new Node(TokenStream.TARGET);
-            GOTOToEnd.putProp(Node.TARGET_PROP, endTarget);
+            Node.Jump GOTOToEnd = new Node.Jump(Token.GOTO);
+            Node.Target endTarget = new Node.Target();
+            GOTOToEnd.target = endTarget;
             result.addChildToBack(GOTOToEnd);
             result.addChildToBack(ifNotTarget);
             result.addChildrenToBack((Node)ifFalse);
@@ -704,61 +743,94 @@ public class IRFactory {
         return result;
     }
 
-    public Object createTernary(Object cond, Object ifTrue, Object ifFalse) {
-        return createIf(cond, ifTrue, ifFalse, -1);
+    Object createCondExpr(Object condObj, Object ifTrue, Object ifFalse)
+    {
+        Node cond = (Node)condObj;
+        int condStatus = isAlwaysDefinedBoolean(cond);
+        if (condStatus == ALWAYS_TRUE_BOOLEAN) {
+            return ifTrue;
+        } else if (condStatus == ALWAYS_FALSE_BOOLEAN) {
+            return ifFalse;
+        }
+        return new Node(Token.HOOK, cond, (Node)ifTrue, (Node)ifFalse);
     }
 
     /**
      * Unary
      */
-    public Object createUnary(int nodeType, Object child) {
+    Object createUnary(int nodeType, Object child)
+    {
         Node childNode = (Node) child;
-        if (nodeType == TokenStream.DELPROP) {
-            int childType = childNode.getType();
+        int childType = childNode.getType();
+        switch (nodeType) {
+          case Token.DELPROP: {
             Node left;
             Node right;
-            if (childType == TokenStream.NAME) {
+            if (childType == Token.NAME) {
                 // Transform Delete(Name "a")
                 //  to Delete(Bind("a"), String("a"))
-                childNode.setType(TokenStream.BINDNAME);
+                childNode.setType(Token.BINDNAME);
                 left = childNode;
-                right = childNode.cloneNode();
-                right.setType(TokenStream.STRING);
-            } else if (childType == TokenStream.GETPROP ||
-                       childType == TokenStream.GETELEM)
+                right = Node.newString(childNode.getString());
+            } else if (childType == Token.GETPROP ||
+                       childType == Token.GETELEM)
             {
                 left = childNode.getFirstChild();
                 right = childNode.getLastChild();
                 childNode.removeChild(left);
                 childNode.removeChild(right);
             } else {
-                return new Node(TokenStream.PRIMARY, TokenStream.TRUE);
+                return new Node(Token.TRUE);
             }
             return new Node(nodeType, left, right);
+          }
+          case Token.TYPEOF:
+            if (childType == Token.NAME) {
+                childNode.setType(Token.TYPEOFNAME);
+                return childNode;
+            }
+            break;
+          case Token.BITNOT:
+            if (childType == Token.NUMBER) {
+                int value = ScriptRuntime.toInt32(childNode.getDouble());
+                childNode.setDouble(~value);
+                return childNode;
+            }
+            break;
+          case Token.NEG:
+            if (childType == Token.NUMBER) {
+                childNode.setDouble(-childNode.getDouble());
+                return childNode;
+            }
+            break;
+          case Token.NOT: {
+            int status = isAlwaysDefinedBoolean(childNode);
+            if (status != 0) {
+                int type;
+                if (status == ALWAYS_TRUE_BOOLEAN) {
+                    type = Token.FALSE;
+                } else {
+                    type = Token.TRUE;
+                }
+                if (childType == Token.TRUE || childType == Token.FALSE) {
+                    childNode.setType(type);
+                    return childNode;
+                }
+                return new Node(type);
+            }
+            break;
+          }
         }
         return new Node(nodeType, childNode);
     }
 
-    public Object createUnary(int nodeType, int nodeOp, Object child) {
-        Node childNode = (Node) child;
+    Object createIncDec(int nodeType, boolean post, Object child)
+    {
+        Node childNode = (Node)child;
         int childType = childNode.getType();
-        if (nodeOp == TokenStream.TYPEOF &&
-            childType == TokenStream.NAME)
-        {
-            childNode.setType(TokenStream.TYPEOF);
-            return childNode;
-        }
 
-        if (nodeType == TokenStream.INC || nodeType == TokenStream.DEC) {
-
-            if (!hasSideEffects(childNode)
-                && (nodeOp == TokenStream.POST)
-                && (childType == TokenStream.NAME
-                    || childType == TokenStream.GETPROP
-                    || childType == TokenStream.GETELEM))
-            {
-                // if it's not a LHS type, createAssignment (below) will throw
-                // an exception.
+        if (childType == Token.NAME) {
+            if (post) {
                 return new Node(nodeType, childNode);
             }
 
@@ -766,263 +838,362 @@ public class IRFactory {
              * Transform INC/DEC ops to +=1, -=1,
              * expecting later optimization of all +/-=1 cases to INC, DEC.
              */
-            // we have to use Double for now, because
-            // 0.0 and 1.0 are stored as dconst_[01],
-            // and using a Float creates a stack mismatch.
             Node rhs = (Node) createNumber(1.0);
 
-            return createAssignment(nodeType == TokenStream.INC
-                                        ? TokenStream.ADD
-                                        : TokenStream.SUB,
-                                    childNode,
-                                    rhs,
-                                    ScriptRuntime.NumberClass,
-                                    nodeOp == TokenStream.POST);
-        }
+            String s = childNode.getString();
+            Node opLeft = Node.newString(Token.NAME, s);
+            opLeft = new Node(Token.POS, opLeft);
 
-        Node result = new Node(nodeType, nodeOp);
-        result.addChildToBack((Node)child);
-        return result;
+            int opType = (nodeType == Token.INC) ? Token.ADD : Token.SUB;
+            Node op = new Node(opType, opLeft, rhs);
+            Node lvalueLeft = Node.newString(Token.BINDNAME, s);
+            return new Node(Token.SETNAME, lvalueLeft, op);
+
+        } else if (childType == Token.GETPROP || childType == Token.GETELEM) {
+            if (post) {
+                return new Node(nodeType, childNode);
+            }
+
+            /*
+             * Transform INC/DEC ops to +=1, -=1,
+             * expecting later optimization of all +/-=1 cases to INC, DEC.
+             */
+            Node rhs = (Node) createNumber(1.0);
+
+            return createAssignmentOp(nodeType == Token.INC
+                                        ? Token.ADD
+                                        : Token.SUB,
+                                      childNode,
+                                      rhs,
+                                      true);
+        }
+        // TODO: This should be a ReferenceError--but that's a runtime
+        //  exception. Should we compile an exception into the code?
+        parser.reportError("msg.bad.lhs.assign");
+        return child;
     }
 
     /**
      * Binary
      */
-    public Object createBinary(int nodeType, Object left, Object right) {
-        Node temp;
+    Object createBinary(int nodeType, Object leftObj, Object rightObj)
+    {
+        Node left = (Node)leftObj;
+        Node right = (Node)rightObj;
+
         switch (nodeType) {
 
-          case TokenStream.DOT:
-            nodeType = TokenStream.GETPROP;
-            Node idNode = (Node) right;
-            idNode.setType(TokenStream.STRING);
-            String id = idNode.getString();
-            if (id.equals("__proto__") || id.equals("__parent__")) {
-                Node result = new Node(nodeType, (Node) left);
-                result.putProp(Node.SPECIAL_PROP_PROP, id);
+          case Token.DOT:
+            nodeType = Token.GETPROP;
+            right.setType(Token.STRING);
+            String id = right.getString();
+            int idlength = id.length();
+            int special = 0;
+            if (idlength == 9) {
+                if (id.equals("__proto__")) {
+                    special = Node.SPECIAL_PROP_PROTO;
+                }
+            } else if (idlength == 10) {
+                if (id.equals("__parent__")) {
+                    special = Node.SPECIAL_PROP_PARENT;
+                }
+            }
+            if (special != 0) {
+                Node result = new Node(nodeType, left);
+                result.putIntProp(Node.SPECIAL_PROP_PROP, special);
                 return result;
             }
             break;
 
-          case TokenStream.LB:
+          case Token.LB:
             // OPT: could optimize to GETPROP iff string can't be a number
-            nodeType = TokenStream.GETELEM;
+            nodeType = Token.GETELEM;
             break;
+
+          case Token.ADD:
+            // numerical addition and string concatenation
+            if (left.type == Token.STRING) {
+                String s2;
+                if (right.type == Token.STRING) {
+                    s2 = right.getString();
+                } else if (right.type == Token.NUMBER) {
+                    s2 = ScriptRuntime.numberToString(right.getDouble(), 10);
+                } else {
+                    break;
+                }
+                String s1 = left.getString();
+                left.setString(s1.concat(s2));
+                return left;
+            } else if (left.type == Token.NUMBER) {
+                if (right.type == Token.NUMBER) {
+                    left.setDouble(left.getDouble() + right.getDouble());
+                    return left;
+                } else if (right.type == Token.STRING) {
+                    String s1, s2;
+                    s1 = ScriptRuntime.numberToString(left.getDouble(), 10);
+                    s2 = right.getString();
+                    right.setString(s1.concat(s2));
+                    return right;
+                }
+            }
+            // can't do anything if we don't know  both types - since
+            // 0 + object is supposed to call toString on the object and do
+            // string concantenation rather than addition
+            break;
+
+          case Token.SUB:
+            // numerical subtraction
+            if (left.type == Token.NUMBER) {
+                double ld = left.getDouble();
+                if (right.type == Token.NUMBER) {
+                    //both numbers
+                    left.setDouble(ld - right.getDouble());
+                    return left;
+                } else if (ld == 0.0) {
+                    // first 0: 0-x -> -x
+                    return new Node(Token.NEG, right);
+                }
+            } else if (right.type == Token.NUMBER) {
+                if (right.getDouble() == 0.0) {
+                    //second 0: x - 0 -> +x
+                    // can not make simply x because x - 0 must be number
+                    return new Node(Token.POS, left);
+                }
+            }
+            break;
+
+          case Token.MUL:
+            // numerical multiplication
+            if (left.type == Token.NUMBER) {
+                double ld = left.getDouble();
+                if (right.type == Token.NUMBER) {
+                    //both numbers
+                    left.setDouble(ld * right.getDouble());
+                    return left;
+                } else if (ld == 1.0) {
+                    // first 1: 1 *  x -> +x
+                    return new Node(Token.POS, right);
+                }
+            } else if (right.type == Token.NUMBER) {
+                if (right.getDouble() == 1.0) {
+                    //second 1: x * 1 -> +x
+                    // can not make simply x because x - 0 must be number
+                    return new Node(Token.POS, left);
+                }
+            }
+            // can't do x*0: Infinity * 0 gives NaN, not 0
+            break;
+
+          case Token.DIV:
+            // number division
+            if (right.type == Token.NUMBER) {
+                double rd = right.getDouble();
+                if (left.type == Token.NUMBER) {
+                    // both constants -- just divide, trust Java to handle x/0
+                    left.setDouble(left.getDouble() / rd);
+                    return left;
+               } else if (rd == 1.0) {
+                    // second 1: x/1 -> +x
+                    // not simply x to force number convertion
+                    return new Node(Token.POS, left);
+                }
+            }
+            break;
+
+          case Token.AND: {
+            int leftStatus = isAlwaysDefinedBoolean(left);
+            if (leftStatus == ALWAYS_FALSE_BOOLEAN) {
+                // if the first one is false, replace with FALSE
+                return new Node(Token.FALSE);
+            } else if (leftStatus == ALWAYS_TRUE_BOOLEAN) {
+                // if first is true, set to second
+                return right;
+            }
+            int rightStatus = isAlwaysDefinedBoolean(right);
+            if (rightStatus == ALWAYS_FALSE_BOOLEAN) {
+                // if the second one is false, replace with FALSE
+                if (!hasSideEffects(left)) {
+                    return new Node(Token.FALSE);
+                }
+            } else if (rightStatus == ALWAYS_TRUE_BOOLEAN) {
+                // if second is true, set to first
+                return left;
+            }
+            break;
+          }
+
+          case Token.OR: {
+            int leftStatus = isAlwaysDefinedBoolean(left);
+            if (leftStatus == ALWAYS_TRUE_BOOLEAN) {
+                // if the first one is true, replace with TRUE
+                return new Node(Token.TRUE);
+            } else if (leftStatus == ALWAYS_FALSE_BOOLEAN) {
+                // if first is false, set to second
+                return right;
+            }
+            int rightStatus = isAlwaysDefinedBoolean(right);
+            if (rightStatus == ALWAYS_TRUE_BOOLEAN) {
+                // if the second one is true, replace with TRUE
+                if (!hasSideEffects(left)) {
+                    return new Node(Token.TRUE);
+                }
+            } else if (rightStatus == ALWAYS_FALSE_BOOLEAN) {
+                // if second is false, set to first
+                return left;
+            }
+            break;
+          }
         }
-        return new Node(nodeType, (Node)left, (Node)right);
+
+        return new Node(nodeType, left, right);
     }
 
-    public Object createBinary(int nodeType, int nodeOp, Object left,
-                               Object right)
+    Object createAssignment(Object leftObj, Object rightObj)
     {
-        if (nodeType == TokenStream.ASSIGN) {
-            return createAssignment(nodeOp, (Node) left, (Node) right,
-                                    null, false);
-        }
-        return new Node(nodeType, (Node) left, (Node) right, nodeOp);
-    }
+        Node left = (Node)leftObj;
+        Node right = (Node)rightObj;
 
-    public Object createAssignment(int nodeOp, Node left, Node right,
-                                   Class convert, boolean postfix)
-    {
         int nodeType = left.getType();
-        String idString;
-        Node id = null;
         switch (nodeType) {
-          case TokenStream.NAME:
-            return createSetName(nodeOp, left, right, convert, postfix);
+          case Token.NAME:
+            left.setType(Token.BINDNAME);
+            return new Node(Token.SETNAME, left, right);
 
-          case TokenStream.GETPROP:
-            idString = (String) left.getProp(Node.SPECIAL_PROP_PROP);
-            if (idString != null)
-                id = Node.newString(idString);
-            /* fall through */
-          case TokenStream.GETELEM:
-            if (id == null)
-                id = left.getLastChild();
-            return createSetProp(nodeType, nodeOp, left.getFirstChild(),
-                                 id, right, convert, postfix);
+          case Token.GETPROP:
+          case Token.GETELEM: {
+            Node obj = left.getFirstChild();
+            Node id = left.getLastChild();
+            int type;
+            if (nodeType == Token.GETPROP) {
+                type = Token.SETPROP;
+                int special = left.getIntProp(Node.SPECIAL_PROP_PROP, 0);
+                if (special != 0) {
+                    Node result = new Node(Token.SETPROP, obj, right);
+                    result.putIntProp(Node.SPECIAL_PROP_PROP, special);
+                    return result;
+                }
+            } else {
+                type = Token.SETELEM;
+            }
+            return new Node(type, obj, id, right);
+          }
+
           default:
             // TODO: This should be a ReferenceError--but that's a runtime
             //  exception. Should we compile an exception into the code?
-            ts.reportCurrentLineError("msg.bad.lhs.assign", null);
+            parser.reportError("msg.bad.lhs.assign");
             return left;
         }
     }
 
-    private Node createConvert(Class toType, Node expr) {
-        if (toType == null)
-            return expr;
-        Node result = new Node(TokenStream.CONVERT, expr);
-        result.putProp(Node.TYPE_PROP, ScriptRuntime.NumberClass);
-        return result;
-    }
-
-    private Object createSetName(int nodeOp, Node left, Node right,
-                                 Class convert, boolean postfix)
+    Object createAssignmentOp(int assignOp, Object left, Object right)
     {
-        if (nodeOp == TokenStream.NOP) {
-            left.setType(TokenStream.BINDNAME);
-            return new Node(TokenStream.SETNAME, left, right);
-        }
-
-        String s = left.getString();
-
-        if (s.equals("__proto__") || s.equals("__parent__")) {
-            Node result = new Node(TokenStream.SETPROP, left, right);
-            result.putProp(Node.SPECIAL_PROP_PROP, s);
-            return result;
-        }
-
-        Node opLeft = Node.newString(TokenStream.NAME, s);
-        if (convert != null)
-            opLeft = createConvert(convert, opLeft);
-        if (postfix)
-            opLeft = createNewTemp(opLeft);
-        Node op = new Node(nodeOp, opLeft, right);
-
-        Node lvalueLeft = Node.newString(TokenStream.BINDNAME, s);
-        Node result = new Node(TokenStream.SETNAME, lvalueLeft, op);
-        if (postfix) {
-            result = new Node(TokenStream.COMMA, result,
-                              createUseTemp(opLeft));
-        }
-        return result;
+        return createAssignmentOp(assignOp, (Node)left, (Node)right, false);
     }
 
-    public Node createNewTemp(Node n) {
-        int type = n.getType();
-        if (type == TokenStream.STRING || type == TokenStream.NUMBER) {
-            // Optimization: clone these values rather than storing
-            // and loading from a temp
-            return n;
-        }
-        Node result = new Node(TokenStream.NEWTEMP, n);
-        return result;
-    }
+    private Node createAssignmentOp(int assignOp, Node left, Node right,
+                                    boolean tonumber)
+    {
+        int nodeType = left.getType();
+        switch (nodeType) {
+          case Token.NAME: {
+            String s = left.getString();
 
-    public Node createUseTemp(Node newTemp) {
-        int type = newTemp.getType();
-        if (type == TokenStream.NEWTEMP) {
-            Node result = new Node(TokenStream.USETEMP);
-            result.putProp(Node.TEMP_PROP, newTemp);
-            int n = newTemp.getIntProp(Node.USES_PROP, 0);
-            if (n != Integer.MAX_VALUE) {
-                newTemp.putIntProp(Node.USES_PROP, n + 1);
+            Node opLeft = Node.newString(Token.NAME, s);
+            if (tonumber)
+                opLeft = new Node(Token.POS, opLeft);
+
+            Node op = new Node(assignOp, opLeft, right);
+            Node lvalueLeft = Node.newString(Token.BINDNAME, s);
+            return new Node(Token.SETNAME, lvalueLeft, op);
+          }
+
+          case Token.GETPROP:
+          case Token.GETELEM: {
+            Node obj = left.getFirstChild();
+            Node id = left.getLastChild();
+
+            int type = nodeType == Token.GETPROP
+                       ? Token.SETPROP_OP
+                       : Token.SETELEM_OP;
+
+            Node opLeft = new Node(Token.USE_STACK);
+            if (tonumber) {
+                opLeft = new Node(Token.POS, opLeft);
             }
-            return result;
+            Node op = new Node(assignOp, opLeft, right);
+            return new Node(type, obj, id, op);
+          }
+
+          default:
+            // TODO: This should be a ReferenceError--but that's a runtime
+            //  exception. Should we compile an exception into the code?
+            parser.reportError("msg.bad.lhs.assign");
+            return left;
         }
-        return newTemp.cloneNode();
     }
 
-    public Node createNewLocal(Node n) {
-        Node result = new Node(TokenStream.NEWLOCAL, n);
+    Node createUseLocal(Node localBlock)
+    {
+        if (Token.LOCAL_BLOCK != localBlock.getType()) Kit.codeBug();
+        Node result = new Node(Token.LOCAL_LOAD);
+        result.putProp(Node.LOCAL_BLOCK_PROP, localBlock);
         return result;
     }
 
-    public Node createUseLocal(Node newLocal) {
-        int type = newLocal.getType();
-        if (type == TokenStream.NEWLOCAL) {
-            Node result = new Node(TokenStream.USELOCAL);
-            result.putProp(Node.LOCAL_PROP, newLocal);
-            return result;
+    // Check if Node always mean true or false in boolean context
+    private static int isAlwaysDefinedBoolean(Node node)
+    {
+        switch (node.getType()) {
+          case Token.FALSE:
+          case Token.NULL:
+          case Token.UNDEFINED:
+            return ALWAYS_FALSE_BOOLEAN;
+          case Token.TRUE:
+            return ALWAYS_TRUE_BOOLEAN;
+          case Token.NUMBER: {
+            double num = node.getDouble();
+            if (num == num && num != 0.0) {
+                return ALWAYS_TRUE_BOOLEAN;
+            } else {
+                return ALWAYS_FALSE_BOOLEAN;
+            }
+          }
         }
-        return newLocal.cloneNode();    // what's this path for ?
+        return 0;
     }
 
-    public static boolean hasSideEffects(Node exprTree) {
+    private static boolean hasSideEffects(Node exprTree)
+    {
         switch (exprTree.getType()) {
-            case TokenStream.INC:
-            case TokenStream.DEC:
-            case TokenStream.SETPROP:
-            case TokenStream.SETELEM:
-            case TokenStream.SETNAME:
-            case TokenStream.CALL:
-            case TokenStream.NEW:
+            case Token.INC:
+            case Token.DEC:
+            case Token.SETPROP:
+            case Token.SETELEM:
+            case Token.SETNAME:
+            case Token.CALL:
+            case Token.NEW:
                 return true;
             default:
                 Node child = exprTree.getFirstChild();
                 while (child != null) {
                     if (hasSideEffects(child))
                         return true;
-                    else
-                        child = child.getNext();
+                    child = child.getNext();
                 }
                 break;
         }
         return false;
     }
 
-    private Node createSetProp(int nodeType, int nodeOp, Node obj, Node id,
-                               Node expr, Class convert, boolean postfix)
-    {
-        int type = nodeType == TokenStream.GETPROP
-                   ? TokenStream.SETPROP
-                   : TokenStream.SETELEM;
-
-        if (type == TokenStream.SETPROP) {
-            String s = id.getString();
-            if (s != null && s.equals("__proto__") || s.equals("__parent__")) {
-                Node result = new Node(type, obj, expr);
-                result.putProp(Node.SPECIAL_PROP_PROP, s);
-                return result;
-            }
-        }
-
-        if (nodeOp == TokenStream.NOP)
-            return new Node(type, obj, id, expr);
-/*
-*    If the RHS expression could modify the LHS we have
-*    to construct a temporary to hold the LHS context
-*    prior to running the expression. Ditto, if the id
-*    expression has side-effects.
-*
-*    XXX If the hasSideEffects tests take too long, we
-*       could make this an optimizer-only transform
-*       and always do the temp assignment otherwise.
-*
-*/
-        Node tmp1, tmp2, opLeft;
-        if (obj.getType() != TokenStream.NAME || id.hasChildren() ||
-            hasSideEffects(expr) || hasSideEffects(id))
-        {
-            tmp1 = createNewTemp(obj);
-            Node useTmp1 = createUseTemp(tmp1);
-
-            tmp2 = createNewTemp(id);
-            Node useTmp2 = createUseTemp(tmp2);
-
-            opLeft = new Node(nodeType, useTmp1, useTmp2);
-        } else {
-            tmp1 = obj.cloneNode();
-            tmp2 = id.cloneNode();
-            opLeft = new Node(nodeType, obj, id);
-        }
-
-        if (convert != null)
-            opLeft = createConvert(convert, opLeft);
-        if (postfix)
-            opLeft = createNewTemp(opLeft);
-        Node op = new Node(nodeOp, opLeft, expr);
-
-        Node result = new Node(type, tmp1, tmp2, op);
-        if (postfix) {
-            result = new Node(TokenStream.COMMA, result,
-                              createUseTemp(opLeft));
-        }
-
-        return result;
-    }
-
-    private Interpreter compiler;
-
-    // Only needed to call reportSyntaxError. Could create an interface
-    // that TokenStream implements if we want to make the connection less
-    // direct.
-    TokenStream ts;
+    // Only needed to call reportCurrentLineError.
+    private Parser parser;
 
     private static final int LOOP_DO_WHILE = 0;
     private static final int LOOP_WHILE    = 1;
     private static final int LOOP_FOR      = 2;
+
+    private static final int ALWAYS_TRUE_BOOLEAN = 1;
+    private static final int ALWAYS_FALSE_BOOLEAN = -1;
 }
 

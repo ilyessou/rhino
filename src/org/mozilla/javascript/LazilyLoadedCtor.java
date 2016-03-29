@@ -53,9 +53,9 @@ public final class LazilyLoadedCtor {
         this.sealed = sealed;
 
         if (getter == null) {
-            Method[] all = FunctionObject.getMethodList(getClass());
-            getter = FunctionObject.findMethods(all, "getProperty")[0];
-            setter = FunctionObject.findMethods(all, "setProperty")[0];
+            Method[] methods = FunctionObject.getMethodList(getClass());
+            getter = FunctionObject.findSingleMethod(methods, "getProperty");
+            setter = FunctionObject.findSingleMethod(methods, "setProperty");
         }
 
         try {
@@ -63,7 +63,7 @@ public final class LazilyLoadedCtor {
                                  ScriptableObject.DONTENUM);
         }
         catch (PropertyException e) {
-            throw WrappedException.wrapException(e);
+            throw Context.throwAsScriptRuntimeEx(e);
         }
     }
 
@@ -78,33 +78,17 @@ public final class LazilyLoadedCtor {
                 //  java.util.PropertyPermission
                 //        org.mozilla.javascript.JavaAdapter read
 
-                Class cl = null;
-                try { cl = Class.forName(className); }
-                catch (ClassNotFoundException ex) { removeOnError = true; }
-                catch (SecurityException ex) { removeOnError = true; }
-
-                if (cl != null) {
+                Class cl = Kit.classOrNull(className);
+                if (cl == null) {
+                    removeOnError = true;
+                } else {
                     try {
                         ScriptableObject.defineClass(obj, cl, sealed);
                         isReplaced = true;
-                    }
-                    catch (InstantiationException e) {
-                        throw WrappedException.wrapException(e);
-                    }
-                    catch (IllegalAccessException e) {
-                        throw WrappedException.wrapException(e);
-                    }
-                    catch (InvocationTargetException e) {
-                        throw WrappedException.wrapException(e);
-                    }
-                    catch (ClassDefinitionException e) {
-                        throw WrappedException.wrapException(e);
-                    }
-                    catch (PropertyException e) {
-                        throw WrappedException.wrapException(e);
-                    }
-                    catch (SecurityException ex) {
+                    } catch (SecurityException ex) {
                         removeOnError = true;
+                    } catch (Exception e) {
+                        throw Context.throwAsScriptRuntimeEx(e);
                     }
                 }
                 if (removeOnError) {

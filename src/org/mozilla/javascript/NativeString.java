@@ -52,7 +52,7 @@ package org.mozilla.javascript;
 final class NativeString extends IdScriptable {
 
     static void init(Context cx, Scriptable scope, boolean sealed) {
-        NativeString obj = new NativeString(defaultValue);
+        NativeString obj = new NativeString("");
         obj.prototypeFlag = true;
         obj.addAsPrototype(MAX_PROTOTYPE_ID, cx, scope, sealed);
     }
@@ -72,27 +72,31 @@ final class NativeString extends IdScriptable {
         super.fillConstructorProperties(cx, ctor, sealed);
     }
 
-    protected int getIdDefaultAttributes(int id) {
+    protected int getIdAttributes(int id)
+    {
         if (id == Id_length) {
             return DONTENUM | READONLY | PERMANENT;
         }
-        return super.getIdDefaultAttributes(id);
+        return super.getIdAttributes(id);
     }
 
-    protected Object getIdValue(int id) {
+    protected Object getIdValue(int id)
+    {
         if (id == Id_length) {
             return wrap_int(string.length());
         }
         return super.getIdValue(id);
     }
 
-    public int methodArity(int methodId) {
+    public int methodArity(int methodId)
+    {
         if (prototypeFlag) {
             switch (methodId) {
                 case ConstructorId_fromCharCode:   return 1;
 
                 case Id_constructor:               return 1;
                 case Id_toString:                  return 0;
+                case Id_toSource:                  return 0;
                 case Id_valueOf:                   return 0;
                 case Id_charAt:                    return 1;
                 case Id_charCodeAt:                return 1;
@@ -135,24 +139,52 @@ final class NativeString extends IdScriptable {
     {
         if (prototypeFlag) {
             switch (methodId) {
-                case ConstructorId_fromCharCode:
-                    return jsStaticFunction_fromCharCode(args);
+                case ConstructorId_fromCharCode: {
+                    int N = args.length;
+                    if (N < 1)
+                        return "";
+                    StringBuffer sb = new StringBuffer(N);
+                    for (int i = 0; i != N; ++i) {
+                        sb.append(ScriptRuntime.toUint16(args[i]));
+                    }
+                    return sb.toString();
+                }
 
-                case Id_constructor:
-                    return jsConstructor(args, thisObj == null);
+                case Id_constructor: {
+                    String s = (args.length >= 1)
+                        ? ScriptRuntime.toString(args[0]) : "";
+                    if (thisObj == null) {
+                        // new String(val) creates a new String object.
+                        return new NativeString(s);
+                    }
+                    // String(val) converts val to a string value.
+                    return s;
+                }
 
                 case Id_toString:
-                    return realThis(thisObj, f).js_toString();
-
                 case Id_valueOf:
-                    return realThis(thisObj, f).js_valueOf();
+                    // ECMA 15.5.4.2: 'the toString function is not generic.
+                    return realThis(thisObj, f).string;
+
+                case Id_toSource: {
+                    String s = realThis(thisObj, f).string;
+                    return "(new String(\""+ScriptRuntime.escapeString(s)
+                           +"\"))";
+                }
 
                 case Id_charAt:
-                    return js_charAt(ScriptRuntime.toString(thisObj), args);
-
-                case Id_charCodeAt:
-                    return wrap_double(js_charCodeAt
-                        (ScriptRuntime.toString(thisObj), args));
+                case Id_charCodeAt: {
+                     // See ECMA 15.5.4.[4,5]
+                    String target = ScriptRuntime.toString(thisObj);
+                    double pos = ScriptRuntime.toInteger(args, 0);
+                    if (pos < 0 || pos >= target.length()) {
+                        if (methodId == Id_charAt) return "";
+                        else return ScriptRuntime.NaNobj;
+                    }
+                    char c = target.charAt((int)pos);
+                       if (methodId == Id_charAt) return String.valueOf(c);
+                    else return wrap_int(c);
+                }
 
                 case Id_indexOf:
                     return wrap_int(js_indexOf
@@ -171,10 +203,12 @@ final class NativeString extends IdScriptable {
                         (cx, ScriptRuntime.toString(thisObj), args);
 
                 case Id_toLowerCase:
-                    return js_toLowerCase(ScriptRuntime.toString(thisObj));
+                    // See ECMA 15.5.4.11
+                    return ScriptRuntime.toString(thisObj).toLowerCase();
 
                 case Id_toUpperCase:
-                    return js_toUpperCase(ScriptRuntime.toString(thisObj));
+                    // See ECMA 15.5.4.12
+                    return ScriptRuntime.toString(thisObj).toUpperCase();
 
                 case Id_substr:
                     return js_substr(ScriptRuntime.toString(thisObj), args);
@@ -225,41 +259,34 @@ final class NativeString extends IdScriptable {
                     return tagify(thisObj, "a", "name", args);
 
                 case Id_equals:
-                    return wrap_boolean(js_equals
-                        (ScriptRuntime.toString(thisObj),
-                         ScriptRuntime.toString(args, 0)));
-
-                case Id_equalsIgnoreCase:
-                    return wrap_boolean(js_equalsIgnoreCase
-                        (ScriptRuntime.toString(thisObj),
-                         ScriptRuntime.toString(args, 0)));
+                case Id_equalsIgnoreCase: {
+                    String s1 = ScriptRuntime.toString(thisObj);
+                    String s2 = ScriptRuntime.toString(args, 0);
+                    return wrap_boolean(methodId == Id_equals
+                        ? s1.equals(s2) : s1.equalsIgnoreCase(s2));
+                }
 
                 case Id_match:
-                    return checkReProxy(cx).match(cx, scope, thisObj, args);
+                    return ScriptRuntime.checkRegExpProxy(cx).
+                        match(cx, scope, thisObj, args);
 
                 case Id_search:
-                    return checkReProxy(cx).search(cx, scope, thisObj, args);
+                    return ScriptRuntime.checkRegExpProxy(cx).
+                        search(cx, scope, thisObj, args);
 
                 case Id_replace:
-                    return checkReProxy(cx).replace(cx, scope, thisObj, args);
+                    return ScriptRuntime.checkRegExpProxy(cx).
+                        replace(cx, scope, thisObj, args);
             }
         }
         return super.execMethod(methodId, f, cx, scope, thisObj, args);
     }
 
-    private NativeString realThis(Scriptable thisObj, IdFunction f) {
-        while (!(thisObj instanceof NativeString)) {
-            thisObj = nextInstanceCheck(thisObj, f, true);
-        }
+    private static NativeString realThis(Scriptable thisObj, IdFunction f)
+    {
+          if (!(thisObj instanceof NativeString))
+            throw incompatibleCallError(f);
         return (NativeString)thisObj;
-    }
-
-    private static RegExpProxy checkReProxy(Context cx) {
-        RegExpProxy result = cx.getRegExpProxy();
-        if (result == null) {
-            throw cx.reportRuntimeError0("msg.no.regexp");
-        }
-        return result;
     }
 
     /*
@@ -287,39 +314,7 @@ final class NativeString extends IdScriptable {
         return result.toString();
     }
 
-    private static String jsStaticFunction_fromCharCode(Object[] args) {
-        int N = args.length;
-        if (N < 1)
-            return "";
-        StringBuffer s = new StringBuffer(N);
-        for (int i=0; i < N; i++) {
-            s.append(ScriptRuntime.toUint16(args[i]));
-        }
-        return s.toString();
-    }
-
-    private static Object jsConstructor(Object[] args, boolean inNewExpr) {
-        String s = args.length >= 1
-            ? ScriptRuntime.toString(args[0])
-            : defaultValue;
-        if (inNewExpr) {
-            // new String(val) creates a new String object.
-            return new NativeString(s);
-        }
-        // String(val) converts val to a string value.
-        return s;
-    }
-
     public String toString() {
-        return string;
-    }
-
-    /* ECMA 15.5.4.2: 'the toString function is not generic.' */
-    private String js_toString() {
-        return string;
-    }
-
-    private String js_valueOf() {
         return string;
     }
 
@@ -338,31 +333,6 @@ final class NativeString extends IdScriptable {
             return;
         }
         super.put(index, start, value);
-    }
-
-    /*
-     *
-     * See ECMA 15.5.4.[4,5]
-     */
-    private static String js_charAt(String target, Object[] args) {
-        // this'll return 0 if undefined... seems
-        // to be ECMA.
-        double pos = ScriptRuntime.toInteger(args, 0);
-
-        if (pos < 0 || pos >= target.length())
-            return "";
-
-        return target.substring((int)pos, (int)pos + 1);
-    }
-
-    private static double js_charCodeAt(String target, Object[] args) {
-        double pos = ScriptRuntime.toInteger(args, 0);
-
-        if (pos < 0 || pos >= target.length()) {
-            return ScriptRuntime.NaN;
-        }
-
-        return target.charAt((int)pos);
     }
 
     /*
@@ -412,15 +382,14 @@ final class NativeString extends IdScriptable {
      * separator occurrence if found, or the string length if no
      * separator is found.
      */
-    private static int find_split(Scriptable scope, String target,
-                                  String separator, Object re,
+    private static int find_split(Context cx, Scriptable scope, String target,
+                                  String separator, int version,
+                                  RegExpProxy reProxy, Scriptable re,
                                   int[] ip, int[] matchlen, boolean[] matched,
                                   String[][] parensp)
     {
         int i = ip[0];
         int length = target.length();
-        Context cx = Context.getContext();
-        int version = cx.getLanguageVersion();
 
         /*
          * Perl4 special case for str.split(' '), only if the user has selected
@@ -475,10 +444,8 @@ final class NativeString extends IdScriptable {
          * trying for a match, so we don't get stuck in a loop.
          */
         if (re != null) {
-            return cx.getRegExpProxy().find_split(scope, target,
-                                                  separator, re,
-                                                  ip, matchlen, matched,
-                                                  parensp);
+            return reProxy.find_split(cx, scope, target, separator, re,
+                                      ip, matchlen, matched, parensp);
         }
 
         /*
@@ -553,12 +520,19 @@ final class NativeString extends IdScriptable {
         }
 
         String separator = null;
-        int[] matchlen = { 0 };
-        Object re = null;
-        RegExpProxy reProxy = cx.getRegExpProxy();
-        if (reProxy != null && reProxy.isRegExp(args[0])) {
-            re = args[0];
-        } else {
+        int[] matchlen = new int[1];
+        Scriptable re = null;
+        RegExpProxy reProxy = null;
+        if (args[0] instanceof Scriptable) {
+            reProxy = ScriptRuntime.getRegExpProxy(cx);
+            if (reProxy != null) {
+                Scriptable test = (Scriptable)args[0];
+                if (reProxy.isRegExp(test)) {
+                    re = test;
+                }
+            }
+        }
+        if (re == null) {
             separator = ScriptRuntime.toString(args[0]);
             matchlen[0] = separator.length();
         }
@@ -569,8 +543,10 @@ final class NativeString extends IdScriptable {
         int len = 0;
         boolean[] matched = { false };
         String[][] parens = { null };
-        while ((match = find_split(scope, target, separator, re, ip,
-                                   matchlen, matched, parens)) >= 0)
+        int version = cx.getLanguageVersion();
+        while ((match = find_split(cx, scope, target, separator, version,
+                                   reProxy, re, ip, matchlen, matched, parens))
+               >= 0)
         {
             if ((limited && len >= limit) || (match > target.length()))
                 break;
@@ -600,8 +576,8 @@ final class NativeString extends IdScriptable {
             }
             ip[0] = match + matchlen[0];
 
-            if (cx.getLanguageVersion() < Context.VERSION_1_3
-                && cx.getLanguageVersion() != Context.VERSION_DEFAULT)
+            if (version < Context.VERSION_1_3
+                && version != Context.VERSION_DEFAULT)
             {
         /*
          * Deviate from ECMA to imitate Perl, which omits a final
@@ -653,18 +629,6 @@ final class NativeString extends IdScriptable {
         return target.substring((int)start, (int)end);
     }
 
-    /*
-     *
-     * See ECMA 15.5.4.[11,12]
-     */
-    private static String js_toLowerCase(String target) {
-        return target.toLowerCase();
-    }
-
-    private static String js_toUpperCase(String target) {
-        return target.toUpperCase();
-    }
-
     int getLength() {
         return string.length();
     }
@@ -708,6 +672,10 @@ final class NativeString extends IdScriptable {
     private static String js_concat(String target, Object[] args) {
         int N = args.length;
         if (N == 0) { return target; }
+        else if (N == 1) {
+            String arg = ScriptRuntime.toString(args[0]);
+            return target.concat(arg);
+        }
 
         // Find total capacity for the final string to avoid unnecessary
         // re-allocations in StringBuffer
@@ -759,17 +727,8 @@ final class NativeString extends IdScriptable {
         return target;
     }
 
-    private static boolean js_equals(String target, String strOther) {
-        return target.equals(strOther);
-    }
-
-
-    private static boolean js_equalsIgnoreCase(String target, String strOther)
+    protected String getIdName(int id)
     {
-        return target.equalsIgnoreCase(strOther);
-    }
-
-    protected String getIdName(int id) {
         if (id == Id_length) { return "length"; }
 
         if (prototypeFlag) {
@@ -778,6 +737,7 @@ final class NativeString extends IdScriptable {
 
                 case Id_constructor:             return "constructor";
                 case Id_toString:                return "toString";
+                case Id_toSource:                return "toSource";
                 case Id_valueOf:                 return "valueOf";
                 case Id_charAt:                  return "charAt";
                 case Id_charCodeAt:              return "charCodeAt";
@@ -820,7 +780,8 @@ final class NativeString extends IdScriptable {
 
     { setMaxId(MAX_INSTANCE_ID); }
 
-    protected int mapNameToId(String s) {
+    protected int mapNameToId(String s)
+    {
         if (s.equals("length")) { return Id_length; }
         else if (prototypeFlag) {
             return toPrototypeId(s);
@@ -830,9 +791,10 @@ final class NativeString extends IdScriptable {
 
 // #string_id_map#
 
-    private static int toPrototypeId(String s) {
+    private static int toPrototypeId(String s)
+    {
         int id;
-// #generated# Last update: 2001-04-23 12:50:07 GMT+02:00
+// #generated# Last update: 2004-03-17 13:44:29 CET
         L0: { id = 0; String X = null; int c;
             L: switch (s.length()) {
             case 3: c=s.charAt(2);
@@ -853,10 +815,7 @@ final class NativeString extends IdScriptable {
                 case 't': X="split";id=Id_split; break L;
                 } break L;
             case 6: switch (s.charAt(1)) {
-                case 'e': c=s.charAt(0);
-                    if (c=='l') { X="length";id=Id_length; }
-                    else if (c=='s') { X="search";id=Id_search; }
-                    break L;
+                case 'e': X="search";id=Id_search; break L;
                 case 'h': X="charAt";id=Id_charAt; break L;
                 case 'n': X="anchor";id=Id_anchor; break L;
                 case 'o': X="concat";id=Id_concat; break L;
@@ -870,9 +829,10 @@ final class NativeString extends IdScriptable {
                 case 'n': X="indexOf";id=Id_indexOf; break L;
                 case 't': X="italics";id=Id_italics; break L;
                 } break L;
-            case 8: c=s.charAt(0);
-                if (c=='f') { X="fontsize";id=Id_fontsize; }
-                else if (c=='t') { X="toString";id=Id_toString; }
+            case 8: c=s.charAt(4);
+                if (c=='r') { X="toString";id=Id_toString; }
+                else if (c=='s') { X="fontsize";id=Id_fontsize; }
+                else if (c=='u') { X="toSource";id=Id_toSource; }
                 break L;
             case 9: c=s.charAt(0);
                 if (c=='f') { X="fontcolor";id=Id_fontcolor; }
@@ -896,42 +856,41 @@ final class NativeString extends IdScriptable {
     private static final int
         Id_constructor               = MAX_INSTANCE_ID + 1,
         Id_toString                  = MAX_INSTANCE_ID + 2,
-        Id_valueOf                   = MAX_INSTANCE_ID + 3,
-        Id_charAt                    = MAX_INSTANCE_ID + 4,
-        Id_charCodeAt                = MAX_INSTANCE_ID + 5,
-        Id_indexOf                   = MAX_INSTANCE_ID + 6,
-        Id_lastIndexOf               = MAX_INSTANCE_ID + 7,
-        Id_split                     = MAX_INSTANCE_ID + 8,
-        Id_substring                 = MAX_INSTANCE_ID + 9,
-        Id_toLowerCase               = MAX_INSTANCE_ID + 10,
-        Id_toUpperCase               = MAX_INSTANCE_ID + 11,
-        Id_substr                    = MAX_INSTANCE_ID + 12,
-        Id_concat                    = MAX_INSTANCE_ID + 13,
-        Id_slice                     = MAX_INSTANCE_ID + 14,
-        Id_bold                      = MAX_INSTANCE_ID + 15,
-        Id_italics                   = MAX_INSTANCE_ID + 16,
-        Id_fixed                     = MAX_INSTANCE_ID + 17,
-        Id_strike                    = MAX_INSTANCE_ID + 18,
-        Id_small                     = MAX_INSTANCE_ID + 19,
-        Id_big                       = MAX_INSTANCE_ID + 20,
-        Id_blink                     = MAX_INSTANCE_ID + 21,
-        Id_sup                       = MAX_INSTANCE_ID + 22,
-        Id_sub                       = MAX_INSTANCE_ID + 23,
-        Id_fontsize                  = MAX_INSTANCE_ID + 24,
-        Id_fontcolor                 = MAX_INSTANCE_ID + 25,
-        Id_link                      = MAX_INSTANCE_ID + 26,
-        Id_anchor                    = MAX_INSTANCE_ID + 27,
-        Id_equals                    = MAX_INSTANCE_ID + 28,
-        Id_equalsIgnoreCase          = MAX_INSTANCE_ID + 29,
-        Id_match                     = MAX_INSTANCE_ID + 30,
-        Id_search                    = MAX_INSTANCE_ID + 31,
-        Id_replace                   = MAX_INSTANCE_ID + 32,
+        Id_toSource                  = MAX_INSTANCE_ID + 3,
+        Id_valueOf                   = MAX_INSTANCE_ID + 4,
+        Id_charAt                    = MAX_INSTANCE_ID + 5,
+        Id_charCodeAt                = MAX_INSTANCE_ID + 6,
+        Id_indexOf                   = MAX_INSTANCE_ID + 7,
+        Id_lastIndexOf               = MAX_INSTANCE_ID + 8,
+        Id_split                     = MAX_INSTANCE_ID + 9,
+        Id_substring                 = MAX_INSTANCE_ID + 10,
+        Id_toLowerCase               = MAX_INSTANCE_ID + 11,
+        Id_toUpperCase               = MAX_INSTANCE_ID + 12,
+        Id_substr                    = MAX_INSTANCE_ID + 13,
+        Id_concat                    = MAX_INSTANCE_ID + 14,
+        Id_slice                     = MAX_INSTANCE_ID + 15,
+        Id_bold                      = MAX_INSTANCE_ID + 16,
+        Id_italics                   = MAX_INSTANCE_ID + 17,
+        Id_fixed                     = MAX_INSTANCE_ID + 18,
+        Id_strike                    = MAX_INSTANCE_ID + 19,
+        Id_small                     = MAX_INSTANCE_ID + 20,
+        Id_big                       = MAX_INSTANCE_ID + 21,
+        Id_blink                     = MAX_INSTANCE_ID + 22,
+        Id_sup                       = MAX_INSTANCE_ID + 23,
+        Id_sub                       = MAX_INSTANCE_ID + 24,
+        Id_fontsize                  = MAX_INSTANCE_ID + 25,
+        Id_fontcolor                 = MAX_INSTANCE_ID + 26,
+        Id_link                      = MAX_INSTANCE_ID + 27,
+        Id_anchor                    = MAX_INSTANCE_ID + 28,
+        Id_equals                    = MAX_INSTANCE_ID + 29,
+        Id_equalsIgnoreCase          = MAX_INSTANCE_ID + 30,
+        Id_match                     = MAX_INSTANCE_ID + 31,
+        Id_search                    = MAX_INSTANCE_ID + 32,
+        Id_replace                   = MAX_INSTANCE_ID + 33,
 
-        MAX_PROTOTYPE_ID             = MAX_INSTANCE_ID + 32;
+        MAX_PROTOTYPE_ID             = MAX_INSTANCE_ID + 33;
 
 // #/string_id_map#
-
-    private static final String defaultValue = "";
 
     private String string;
 

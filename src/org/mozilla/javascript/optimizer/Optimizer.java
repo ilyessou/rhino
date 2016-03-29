@@ -47,11 +47,17 @@ import java.io.IOException;
 
 import java.util.Hashtable;
 
-class Optimizer {
+class Optimizer
+{
 
-    Optimizer(IRFactory irFactory) {
-        this.irFactory = irFactory;
-    }
+    static final int NoType = 0;
+    static final int NumberType = 1;
+    static final int AnyType = 3;
+
+    static final int TO_OBJECT = Token.LAST_TOKEN + 1;
+    static final int TO_DOUBLE = Token.LAST_TOKEN + 2;
+
+    // It is assumed that (NumberType | AnyType) == AnyType
 
     void optimize(ScriptOrFnNode scriptOrFn, int optLevel)
     {
@@ -59,19 +65,23 @@ class Optimizer {
         //  run on one function at a time for now
         int functionCount = scriptOrFn.getFunctionCount();
         for (int i = 0; i != functionCount; ++i) {
-            OptFunctionNode f = (OptFunctionNode)scriptOrFn.getFunctionNode(i);
+            OptFunctionNode f = OptFunctionNode.get(scriptOrFn, i);
             optimizeFunction(f);
         }
     }
 
     private void optimizeFunction(OptFunctionNode theFunction)
     {
-        if (theFunction.requiresActivation()) return;
+        if (theFunction.fnode.requiresActivation()) return;
 
         inDirectCallFunction = theFunction.isTargetOfDirectCall();
 
-        Node[] theStatementNodes = buildStatementList(theFunction);
-        Block[] theBlocks = Block.buildBlocks(irFactory, theStatementNodes);
+        ObjArray statementsArray = new ObjArray();
+        buildStatementList_r(theFunction.fnode, statementsArray);
+        Node[] theStatementNodes = new Node[statementsArray.size()];
+        statementsArray.toArray(theStatementNodes);
+
+        Block[] theBlocks = Block.buildBlocks(theStatementNodes);
         PrintWriter pw = null;
         try {
             if (DEBUG_OPTIMIZER) {
@@ -87,15 +97,11 @@ class Optimizer {
             for (int i = 0; i < theStatementNodes.length; i++)
                 replaceVariableAccess(theStatementNodes[i], theFunction);
 
-            if(DO_CONSTANT_FOLDING){
-                foldConstants(theFunction, null);
-            }
-
             reachingDefDataFlow(theFunction, theBlocks);
             typeFlow(theFunction, theBlocks);
             findSinglyTypedVars(theFunction, theBlocks);
             localCSE(theBlocks, theFunction);
-            if (!theFunction.requiresActivation()) {
+            if (!theFunction.fnode.requiresActivation()) {
                 /*
                  * Now that we know which local vars are in fact always
                  * Numbers, we re-write the tree to take advantage of
@@ -155,7 +161,7 @@ class Optimizer {
             OptLocalVariable lVar = fn.getVar(i);
             if (!lVar.isParameter()) {
                 int theType = lVar.getTypeUnion();
-                if (theType == TypeEvent.NumberType) {
+                if (theType == NumberType) {
                     lVar.setIsNumber();
                 }
             }
@@ -326,7 +332,7 @@ class Optimizer {
 */
     private void markDCPNumberContext(Node n)
     {
-        if (inDirectCallFunction && (n.getType() == TokenStream.GETVAR))
+        if (inDirectCallFunction && (n.getType() == Token.GETVAR))
         {
             OptLocalVariable theVar
                  = (OptLocalVariable)(n.getProp(Node.VARIABLE_PROP));
@@ -338,7 +344,7 @@ class Optimizer {
 
     private boolean convertParameter(Node n)
     {
-        if (inDirectCallFunction && (n.getType() == TokenStream.GETVAR))
+        if (inDirectCallFunction && (n.getType() == Token.GETVAR))
         {
             OptLocalVariable theVar
                  = (OptLocalVariable)(n.getProp(Node.VARIABLE_PROP));
@@ -353,95 +359,95 @@ class Optimizer {
     private int rewriteForNumberVariables(Node n)
     {
         switch (n.getType()) {
-            case TokenStream.POP : {
+            case Token.POP : {
                     Node child = n.getFirstChild();
                     int type = rewriteForNumberVariables(child);
-                    if (type == TypeEvent.NumberType)
+                    if (type == NumberType)
                         n.putIntProp(Node.ISNUMBER_PROP, Node.BOTH);
-                     return TypeEvent.NoType;
+                     return NoType;
                 }
-            case TokenStream.NUMBER :
+            case Token.NUMBER :
                 n.putIntProp(Node.ISNUMBER_PROP, Node.BOTH);
-                return TypeEvent.NumberType;
+                return NumberType;
 
-            case TokenStream.GETVAR : {
+            case Token.GETVAR : {
                     OptLocalVariable theVar
                          = (OptLocalVariable)(n.getProp(Node.VARIABLE_PROP));
                     if (theVar != null) {
                         if (inDirectCallFunction && theVar.isParameter()) {
                             n.putIntProp(Node.ISNUMBER_PROP, Node.BOTH);
-                            return TypeEvent.NumberType;
+                            return NumberType;
                         }
                         else
                             if (theVar.isNumber()) {
                                 n.putIntProp(Node.ISNUMBER_PROP, Node.BOTH);
-                                return TypeEvent.NumberType;
+                                return NumberType;
                             }
                     }
-                    return TypeEvent.NoType;
+                    return NoType;
                 }
 
-            case TokenStream.INC :
-            case TokenStream.DEC : {
+            case Token.INC :
+            case Token.DEC : {
                     Node child = n.getFirstChild();     // will be a GETVAR or GETPROP
-                    if (child.getType() == TokenStream.GETVAR) {
+                    if (child.getType() == Token.GETVAR) {
                         OptLocalVariable theVar
                              = (OptLocalVariable)(child.getProp(Node.VARIABLE_PROP));
                         if ((theVar != null) && theVar.isNumber()) {
                             n.putIntProp(Node.ISNUMBER_PROP, Node.BOTH);
                             markDCPNumberContext(child);
-                            return TypeEvent.NumberType;
+                            return NumberType;
                         }
                         else
-                            return TypeEvent.NoType;
+                            return NoType;
                     }
                     else
-                        return TypeEvent.NoType;
+                        return NoType;
                 }
-            case TokenStream.SETVAR : {
+            case Token.SETVAR : {
                     Node lChild = n.getFirstChild();
                     Node rChild = lChild.getNext();
                     int rType = rewriteForNumberVariables(rChild);
                     OptLocalVariable theVar
                          = (OptLocalVariable)(n.getProp(Node.VARIABLE_PROP));
                     if (inDirectCallFunction && theVar.isParameter()) {
-                        if (rType == TypeEvent.NumberType) {
+                        if (rType == NumberType) {
                             if (!convertParameter(rChild)) {
                                 n.putIntProp(Node.ISNUMBER_PROP, Node.BOTH);
-                                return TypeEvent.NumberType;
+                                return NumberType;
                             }
                             markDCPNumberContext(rChild);
-                            return TypeEvent.NoType;
+                            return NoType;
                         }
                         else
                             return rType;
                     }
                     else {
                         if ((theVar != null) && theVar.isNumber()) {
-                            if (rType != TypeEvent.NumberType) {
+                            if (rType != NumberType) {
                                 n.removeChild(rChild);
-                                Node newRChild = new Node(TokenStream.CONVERT, rChild);
-                                newRChild.putProp(Node.TYPE_PROP, Double.class);
-                                n.addChildToBack(newRChild);
+                                n.addChildToBack(new Node(TO_DOUBLE, rChild));
                             }
                             n.putIntProp(Node.ISNUMBER_PROP, Node.BOTH);
                             markDCPNumberContext(rChild);
-                            return TypeEvent.NumberType;
+                            return NumberType;
                         }
                         else {
-                            if (rType == TypeEvent.NumberType) {
+                            if (rType == NumberType) {
                                 if (!convertParameter(rChild)) {
                                     n.removeChild(rChild);
-                                    Node newRChild = new Node(TokenStream.CONVERT, rChild);
-                                    newRChild.putProp(Node.TYPE_PROP, Object.class);
-                                    n.addChildToBack(newRChild);
+                                    n.addChildToBack(new Node(TO_OBJECT,
+                                                              rChild));
                                 }
                             }
-                            return TypeEvent.NoType;
+                            return NoType;
                         }
                     }
                 }
-            case TokenStream.RELOP : {
+            case Token.LE :
+            case Token.LT :
+            case Token.GE :
+            case Token.GT : {
                     Node lChild = n.getFirstChild();
                     Node rChild = lChild.getNext();
                     int lType = rewriteForNumberVariables(lChild);
@@ -449,69 +455,38 @@ class Optimizer {
                     markDCPNumberContext(lChild);
                     markDCPNumberContext(rChild);
 
-                    int op = n.getOperation();
-                    if (op == TokenStream.INSTANCEOF || op == TokenStream.IN) {
-                        if (lType == TypeEvent.NumberType) {
-                            if (!convertParameter(lChild)) {
-                                n.removeChild(lChild);
-                                Node nuChild = new Node(TokenStream.CONVERT, lChild);
-                                nuChild.putProp(Node.TYPE_PROP, Object.class);
-                                n.addChildToFront(nuChild);
-                            }
+                    if (convertParameter(lChild)) {
+                        if (convertParameter(rChild)) {
+                            return NoType;
+                        } else if (rType == NumberType) {
+                            n.putIntProp(Node.ISNUMBER_PROP, Node.RIGHT);
                         }
-                        if (rType == TypeEvent.NumberType) {
-                            if (!convertParameter(rChild)) {
-                                n.removeChild(rChild);
-                                Node nuChild = new Node(TokenStream.CONVERT, rChild);
-                                nuChild.putProp(Node.TYPE_PROP, Object.class);
-                                n.addChildToBack(nuChild);
-                            }
+                    }
+                    else if (convertParameter(rChild)) {
+                        if (lType == NumberType) {
+                            n.putIntProp(Node.ISNUMBER_PROP, Node.LEFT);
                         }
                     }
                     else {
-                        if (convertParameter(lChild)) {
-                            if (convertParameter(rChild)) {
-                                return TypeEvent.NoType;
+                        if (lType == NumberType) {
+                            if (rType == NumberType) {
+                                n.putIntProp(Node.ISNUMBER_PROP, Node.BOTH);
                             }
                             else {
-                                if (rType == TypeEvent.NumberType) {
-                                    n.putIntProp(Node.ISNUMBER_PROP,
-                                                 Node.RIGHT);
-                                }
+                                n.putIntProp(Node.ISNUMBER_PROP, Node.LEFT);
                             }
                         }
                         else {
-                            if (convertParameter(rChild)) {
-                                if (lType == TypeEvent.NumberType) {
-                                    n.putIntProp(Node.ISNUMBER_PROP,
-                                                 Node.LEFT);
-                                }
-                            }
-                            else {
-                                if (lType == TypeEvent.NumberType) {
-                                    if (rType == TypeEvent.NumberType) {
-                                        n.putIntProp(Node.ISNUMBER_PROP,
-                                                     Node.BOTH);
-                                    }
-                                    else {
-                                        n.putIntProp(Node.ISNUMBER_PROP,
-                                                     Node.LEFT);
-                                    }
-                                }
-                                else {
-                                    if (rType == TypeEvent.NumberType) {
-                                        n.putIntProp(Node.ISNUMBER_PROP,
-                                                     Node.RIGHT);
-                                    }
-                                }
+                            if (rType == NumberType) {
+                                n.putIntProp(Node.ISNUMBER_PROP, Node.RIGHT);
                             }
                         }
-                     }
-                     // we actually build a boolean value
-                    return TypeEvent.NoType;
+                    }
+                    // we actually build a boolean value
+                    return NoType;
                 }
 
-            case TokenStream.ADD : {
+            case Token.ADD : {
                     Node lChild = n.getFirstChild();
                     Node rChild = lChild.getNext();
                     int lType = rewriteForNumberVariables(lChild);
@@ -520,116 +495,107 @@ class Optimizer {
 
                     if (convertParameter(lChild)) {
                         if (convertParameter(rChild)) {
-                            return TypeEvent.NoType;
+                            return NoType;
                         }
                         else {
-                            if (rType == TypeEvent.NumberType) {
+                            if (rType == NumberType) {
                                 n.putIntProp(Node.ISNUMBER_PROP, Node.RIGHT);
                             }
                         }
                     }
                     else {
                         if (convertParameter(rChild)) {
-                            if (lType == TypeEvent.NumberType) {
+                            if (lType == NumberType) {
                                 n.putIntProp(Node.ISNUMBER_PROP, Node.LEFT);
                             }
                         }
                         else {
-                            if (lType == TypeEvent.NumberType) {
-                                if (rType == TypeEvent.NumberType) {
+                            if (lType == NumberType) {
+                                if (rType == NumberType) {
                                     n.putIntProp(Node.ISNUMBER_PROP, Node.BOTH);
-                                    return TypeEvent.NumberType;
+                                    return NumberType;
                                 }
                                 else {
                                     n.putIntProp(Node.ISNUMBER_PROP, Node.LEFT);
                                 }
                             }
                             else {
-                                if (rType == TypeEvent.NumberType) {
+                                if (rType == NumberType) {
                                     n.putIntProp(Node.ISNUMBER_PROP,
                                                  Node.RIGHT);
                                 }
                             }
                         }
                     }
-                    return TypeEvent.NoType;
+                    return NoType;
                 }
 
-            case TokenStream.BITXOR :
-            case TokenStream.BITOR :
-            case TokenStream.BITAND :
-            case TokenStream.RSH :
-            case TokenStream.LSH :
-            case TokenStream.SUB :
-            case TokenStream.MUL :
-            case TokenStream.DIV :
-            case TokenStream.MOD : {
+            case Token.BITXOR :
+            case Token.BITOR :
+            case Token.BITAND :
+            case Token.RSH :
+            case Token.LSH :
+            case Token.SUB :
+            case Token.MUL :
+            case Token.DIV :
+            case Token.MOD : {
                     Node lChild = n.getFirstChild();
                     Node rChild = lChild.getNext();
                     int lType = rewriteForNumberVariables(lChild);
                     int rType = rewriteForNumberVariables(rChild);
                     markDCPNumberContext(lChild);
                     markDCPNumberContext(rChild);
-                    if (lType == TypeEvent.NumberType) {
-                        if (rType == TypeEvent.NumberType) {
+                    if (lType == NumberType) {
+                        if (rType == NumberType) {
                             n.putIntProp(Node.ISNUMBER_PROP, Node.BOTH);
-                            return TypeEvent.NumberType;
+                            return NumberType;
                         }
                         else {
                             if (!convertParameter(rChild)) {
                                 n.removeChild(rChild);
-                                Node newRChild = new Node(TokenStream.CONVERT, rChild);
-                                newRChild.putProp(Node.TYPE_PROP, Double.class);
-                                n.addChildToBack(newRChild);
+                                n.addChildToBack(new Node(TO_DOUBLE, rChild));
                                 n.putIntProp(Node.ISNUMBER_PROP, Node.BOTH);
                             }
-                            return TypeEvent.NumberType;
+                            return NumberType;
                         }
                     }
                     else {
-                        if (rType == TypeEvent.NumberType) {
+                        if (rType == NumberType) {
                             if (!convertParameter(lChild)) {
                                 n.removeChild(lChild);
-                                Node newLChild = new Node(TokenStream.CONVERT, lChild);
-                                newLChild.putProp(Node.TYPE_PROP, Double.class);
-                                n.addChildToFront(newLChild);
+                                n.addChildToFront(new Node(TO_DOUBLE, lChild));
                                 n.putIntProp(Node.ISNUMBER_PROP, Node.BOTH);
                             }
-                            return TypeEvent.NumberType;
+                            return NumberType;
                         }
                         else {
                             if (!convertParameter(lChild)) {
                                 n.removeChild(lChild);
-                                Node newLChild = new Node(TokenStream.CONVERT, lChild);
-                                newLChild.putProp(Node.TYPE_PROP, Double.class);
-                                n.addChildToFront(newLChild);
+                                n.addChildToFront(new Node(TO_DOUBLE, lChild));
                             }
                             if (!convertParameter(rChild)) {
                                 n.removeChild(rChild);
-                                Node newRChild = new Node(TokenStream.CONVERT, rChild);
-                                newRChild.putProp(Node.TYPE_PROP, Double.class);
-                                n.addChildToBack(newRChild);
+                                n.addChildToBack(new Node(TO_DOUBLE, rChild));
                             }
                             n.putIntProp(Node.ISNUMBER_PROP, Node.BOTH);
-                            return TypeEvent.NumberType;
+                            return NumberType;
                         }
                     }
                 }
-            case TokenStream.SETELEM : {
+            case Token.SETELEM :
+            case Token.SETELEM_OP : {
                     Node arrayBase = n.getFirstChild();
                     Node arrayIndex = arrayBase.getNext();
                     Node rValue = arrayIndex.getNext();
                     int baseType = rewriteForNumberVariables(arrayBase);
-                    if (baseType == TypeEvent.NumberType) {// can never happen ???
+                    if (baseType == NumberType) {// can never happen ???
                         if (!convertParameter(arrayBase)) {
                             n.removeChild(arrayBase);
-                            Node nuChild = new Node(TokenStream.CONVERT, arrayBase);
-                            nuChild.putProp(Node.TYPE_PROP, Object.class);
-                            n.addChildToFront(nuChild);
+                            n.addChildToFront(new Node(TO_OBJECT, arrayBase));
                         }
                     }
                     int indexType = rewriteForNumberVariables(arrayIndex);
-                    if (indexType == TypeEvent.NumberType) {
+                    if (indexType == NumberType) {
                         // setting the ISNUMBER_PROP signals the codegen
                         // to use the scriptRuntime.setElem that takes
                         // a double index
@@ -637,30 +603,26 @@ class Optimizer {
                         markDCPNumberContext(arrayIndex);
                     }
                     int rValueType = rewriteForNumberVariables(rValue);
-                    if (rValueType == TypeEvent.NumberType) {
+                    if (rValueType == NumberType) {
                         if (!convertParameter(rValue)) {
                             n.removeChild(rValue);
-                            Node nuChild = new Node(TokenStream.CONVERT, rValue);
-                            nuChild.putProp(Node.TYPE_PROP, Object.class);
-                            n.addChildToBack(nuChild);
+                            n.addChildToBack(new Node(TO_OBJECT, rValue));
                         }
                     }
-                    return TypeEvent.NoType;
+                    return NoType;
                 }
-            case TokenStream.GETELEM : {
+            case Token.GETELEM : {
                     Node arrayBase = n.getFirstChild();
                     Node arrayIndex = arrayBase.getNext();
                     int baseType = rewriteForNumberVariables(arrayBase);
-                    if (baseType == TypeEvent.NumberType) {// can never happen ???
+                    if (baseType == NumberType) {// can never happen ???
                         if (!convertParameter(arrayBase)) {
                             n.removeChild(arrayBase);
-                            Node nuChild = new Node(TokenStream.CONVERT, arrayBase);
-                            nuChild.putProp(Node.TYPE_PROP, Object.class);
-                            n.addChildToFront(nuChild);
+                            n.addChildToFront(new Node(TO_OBJECT, arrayBase));
                         }
                     }
                     int indexType = rewriteForNumberVariables(arrayIndex);
-                    if (indexType == TypeEvent.NumberType) {
+                    if (indexType == NumberType) {
                         if (!convertParameter(arrayIndex)) {
                             // setting the ISNUMBER_PROP signals the codegen
                             // to use the scriptRuntime.getElem that takes
@@ -668,12 +630,12 @@ class Optimizer {
                             n.putIntProp(Node.ISNUMBER_PROP, Node.RIGHT);
                         }
                     }
-                    return TypeEvent.NoType;
+                    return NoType;
                 }
-            case TokenStream.CALL :
+            case Token.CALL :
                 {
-                    FunctionNode target
-                            = (FunctionNode)n.getProp(Node.DIRECTCALL_PROP);
+                    OptFunctionNode target
+                            = (OptFunctionNode)n.getProp(Node.DIRECTCALL_PROP);
                     if (target != null) {
 /*
     we leave each child as a Number if it can be. The codegen will
@@ -686,12 +648,12 @@ class Optimizer {
                         child = child.getNext(); // the first arg
                         while (child != null) {
                             int type = rewriteForNumberVariables(child);
-                            if (type == TypeEvent.NumberType) {
+                            if (type == NumberType) {
                                 markDCPNumberContext(child);
                             }
                             child = child.getNext();
                         }
-                        return TypeEvent.NoType;
+                        return NoType;
                     }
                     // else fall thru...
                 }
@@ -700,11 +662,10 @@ class Optimizer {
                     while (child != null) {
                         Node nextChild = child.getNext();
                         int type = rewriteForNumberVariables(child);
-                        if (type == TypeEvent.NumberType) {
+                        if (type == NumberType) {
                             if (!convertParameter(child)) {
                                 n.removeChild(child);
-                                Node nuChild = new Node(TokenStream.CONVERT, child);
-                                nuChild.putProp(Node.TYPE_PROP, Object.class);
+                                Node nuChild = new Node(TO_OBJECT, child);
                                 if (nextChild == null)
                                     n.addChildToBack(nuChild);
                                 else
@@ -713,276 +674,12 @@ class Optimizer {
                         }
                         child = nextChild;
                     }
-                    return TypeEvent.NoType;
+                    return NoType;
                 }
         }
     }
 
-    /*
-        Do constant folding, for integers, bools and strings
-        as well as for if() statements.
-    */
-    private static void foldConstants(Node n, Node parent){
-        Node lChild, rChild=null;           // children
-
-        lChild = n.getFirstChild();
-        if(lChild == null){                 // no children -- exit
-            return;
-        }else{
-            rChild = lChild.getNext();
-
-            if(rChild == null){
-                foldConstants(lChild, n);   // one child -- recurse
-                return;
-            }
-        }
-
-        /* o.w. two children -- recurse on both first and proceed */
-        foldConstants(lChild, n);
-        foldConstants(rChild, n);
-
-        /* take care of all the other children */
-        Node child = rChild.getNext();
-        while (child != null) {
-            foldConstants(child, n);
-            child = child.getNext();
-        }
-
-
-        /* children can change, so recompute them */
-        lChild = n.getFirstChild();
-        if(lChild == null){                 // no children -- exit
-            return;
-        }else{
-            rChild = lChild.getNext();
-
-            if(rChild == null){
-                return;
-            }
-        }
-
-        /* at this point n has two children or more */
-        int lt = lChild.getType();
-        int rt = rChild.getType();
-
-        Node replace = null;
-
-        /* two or more children */
-        switch (n.getType()) {
-            case TokenStream.ADD:
-                  // numerical addition and string concatenation
-                if(lt == TokenStream.NUMBER && rt == TokenStream.NUMBER) {
-                      // num + num
-                    replace = Node.
-                        newNumber(lChild.getDouble() + rChild.getDouble());
-                }
-                else if (lt == TokenStream.STRING && rt == TokenStream.STRING) {
-                      // string + string
-                    replace = Node.newString(
-                        lChild.getString() + rChild.getString());
-                }
-                else if (lt == TokenStream.STRING && rt == TokenStream.NUMBER) {
-                    // string + num
-                    replace = Node.newString(
-                        lChild.getString() +
-                        ScriptRuntime.numberToString(rChild.getDouble(), 10));
-                }
-                else if (lt == TokenStream.NUMBER && rt == TokenStream.STRING) {
-                    // num + string
-                    replace = Node.newString(
-                        ScriptRuntime.numberToString(lChild.getDouble(), 10) +
-                        rChild.getString());
-                }
-                // can't do anything if we don't know  both types - since
-                // 0 + object is supposed to call toString on the object and do
-                // string concantenation rather than addition
-                break;
-
-            case TokenStream.SUB:
-                  // subtraction
-                if (lt == TokenStream.NUMBER && rt == TokenStream.NUMBER) {
-                    //both numbers
-                    replace = Node.
-                        newNumber(lChild.getDouble() - rChild.getDouble());
-                }
-                else if (lt == TokenStream.NUMBER && lChild.getDouble() == 0) {
-                    // first 0: 0-x -> -x
-                    replace = new Node(TokenStream.UNARYOP,
-                        rChild, TokenStream.SUB);
-                }
-                else if (rt == TokenStream.NUMBER && rChild.getDouble() == 0) {
-                    //second 0: x - 0 -> +x
-                    // can not make simply x because x - 0 must be number
-                    replace = new Node(TokenStream.UNARYOP,
-                        lChild, TokenStream.ADD);
-                }
-                break;
-
-            case TokenStream.MUL:
-                  // multiplication
-                if (lt == TokenStream.NUMBER && rt == TokenStream.NUMBER) {
-                    // both constants -- just multiply
-                    replace = Node.
-                        newNumber(lChild.getDouble() * rChild.getDouble());
-                }
-                else if (lt == TokenStream.NUMBER && lChild.getDouble() == 1) {
-                    // first 1: 1*x -> +x
-                    // not simply x to force number convertion
-                    replace = new Node(TokenStream.UNARYOP,
-                        rChild, TokenStream.ADD);
-                }
-                else if (rt == TokenStream.NUMBER && rChild.getDouble() == 1) {
-                    // second 1: x*1 -> +x
-                    // not simply x to force number convertion
-                    replace = new Node(TokenStream.UNARYOP,
-                        lChild, TokenStream.ADD);
-                }
-                // can't do x*0: Infinity * 0 gives NaN, not 0
-                break;
-
-            case TokenStream.DIV:
-                // division
-                if (lt == TokenStream.NUMBER && rt == TokenStream.NUMBER) {
-                    // both constants -- just divide, trust Java to handle x/0
-                    replace = Node.
-                        newNumber(lChild.getDouble() / rChild.getDouble());
-                }
-                else if (rt == TokenStream.NUMBER && rChild.getDouble() == 1) {
-                    // second 1: x/1 -> +x
-                    // not simply x to force number convertion
-                    replace = new Node(TokenStream.UNARYOP,
-                        lChild, TokenStream.ADD);
-                }
-                break;
-
-            case TokenStream.AND: {
-                int isLDefined = isAlwaysDefinedBoolean(lChild);
-                if (isLDefined == ALWAYS_FALSE_BOOLEAN) {
-                    // if the first one is false, replace with FALSE
-                    if (!IRFactory.hasSideEffects(rChild)) {
-                        replace = new Node(TokenStream.PRIMARY,
-                            TokenStream.FALSE);
-                    }
-                }
-
-                int isRDefined = isAlwaysDefinedBoolean(rChild);
-                if (isRDefined == ALWAYS_FALSE_BOOLEAN) {
-                    // if the second one is false, replace with FALSE
-                    if (!IRFactory.hasSideEffects(lChild)) {
-                        replace = new Node(TokenStream.PRIMARY,
-                            TokenStream.FALSE);
-                    }
-                }
-                else if (isRDefined == ALWAYS_TRUE_BOOLEAN) {
-                    // if second is true, set to first
-                    replace = lChild;
-                }
-
-                if (isLDefined == ALWAYS_TRUE_BOOLEAN) {
-                    // if first is true, set to second
-                    replace = rChild;
-                }
-                break;
-            }
-
-            case TokenStream.OR: {
-                int isLDefined = isAlwaysDefinedBoolean(lChild);
-                if (isLDefined == ALWAYS_TRUE_BOOLEAN) {
-                    // if the first one is true, replace with TRUE
-                    if (!IRFactory.hasSideEffects(rChild)) {
-                        replace = new Node(TokenStream.PRIMARY,
-                            TokenStream.TRUE);
-                    }
-                }
-
-                int isRDefined = isAlwaysDefinedBoolean(rChild);
-                if (isRDefined == ALWAYS_TRUE_BOOLEAN) {
-                    // if the second one is true, replace with TRUE
-                    if (!IRFactory.hasSideEffects(lChild)) {
-                        replace = new Node(TokenStream.PRIMARY,
-                            TokenStream.TRUE);
-                    }
-                }
-                else if (isRDefined == ALWAYS_FALSE_BOOLEAN) {
-                    // if second is false, set to first
-                    replace = lChild;
-                }
-
-                if (isLDefined == ALWAYS_FALSE_BOOLEAN) {
-                    // if first is false, set to second
-                    replace = rChild;
-                }
-                break;
-            }
-
-            case TokenStream.BLOCK:
-                /* if statement */
-                if (lChild.getType() == TokenStream.IFNE) {
-                    Node condition = lChild.getFirstChild();
-                    int definedBoolean = isAlwaysDefinedBoolean(condition);
-
-                    if (definedBoolean == ALWAYS_FALSE_BOOLEAN) {
-                        //if(false) -> replace by the else clause if it exists
-                        Node next1 = rChild.getNext();
-                        if (next1 != null) {
-                            Node next2 = next1.getNext();
-                            if (next2 != null) {
-                                Node next3 = next2.getNext();
-                                if (next3 != null) {
-                                    Node elseClause = next3.getFirstChild();
-                                    if (elseClause != null) {
-                                        replace = elseClause;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    else if (definedBoolean == ALWAYS_TRUE_BOOLEAN) {
-                        if (rChild.getType() == TokenStream.BLOCK) {
-                            replace = rChild.getFirstChild();
-                        }
-                    }
-                }
-                break;
-        }//switch
-
-        if (replace != null) {
-            parent.replaceChild(n, replace);
-        }
-    }
-
-    // Check if Node always mean true or false in boolean context
-    private static int isAlwaysDefinedBoolean(Node node) {
-        int result = 0;
-        int type = node.getType();
-        if (type == TokenStream.PRIMARY) {
-            int id = node.getOperation();
-            if (id == TokenStream.FALSE || id == TokenStream.NULL
-                || id == TokenStream.UNDEFINED)
-            {
-                result = ALWAYS_FALSE_BOOLEAN;
-            }
-            else if (id == TokenStream.TRUE) {
-                result = ALWAYS_TRUE_BOOLEAN;
-            }
-        }
-        else if (type == TokenStream.NUMBER) {
-            double num = node.getDouble();
-            if (num == 0) {
-                // Is it neccessary to check for -0.0 here?
-                if (1 / num > 0) {
-                    result = ALWAYS_FALSE_BOOLEAN;
-                }
-            }
-            else {
-                result = ALWAYS_TRUE_BOOLEAN;
-            }
-        }
-        return result;
-    }
-
-    private static void
-    replaceVariableAccess(Node n, OptFunctionNode fn)
+    private static void replaceVariableAccess(Node n, OptFunctionNode fn)
     {
         Node child = n.getFirstChild();
         while (child != null) {
@@ -990,13 +687,13 @@ class Optimizer {
             child = child.getNext();
         }
         int type = n.getType();
-        if (type == TokenStream.SETVAR) {
+        if (type == Token.SETVAR) {
             String name = n.getFirstChild().getString();
             OptLocalVariable theVar = fn.getVar(name);
             if (theVar != null) {
                 n.putProp(Node.VARIABLE_PROP, theVar);
             }
-        } else if (type == TokenStream.GETVAR) {
+        } else if (type == Token.GETVAR) {
             String name = n.getString();
             OptLocalVariable theVar = fn.getVar(name);
             if (theVar != null) {
@@ -1004,40 +701,28 @@ class Optimizer {
             }
         }
     }
-
-    private static Node[] buildStatementList(FunctionNode theFunction)
+    private static void buildStatementList_r(Node node, ObjArray statements)
     {
-        ObjArray statements = new ObjArray();
-
-        PreorderNodeIterator iter = new PreorderNodeIterator();
-        for (iter.start(theFunction); !iter.done(); ) {
-            Node node = iter.getCurrent();
-            int type = node.getType();
-            if (type == TokenStream.BLOCK
-                || type == TokenStream.LOOP
-                || type == TokenStream.FUNCTION)
-            {
-                iter.next();
-            } else {
-                statements.add(node);
-                iter.nextSkipSubtree();
+        int type = node.getType();
+        if (type == Token.BLOCK
+            || type == Token.LOCAL_BLOCK
+            || type == Token.LOOP
+            || type == Token.FUNCTION)
+        {
+            Node child = node.getFirstChild();
+            while (child != null) {
+                buildStatementList_r(child, statements);
+                child = child.getNext();
             }
+        } else {
+            statements.add(node);
         }
-
-        Node[] result = new Node[statements.size()];
-        statements.toArray(result);
-        return result;
     }
+
 
     private static final boolean DEBUG_OPTIMIZER = false;
     private static int debug_blockCount;
 
-    private static final boolean DO_CONSTANT_FOLDING = true;
-
-    private static final int ALWAYS_TRUE_BOOLEAN = 1;
-    private static final int ALWAYS_FALSE_BOOLEAN = -1;
-
-    private IRFactory irFactory;
     private int itsOptLevel;
     private boolean inDirectCallFunction;
     private boolean parameterUsedInNumberContext;

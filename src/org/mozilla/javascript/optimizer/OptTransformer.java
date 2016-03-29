@@ -47,55 +47,13 @@ import java.util.Hashtable;
  */
 
 class OptTransformer extends NodeTransformer {
-    private Hashtable theFnClassNameList;
 
-    OptTransformer(IRFactory irFactory, Hashtable theFnClassNameList) {
-        super(irFactory);
-        this.theFnClassNameList = theFnClassNameList;
-    }
-
-    public NodeTransformer newInstance() {
-        Hashtable listCopy = (Hashtable) theFnClassNameList.clone();
-        return new OptTransformer(irFactory, listCopy);
-    }
-
-    public ScriptOrFnNode transform(ScriptOrFnNode scriptOrFn) {
-
-        // Collect all of the script contained functions into a hashtable
-        // so that the call optimizer can access the class name & parameter
-        // count for any call it encounters
-        if (scriptOrFn.getType() == TokenStream.SCRIPT) {
-            collectContainedFunctions(scriptOrFn);
-        }
-        return super.transform(scriptOrFn);
-    }
-
-    private int detectDirectCall(Node node, ScriptOrFnNode tree)
+    OptTransformer(CompilerEnvirons compilerEnv, Hashtable possibleDirectCalls,
+                   ObjArray directCallTargets)
     {
-        Context cx = Context.getCurrentContext();
-        int optLevel = cx.getOptimizationLevel();
-        Node left = node.getFirstChild();
-
-        // count the arguments
-        int argCount = 0;
-        Node arg = left.getNext();
-        while (arg != null) {
-            arg = arg.getNext();
-            argCount++;
-        }
-
-        if (tree.getType() == TokenStream.FUNCTION && optLevel > 0) {
-            if (left.getType() == TokenStream.NAME) {
-                markDirectCall(tree, node, argCount, left.getString());
-            } else {
-                if (left.getType() == TokenStream.GETPROP) {
-                    Node name = left.getFirstChild().getNext();
-                    markDirectCall(tree, node, argCount, name.getString());
-                }
-            }
-        }
-
-        return argCount;
+        super(compilerEnv);
+        this.possibleDirectCalls = possibleDirectCalls;
+        this.directCallTargets = directCallTargets;
     }
 
     protected void visitNew(Node node, ScriptOrFnNode tree) {
@@ -104,63 +62,173 @@ class OptTransformer extends NodeTransformer {
     }
 
     protected void visitCall(Node node, ScriptOrFnNode tree) {
-        int argCount = detectDirectCall(node, tree);
-        if (inFunction && (argCount == 0))
-            ((OptFunctionNode)tree).setContainsCalls(argCount);
+        detectDirectCall(node, tree);
+
+        /*
+         * For
+         *      Call(GetProp(a, b), c, d)   // or GetElem...
+         * we wish to evaluate as
+         *      Call(GetProp(tmp=a, b), tmp, c, d)
+         *
+         * for
+         *      Call(Name("a"), b, c)
+         * we wish to evaluate as
+         *      Call(GetProp(tmp=GetBase("a"), "a"), tmp, b, c)
+         *
+         * and for
+         *      Call(a, b, c);
+         * we wish to evaluate as
+         *      Call(tmp=a, Parent(tmp), c, d)
+         */
+        Node left = node.getFirstChild();
+        boolean addGetThis = false;
+        if (left.getType() == Token.NAME) {
+            String name = left.getString();
+            boolean inFunction = (tree.getType() == Token.FUNCTION);
+            if (inFunction && tree.hasParamOrVar(name)
+                && !inWithStatement())
+            {
+                // call to a var. Transform to Call(GetVar("a"), b, c)
+                left.setType(Token.GETVAR);
+                // fall through to code to add GetParent
+            } else {
+                // transform to Call(GetProp(GetBase("a"), "a"), b, c)
+
+                node.removeChild(left);
+                left.setType(Token.GETBASE);
+                Node str = Node.newString(left.getString());
+                Node getProp = new Node(Token.GETPROP, left, str);
+                node.addChildToFront(getProp);
+                left = getProp;
+
+                // Conditionally set a flag to add a GETTHIS node.
+                // The getThis entry in the runtime will take a
+                // Scriptable object intended to be used as a 'this'
+                // and make sure that it is neither a With object or
+                // an activation object.
+                // Executing getThis requires at least two instanceof
+                // tests, so we only include it if we are currently
+                // inside a 'with' statement, or if we are executing
+                // a script (to protect against an eval inside a with).
+                addGetThis = inWithStatement() || !inFunction;
+                // fall through to GETPROP code
+            }
+        }
+        if (left.getType() != Token.GETPROP &&
+            left.getType() != Token.GETELEM)
+        {
+            node.removeChild(left);
+            Node tmp = createNewTemp(left);
+            Node use = createUseTemp(tmp);
+            use.putProp(Node.TEMP_PROP, tmp);
+            Node parent = new Node(Token.PARENT, use);
+            node.addChildToFront(parent);
+            node.addChildToFront(tmp);
+            return;
+        }
+        Node leftLeft = left.getFirstChild();
+        left.removeChild(leftLeft);
+        Node tmp = createNewTemp(leftLeft);
+        left.addChildToFront(tmp);
+        Node use = createUseTemp(tmp);
+        use.putProp(Node.TEMP_PROP, tmp);
+        if (addGetThis)
+            use = new Node(Token.GETTHIS, use);
+        node.addChildAfter(use, left);
 
         super.visitCall(node, tree);
     }
 
-    /*
-     * Optimize a call site by converting call("a", b, c) into :
-     *
-     *       FunctionObjectFor"a" <-- instance variable init'd by constructor
-     *
-     *       // this is a DIRECTCALL node
-     *       fn = GetProp(tmp = GetBase("a"), "a");
-     *       if (fn == FunctionObjectFor"a")
-     *           fn.call(tmp, b, c)
-     *       else
-     *           ScriptRuntime.Call(fn, tmp, b, c)
-     */
-    private void markDirectCall(Node containingTree, Node callNode,
-                                int argCount, String targetName)
+    private void detectDirectCall(Node node, ScriptOrFnNode tree)
     {
-        OptFunctionNode theFunction
-                    = (OptFunctionNode)theFnClassNameList.get(targetName);
-        if (theFunction != null) {
-            int N = theFunction.getParamCount();
-            // Refuse to directCall any function with more
-            // than 32 parameters - prevent code explosion
-            // for wacky test cases
-            if (N > 32)
-                return;
+        if (tree.getType() == Token.FUNCTION) {
+            Node left = node.getFirstChild();
 
-            if (argCount == N) {
-                callNode.putProp(Node.DIRECTCALL_PROP, theFunction);
-                ((OptFunctionNode)containingTree)
-                                        .addDirectCallTarget(theFunction);
-                theFunction.setIsTargetOfDirectCall();
+            // count the arguments
+            int argCount = 0;
+            Node arg = left.getNext();
+            while (arg != null) {
+                arg = arg.getNext();
+                argCount++;
             }
-        }
-    }
 
-    /**
-     * Collect all of the contained functions into a hashtable
-     * so that the call optimizer can access the class name & parameter
-     * count for any call it encounters
-     */
-    private void collectContainedFunctions(ScriptOrFnNode scriptOrFn) {
-        int functionCount = scriptOrFn.getFunctionCount();
-        for (int i = 0; i != functionCount; ++i) {
-            OptFunctionNode f = (OptFunctionNode)scriptOrFn.getFunctionNode(i);
-            if (f.getType() == FunctionNode.FUNCTION_STATEMENT) {
-                String name = f.getFunctionName();
-                if (name.length() != 0) {
-                    theFnClassNameList.put(name, f);
+            if (argCount == 0) {
+                OptFunctionNode.get(tree).itsContainsCalls0 = true;
+            }
+
+            /*
+             * Optimize a call site by converting call("a", b, c) into :
+             *
+             *  FunctionObjectFor"a" <-- instance variable init'd by constructor
+             *
+             *  // this is a DIRECTCALL node
+             *  fn = GetProp(tmp = GetBase("a"), "a");
+             *  if (fn == FunctionObjectFor"a")
+             *      fn.call(tmp, b, c)
+             *  else
+             *      ScriptRuntime.Call(fn, tmp, b, c)
+             */
+            if (possibleDirectCalls != null) {
+                String targetName = null;
+                if (left.getType() == Token.NAME) {
+                    targetName = left.getString();
+                } else if (left.getType() == Token.GETPROP) {
+                    targetName = left.getFirstChild().getNext().getString();
+                }
+                if (targetName != null) {
+                    OptFunctionNode ofn;
+                    ofn = (OptFunctionNode)possibleDirectCalls.get(targetName);
+                    if (ofn != null
+                        && argCount == ofn.fnode.getParamCount())
+                    {
+                        // Refuse to directCall any function with more
+                        // than 32 parameters - prevent code explosion
+                        // for wacky test cases
+                        if (argCount <= 32) {
+                            node.putProp(Node.DIRECTCALL_PROP, ofn);
+                            if (!ofn.isTargetOfDirectCall()) {
+                                int index = directCallTargets.size();
+                                directCallTargets.add(ofn);
+                                ofn.setDirectTargetIndex(index);
+                            }
+                        }
+                    }
                 }
             }
         }
     }
 
+    static Node createNewTemp(Node n) {
+        int type = n.getType();
+        if (type == Token.STRING || type == Token.NUMBER) {
+            // Optimization: clone these values rather than storing
+            // and loading from a temp
+            return n;
+        }
+        return new Node(Token.NEWTEMP, n);
+    }
+
+    static Node createUseTemp(Node newTemp)
+    {
+        switch (newTemp.getType()) {
+          case Token.NEWTEMP: {
+            Node result = new Node(Token.USETEMP);
+            result.putProp(Node.TEMP_PROP, newTemp);
+            int n = newTemp.getIntProp(Node.USES_PROP, 0);
+            if (n != Integer.MAX_VALUE) {
+                newTemp.putIntProp(Node.USES_PROP, n + 1);
+            }
+            return result;
+          }
+          case Token.STRING:
+            return Node.newString(newTemp.getString());
+          case Token.NUMBER:
+            return Node.newNumber(newTemp.getDouble());
+          default:
+            throw Kit.codeBug();
+        }
+    }
+
+    private Hashtable possibleDirectCalls;
+    private ObjArray directCallTargets;
 }

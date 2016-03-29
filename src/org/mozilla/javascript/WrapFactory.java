@@ -50,8 +50,8 @@ package org.mozilla.javascript;
  * @see org.mozilla.javascript.Context#setWrapFactory(WrapFactory)
  * @since 1.5 Release 4
  */
-public class WrapFactory {
-
+public class WrapFactory
+{
     /**
      * Wrap the object.
      * <p>
@@ -66,7 +66,8 @@ public class WrapFactory {
      * @param cx the current Context for this thread
      * @param scope the scope of the executing script
      * @param obj the object to be wrapped. Note it can be null.
-     * @staticType the static type of the object to be wrapped
+     * @param staticType type hint. If security restrictions prevent to wrap
+              object based on its class, staticType will be used instead.
      * @return the wrapped value.
      */
     public Object wrap(Context cx, Scriptable scope,
@@ -81,22 +82,23 @@ public class WrapFactory {
                 return new Integer((int) ((Character) obj).charValue());
             return obj;
         }
-        if (obj instanceof Scriptable)
+        if (obj instanceof Scriptable) {
             return obj;
+        }
         if (!isJavaPrimitiveWrap()) {
             if (obj instanceof String || obj instanceof Number
                 || obj instanceof Boolean)
             {
                 return obj;
             } else if (obj instanceof Character) {
-                char[] a = { ((Character)obj).charValue() };
-                return new String(a);
+                return String.valueOf(((Character)obj).charValue());
             }
         }
         Class cls = obj.getClass();
-        if (cls.isArray())
+        if (cls.isArray()) {
             return NativeJavaArray.wrap(scope, obj);
-        return new NativeJavaObject(scope, obj, staticType);
+        }
+        return wrapAsJavaObject(cx, scope, obj, staticType);
     }
 
     /**
@@ -106,13 +108,40 @@ public class WrapFactory {
      * @param obj the object to be wrapped
      * @return the wrapped value.
      */
-    public Scriptable wrapNewObject(Context cx, Scriptable scope, Object obj) {
-        if (obj instanceof Scriptable)
+    public Scriptable wrapNewObject(Context cx, Scriptable scope, Object obj)
+    {
+        if (obj instanceof Scriptable) {
             return (Scriptable)obj;
+        }
         Class cls = obj.getClass();
-        if (cls.isArray())
+        if (cls.isArray()) {
             return NativeJavaArray.wrap(scope, obj);
-        return new NativeJavaObject(scope, obj, (Class)null);
+        }
+        return wrapAsJavaObject(cx, scope, obj, null);
+    }
+
+    /**
+     * Wrap Java object as Scriptable instance to allow full access to its
+     * methods and fields from JavaScript.
+     * <p>
+     * {@link #wrap(Context, Scriptable, Object, Class)} and
+     * {@link #wrapNewObject(Context, Scriptable, Object)} call this method
+     * when they can not convert <tt>javaObject</tt> to JavaScript primitive
+     * value or JavaScript array.
+     * <p>
+     * Subclasses can override the method to provide custom wrappers
+     * for Java objects.
+     * @param cx the current Context for this thread
+     * @param scope the scope of the executing script
+     * @param javaObject the object to be wrapped
+     * @param staticType type hint. If security restrictions prevent to wrap
+                object based on its class, staticType will be used instead.
+     * @return the wrapped value which shall not be null
+     */
+    public Scriptable wrapAsJavaObject(Context cx, Scriptable scope,
+                                       Object javaObject, Class staticType)
+    {
+        return new NativeJavaObject(scope, javaObject, staticType);
     }
 
     /**
@@ -126,14 +155,20 @@ public class WrapFactory {
      * scripts can access any Java method available in these objects.
      * Use {@link #setJavaPrimitiveWrap(boolean)} to change this.
      */
-    public final boolean isJavaPrimitiveWrap() {
+    public final boolean isJavaPrimitiveWrap()
+    {
         return javaPrimitiveWrap;
     }
 
     /**
      * @see #isJavaPrimitiveWrap()
      */
-    public final void setJavaPrimitiveWrap(boolean value) {
+    public final void setJavaPrimitiveWrap(boolean value)
+    {
+        Context cx = Context.getCurrentContext();
+        if (cx != null && cx.isSealed()) {
+            Context.onSealedMutation();
+        }
         javaPrimitiveWrap = value;
     }
 

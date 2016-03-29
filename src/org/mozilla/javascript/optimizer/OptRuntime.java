@@ -39,13 +39,12 @@ package org.mozilla.javascript.optimizer;
 
 import org.mozilla.javascript.*;
 
-public final class OptRuntime extends ScriptRuntime {
+public final class OptRuntime extends ScriptRuntime
+{
 
-    /**
-     * No instances should be created.
-     */
-    private OptRuntime() {
-    }
+    public static final Double zeroObj = new Double(0.0);
+    public static final Double oneObj = new Double(1.0);
+    public static final Double minusOneObj = new Double(-1.0);
 
     public static Object getElem(Object obj, double dblIndex, Scriptable scope)
     {
@@ -109,7 +108,7 @@ public final class OptRuntime extends ScriptRuntime {
             val1 = ((Scriptable) val1).getDefaultValue(null);
         if (!(val1 instanceof String))
             return new Double(toNumber(val1) + val2);
-        return toString(val1) + toString(val2);
+        return toString(val1).concat(toString(val2));
     }
 
     public static Object add(double val1, Object val2) {
@@ -117,7 +116,7 @@ public final class OptRuntime extends ScriptRuntime {
             val2 = ((Scriptable) val2).getDefaultValue(null);
         if (!(val2 instanceof String))
             return new Double(toNumber(val2) + val1);
-        return toString(val1) + toString(val2);
+        return toString(val1).concat(toString(val2));
     }
 
     public static boolean neq(Object x, Object y) {
@@ -250,11 +249,8 @@ public final class OptRuntime extends ScriptRuntime {
             obj = obj.getParentScope();
         }
         if ((prop == null) || (prop == Scriptable.NOT_FOUND)) {
-            Object[] errorArgs = { id };
-            throw NativeGlobal.constructError(
-                        cx, "ReferenceError",
-                        ScriptRuntime.getMessage("msg.is.not.defined", errorArgs),
-                        scope);
+            String msg = ScriptRuntime.getMessage1("msg.is.not.defined", id);
+            throw ScriptRuntime.constructError("ReferenceError", msg);
         }
 
         while (thisArg instanceof NativeWith)
@@ -262,16 +258,13 @@ public final class OptRuntime extends ScriptRuntime {
         if (thisArg instanceof NativeCall)
             thisArg = ScriptableObject.getTopLevelScope(thisArg);
 
-        Function function;
-        try {
-            function = (Function) prop;
-        }
-        catch (ClassCastException e) {
+        if (!(prop instanceof Function)) {
             Object[] errorArgs = { toString(prop)  };
             throw cx.reportRuntimeError(
                 getMessage("msg.isnt.function", errorArgs));
         }
 
+        Function function = (Function)prop;
         return function.call(cx, scope, thisArg, args);
     }
 
@@ -309,4 +302,44 @@ public final class OptRuntime extends ScriptRuntime {
     {
         ScriptRuntime.initFunction(cx, scope, fn, functionType, false);
     }
+
+    public static Object callSpecial(Context cx, Object fun,
+                                     Object thisObj, Object[] args,
+                                     Scriptable scope,
+                                     Scriptable callerThis, int callType,
+                                     String fileName, int lineNumber)
+        throws JavaScriptException
+    {
+        return ScriptRuntime.callSpecial(cx, fun, false, thisObj, args, scope,
+                                         callerThis, callType,
+                                         fileName, lineNumber);
+    }
+
+    public static Object newObjectSpecial(Context cx, Object fun,
+                                          Object[] args, Scriptable scope,
+                                          Scriptable callerThis, int callType)
+        throws JavaScriptException
+    {
+        return ScriptRuntime.callSpecial(cx, fun, true, null, args, scope,
+                                         callerThis, callType,
+                                         "", -1);
+    }
+
+    public static Double wrapDouble(double num)
+    {
+        if (num == 0.0) {
+            if (1 / num > 0) {
+                // +0.0
+                return zeroObj;
+            }
+        } else if (num == 1.0) {
+            return oneObj;
+        } else if (num == -1.0) {
+            return minusOneObj;
+        } else if (num != num) {
+            return NaNobj;
+        }
+        return new Double(num);
+    }
+
 }

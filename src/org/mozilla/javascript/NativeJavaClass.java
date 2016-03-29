@@ -172,18 +172,16 @@ public class NativeJavaClass extends NativeJavaObject implements Function {
         if (! (Modifier.isInterface(modifiers) ||
                Modifier.isAbstract(modifiers)))
         {
-            Constructor[] ctors = members.getConstructors();
-            Member member = NativeJavaMethod.findFunction(ctors, args);
-            Constructor ctor = (Constructor) member;
-            if (ctor == null) {
+            MemberBox[] ctors = members.ctors;
+            int index = NativeJavaMethod.findFunction(cx, ctors, args);
+            if (index < 0) {
                 String sig = NativeJavaMethod.scriptSignature(args);
                 throw Context.reportRuntimeError2(
                     "msg.no.java.ctor", classObject.getName(), sig);
             }
 
             // Found the constructor, so try invoking it.
-            return NativeJavaClass.constructSpecific(cx, scope,
-                                                     this, ctor, args);
+            return constructSpecific(cx, scope, args, ctors[index]);
         } else {
             Scriptable topLevel = ScriptableObject.getTopLevelScope(this);
             String msg = "";
@@ -209,38 +207,26 @@ public class NativeJavaClass extends NativeJavaObject implements Function {
         }
     }
 
-    public static Scriptable constructSpecific(Context cx,
-                                               Scriptable scope,
-                                               Scriptable thisObj,
-                                               Constructor ctor,
-                                               Object[] args)
+    static Scriptable constructSpecific(Context cx, Scriptable scope,
+                                        Object[] args, MemberBox ctor)
         throws JavaScriptException
     {
-        Scriptable topLevel = ScriptableObject.getTopLevelScope(thisObj);
+        Scriptable topLevel = ScriptableObject.getTopLevelScope(scope);
         Class classObject = ctor.getDeclaringClass();
+        Class[] argTypes = ctor.argTypes;
 
-        Class[] paramTypes = ctor.getParameterTypes();
+        Object[] origArgs = args;
         for (int i = 0; i < args.length; i++) {
-            args[i] = NativeJavaObject.coerceType(paramTypes[i], args[i], true);
+            Object arg = args[i];
+            Object x = NativeJavaObject.coerceType(argTypes[i], arg, true);
+            if (x != arg) {
+                if (args == origArgs) {
+                    args = (Object[])origArgs.clone();
+                }
+                args[i] = x;
+            }
         }
-        Object instance;
-        try {
-            instance = ctor.newInstance(args);
-        } catch (InstantiationException instEx) {
-            throw Context.reportRuntimeError2(
-                "msg.cant.instantiate",
-                instEx.getMessage(), classObject.getName());
-        } catch (IllegalArgumentException argEx) {
-            String signature = NativeJavaMethod.scriptSignature(args);
-            String ctorString = ctor.toString();
-            throw Context.reportRuntimeError3(
-                "msg.bad.ctor.sig", argEx.getMessage(), ctorString, signature);
-        } catch (InvocationTargetException e) {
-            throw JavaScriptException.wrapException(cx, scope, e);
-        } catch (IllegalAccessException accessEx) {
-            throw Context.reportRuntimeError1(
-                "msg.java.internal.private", accessEx.getMessage());
-        }
+        Object instance = ctor.newInstance(args);
         // we need to force this to be wrapped, because construct _has_
         // to return a scriptable
         return cx.getWrapFactory().wrapNewObject(cx, topLevel, instance);
@@ -274,23 +260,15 @@ public class NativeJavaClass extends NativeJavaObject implements Function {
     private static Class findNestedClass(Class parentClass, String name) {
         String nestedClassName = parentClass.getName() + '$' + name;
         ClassLoader loader = parentClass.getClassLoader();
-        try {
-            if (loader != null) {
-                return loader.loadClass(nestedClassName);
-            } else {
-                // ALERT: if loader is null, nested class should be loaded
-                // via system class loader which can be different from the
-                // loader that brought Rhino classes that Class.forName() would
-                // use, but ClassLoader.getSystemClassLoader() is Java 2 only
-                return Class.forName(nestedClassName);
-            }
-        } catch (ClassNotFoundException ex) {
-        } catch (SecurityException ex) {
-        } catch (IllegalArgumentException e) {
-            // Can be thrown if name has characters that a class name
-            // can not contain
+        if (loader == null) {
+            // ALERT: if loader is null, nested class should be loaded
+            // via system class loader which can be different from the
+            // loader that brought Rhino classes that Class.forName() would
+            // use, but ClassLoader.getSystemClassLoader() is Java 2 only
+            return Kit.classOrNull(nestedClassName);
+        } else {
+            return Kit.classOrNull(loader, nestedClassName);
         }
-        return null;
     }
 
     private Hashtable staticFieldAndMethods;

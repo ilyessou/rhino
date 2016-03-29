@@ -38,6 +38,7 @@
 package org.mozilla.javascript;
 
 import java.lang.reflect.*;
+import java.io.*;
 
 /**
  * This class reflects a single Java constructor into the JavaScript
@@ -53,34 +54,27 @@ import java.lang.reflect.*;
  * @see NativeJavaClass
  */
 
-public class NativeJavaConstructor extends NativeFunction implements Function {
-
-    public NativeJavaConstructor(Constructor ctor) {
-        this.constructor = ctor;
-        this.functionName = "<init>" + NativeJavaMethod.signature(ctor);
+public class NativeJavaConstructor extends BaseFunction
+{
+    public NativeJavaConstructor(MemberBox ctor)
+    {
+        this.ctor = ctor;
+        String sig = JavaMembers.liveConnectSignature(ctor.argTypes);
+        this.functionName = "<init>".concat(sig);
     }
 
     public Object call(Context cx, Scriptable scope, Scriptable thisObj,
                        Object[] args)
         throws JavaScriptException
     {
-        // Find a method that matches the types given.
-        if (constructor == null) {
-            throw new RuntimeException("No constructor defined for call");
-        }
-
-        return NativeJavaClass.constructSpecific(cx, scope,
-                                                 this, constructor, args);
+        return NativeJavaClass.constructSpecific(cx, scope, args, ctor);
     }
 
-    public String toString() {
-        return "[JavaConstructor " + constructor.getName() + "]";
+    public String toString()
+    {
+        return "[JavaConstructor " + ctor.getName() + "]";
     }
 
-    Constructor getConstructor() {
-        return constructor;
-    }
-
-    Constructor constructor;
+    MemberBox ctor;
 }
 

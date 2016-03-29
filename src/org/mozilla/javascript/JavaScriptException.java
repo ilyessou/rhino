@@ -20,6 +20,7 @@
  *
  * Contributor(s):
  * Norris Boyd
+ * Bojan Cekrlic
  *
  * Alternatively, the contents of this file may be used under the
  * terms of the GNU Public License (the "GPL"), in which case the
@@ -37,65 +38,65 @@
 
 package org.mozilla.javascript;
 
-import java.lang.reflect.InvocationTargetException;
-
 /**
- * Java reflection of JavaScript exceptions.  (Possibly wrapping a Java exception.)
+ * Java reflection of JavaScript exceptions.
+ * Instances of this class are thrown by the JavaScript 'throw' keyword.
  *
  * @author Mike McCabe
  */
-public class JavaScriptException extends Exception {
+public class JavaScriptException extends Exception
+{
+    /**
+     * @deprecated
+     * Use {@link EvaluatorException#EvaluatorException(String)} to report
+     * exceptions in Java code.
+     */
+    public JavaScriptException(Object value)
+    {
+        this(value, "", 0);
+    }
 
     /**
-     * Create a JavaScript exception wrapping the given JavaScript value.
-     *
-     * Instances of this class are thrown by the JavaScript 'throw' keyword.
+     * Create a JavaScript exception wrapping the given JavaScript value
      *
      * @param value the JavaScript value thrown.
      */
-    public JavaScriptException(Object value) {
-        super(ScriptRuntime.toString(value));
+    public JavaScriptException(Object value, String sourceName, int lineNumber)
+    {
+        super(EvaluatorException.generateErrorMessage(
+                  ScriptRuntime.toString(value), sourceName, lineNumber));
+        this.lineNumber = lineNumber;
+        this.sourceName = sourceName;
         this.value = value;
     }
 
-    static JavaScriptException wrapException(Context cx, Scriptable scope,
-                                             Throwable exn)
-    {
-        if (exn instanceof InvocationTargetException)
-            exn = ((InvocationTargetException)exn).getTargetException();
-        if (exn instanceof JavaScriptException)
-            return (JavaScriptException)exn;
-        Object wrapper = cx.getWrapFactory().
-                            wrap(cx, scope, exn, Throwable.class);
-        return new JavaScriptException(wrapper);
-    }
-
     /**
-     * Get the exception value originally thrown.  This may be a
-     * JavaScript value (null, undefined, Boolean, Number, String,
-     * Scriptable or Function) or a Java exception value thrown from a
-     * host object or from Java called through LiveConnect.
-     *
      * @return the value wrapped by this exception
      */
-    public Object getValue() {
-        if (value != null && value instanceof Wrapper)
-            // this will also catch NativeStrings...
-            return ((Wrapper)value).unwrap();
-        else
-            return value;
+    public Object getValue()
+    {
+        return value;
     }
 
     /**
-     * The JavaScript exception value.  This value is not
-     * intended for general use; if the JavaScriptException wraps a
-     * Java exception, getScriptableValue may return a Scriptable
-     * wrapping the original Java exception object.
-     *
-     * We would prefer to go through a getter to encapsulate the value,
-     * however that causes the bizarre error "nanosecond timeout value
-     * out of range" on the MS JVM.
-     * @serial
+     * Get the name of the source containing the error, or null
+     * if that information is not available.
      */
-    Object value;
+    public String getSourceName()
+    {
+        return sourceName;
+    }
+
+    /**
+     * Returns the line number of the statement causing the error,
+     * or zero if not available.
+     */
+    public int getLineNumber()
+    {
+        return lineNumber;
+    }
+
+    private Object value;
+    private String sourceName;
+    private int lineNumber;
 }

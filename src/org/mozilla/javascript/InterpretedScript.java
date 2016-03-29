@@ -37,16 +37,14 @@ package org.mozilla.javascript;
 
 import java.util.*;
 
-final class InterpretedScript extends NativeScript
+final class InterpretedScript extends NativeFunction implements Script
 {
 
-    InterpretedScript(Context cx, InterpreterData theData)
+    InterpretedScript(InterpreterData theData)
     {
         itsData = theData;
-        functionName = "";
-        version = (short)cx.getLanguageVersion();
-        argNames = itsData.argNames;
-        argCount = (short)itsData.argCount;
+        initScriptFunction(itsData.languageVersion, "",
+                           itsData.argNames, itsData.argCount);
     }
 
     public Object exec(Context cx, Scriptable scope)
@@ -64,8 +62,9 @@ final class InterpretedScript extends NativeScript
                                      this, itsData);
     }
 
-    protected Object getSourcesTree() {
-        return Interpreter.getSourcesTree(itsData);
+    public String getEncodedSource()
+    {
+        return Interpreter.getEncodedSource(itsData);
     }
 
     InterpreterData itsData;

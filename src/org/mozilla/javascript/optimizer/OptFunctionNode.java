@@ -39,130 +39,94 @@ package org.mozilla.javascript.optimizer;
 import org.mozilla.javascript.*;
 import java.util.*;
 
-class OptFunctionNode extends FunctionNode {
-
-    OptFunctionNode(String name, String className) {
-        super(name);
-        itsClassName = className;
-    }
-
-    protected void finishParsing(IRFactory irFactory) {
-        super.finishParsing(irFactory);
-        int N = getParamAndVarCount();
-        int parameterCount = getParamCount();
+final class OptFunctionNode
+{
+    OptFunctionNode(FunctionNode fnode)
+    {
+        this.fnode = fnode;
+        int N = fnode.getParamAndVarCount();
+        int parameterCount = fnode.getParamCount();
         optVars = new OptLocalVariable[N];
         for (int i = 0; i != N; ++i) {
-            String name = getParamOrVarName(i);
+            String name = fnode.getParamOrVarName(i);
             optVars[i] = new OptLocalVariable(name, i < parameterCount);
         }
+        fnode.setCompilerData(this);
     }
 
-    String getDirectCallParameterSignature() {
-        int pCount = getParamCount();
-        switch (pCount) {
-            case 0: return ZERO_PARAM_SIG;
-            case 1: return ONE_PARAM_SIG;
-            case 2: return TWO_PARAM_SIG;
-        }
-        StringBuffer sb = new StringBuffer(ZERO_PARAM_SIG.length()
-                                           + pCount * DIRECT_ARG_SIG.length());
-        sb.append(BEFORE_DIRECT_SIG);
-        for (int i = 0; i != pCount; i++) {
-            sb.append(DIRECT_ARG_SIG);
-        }
-        sb.append(AFTER_DIRECT_SIG);
-        return sb.toString();
+    static OptFunctionNode get(ScriptOrFnNode scriptOrFn, int i)
+    {
+        FunctionNode fnode = scriptOrFn.getFunctionNode(i);
+        return (OptFunctionNode)fnode.getCompilerData();
     }
 
-    String getClassName() {
-        return itsClassName;
+    static OptFunctionNode get(ScriptOrFnNode scriptOrFn)
+    {
+        return (OptFunctionNode)scriptOrFn.getCompilerData();
     }
 
-    boolean isTargetOfDirectCall() {
-        return itsIsTargetOfDirectCall;
+    boolean isTargetOfDirectCall()
+    {
+        return directTargetIndex >= 0;
     }
 
-    void addDirectCallTarget(FunctionNode target) {
-        if (itsDirectCallTargets == null)
-            itsDirectCallTargets = new ObjArray();
-        for (int i = 0; i < itsDirectCallTargets.size(); i++)   // OPT !!
-            if (((FunctionNode)itsDirectCallTargets.get(i)) == target)
-                return;
-        itsDirectCallTargets.add(target);
+    int getDirectTargetIndex()
+    {
+        return directTargetIndex;
     }
 
-    ObjArray getDirectCallTargets() {
-        return itsDirectCallTargets;
+    void setDirectTargetIndex(int directTargetIndex)
+    {
+        // One time action
+        if (directTargetIndex < 0 || this.directTargetIndex >= 0)
+            Kit.codeBug();
+        this.directTargetIndex = directTargetIndex;
     }
 
-    void setIsTargetOfDirectCall() {
-        itsIsTargetOfDirectCall = true;
-    }
-
-    void setParameterNumberContext(boolean b) {
+    void setParameterNumberContext(boolean b)
+    {
         itsParameterNumberContext = b;
     }
 
-    boolean getParameterNumberContext() {
+    boolean getParameterNumberContext()
+    {
         return itsParameterNumberContext;
     }
 
-    boolean containsCalls(int argCount) {
-        if ((argCount < itsContainsCallsCount.length) && (argCount >= 0))
-            return itsContainsCallsCount[argCount];
-        else
-            return itsContainsCalls;
-    }
-
-    void setContainsCalls(int argCount) {
-        if (argCount < itsContainsCallsCount.length)
-            itsContainsCallsCount[argCount] = true;
-        itsContainsCalls = true;
-    }
-
-    int getVarCount() {
+    int getVarCount()
+    {
         return optVars.length;
     }
 
-    OptLocalVariable getVar(int index) {
+    OptLocalVariable getVar(int index)
+    {
         return optVars[index];
     }
 
-    OptLocalVariable getVar(String name) {
-        int index = getParamOrVarIndex(name);
+    OptLocalVariable getVar(String name)
+    {
+        int index = fnode.getParamOrVarIndex(name);
         if (index < 0) { return null; }
         return optVars[index];
     }
 
-    void establishVarsIndices() {
+    void establishVarsIndices()
+    {
         int N = optVars.length;
         for (int i = 0; i != N; i++) {
             optVars[i].setIndex(i);
         }
     }
 
-    OptLocalVariable[] getVarsArray() {
+    OptLocalVariable[] getVarsArray()
+    {
         return optVars;
     }
 
-    private static final String
-        BEFORE_DIRECT_SIG = "(Lorg/mozilla/javascript/Context;"
-                            +"Lorg/mozilla/javascript/Scriptable;"
-                            +"Lorg/mozilla/javascript/Scriptable;",
-        DIRECT_ARG_SIG    = "Ljava/lang/Object;D",
-        AFTER_DIRECT_SIG  = "[Ljava/lang/Object;)";
-
-    private static final String
-        ZERO_PARAM_SIG = BEFORE_DIRECT_SIG+AFTER_DIRECT_SIG,
-        ONE_PARAM_SIG  = BEFORE_DIRECT_SIG+DIRECT_ARG_SIG+AFTER_DIRECT_SIG,
-        TWO_PARAM_SIG  = BEFORE_DIRECT_SIG+DIRECT_ARG_SIG+DIRECT_ARG_SIG
-                         +AFTER_DIRECT_SIG;
-
+    FunctionNode fnode;
     private OptLocalVariable[] optVars;
-    private String itsClassName;
-    private boolean itsIsTargetOfDirectCall;
-    private boolean itsContainsCalls;
-    private boolean[] itsContainsCallsCount = new boolean[4];
+    private int directTargetIndex = -1;
     private boolean itsParameterNumberContext;
-    private ObjArray itsDirectCallTargets;
+    boolean itsContainsCalls0;
+    boolean itsContainsCalls1;
 }

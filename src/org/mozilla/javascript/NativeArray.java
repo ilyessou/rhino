@@ -61,7 +61,8 @@ public class NativeArray extends IdScriptable {
      * always gets at least an object back, even when Array == null.
      */
 
-    static void init(Context cx, Scriptable scope, boolean sealed) {
+    static void init(Context cx, Scriptable scope, boolean sealed)
+    {
         NativeArray obj = new NativeArray();
         obj.prototypeFlag = true;
         obj.addAsPrototype(MAX_PROTOTYPE_ID, cx, scope, sealed);
@@ -70,12 +71,14 @@ public class NativeArray extends IdScriptable {
     /**
      * Zero-parameter constructor: just used to create Array.prototype
      */
-    private NativeArray() {
+    private NativeArray()
+    {
         dense = null;
         this.length = 0;
     }
 
-    public NativeArray(long length) {
+    public NativeArray(long length)
+    {
         int intLength = (int) length;
         if (intLength == length && intLength > 0) {
             if (intLength > maximumDenseLength)
@@ -87,42 +90,49 @@ public class NativeArray extends IdScriptable {
         this.length = length;
     }
 
-    public NativeArray(Object[] array) {
+    public NativeArray(Object[] array)
+    {
         dense = array;
         this.length = array.length;
     }
 
-    public String getClassName() {
+    public String getClassName()
+    {
         return "Array";
     }
 
-    protected int getIdDefaultAttributes(int id) {
+    protected int getIdAttributes(int id)
+    {
         if (id == Id_length) {
             return DONTENUM | PERMANENT;
         }
-        return super.getIdDefaultAttributes(id);
+        return super.getIdAttributes(id);
     }
 
-    protected Object getIdValue(int id) {
+    protected Object getIdValue(int id)
+    {
         if (id == Id_length) {
             return wrap_double(length);
         }
         return super.getIdValue(id);
     }
 
-    protected void setIdValue(int id, Object value) {
+    protected void setIdValue(int id, Object value)
+    {
         if (id == Id_length) {
             setLength(value); return;
         }
         super.setIdValue(id, value);
     }
 
-    public int methodArity(int methodId) {
+    public int methodArity(int methodId)
+    {
         if (prototypeFlag) {
             switch (methodId) {
                 case Id_constructor:     return 1;
                 case Id_toString:        return 0;
                 case Id_toLocaleString:  return 1;
+                case Id_toSource:        return 0;
                 case Id_join:            return 1;
                 case Id_reverse:         return 0;
                 case Id_sort:            return 1;
@@ -149,10 +159,15 @@ public class NativeArray extends IdScriptable {
                     return jsConstructor(cx, scope, args, f, thisObj == null);
 
                 case Id_toString:
-                    return js_toString(cx, thisObj, args);
+                    return toStringHelper(cx, scope, thisObj,
+                        cx.hasFeature(Context.FEATURE_TO_STRING_AS_SOURCE),
+                        false);
 
                 case Id_toLocaleString:
-                    return js_toLocaleString(cx, thisObj, args);
+                    return toStringHelper(cx, scope, thisObj, false, true);
+
+                case Id_toSource:
+                    return toStringHelper(cx, scope, thisObj, true, false);
 
                 case Id_join:
                     return js_join(cx, thisObj, args);
@@ -188,13 +203,15 @@ public class NativeArray extends IdScriptable {
         return super.execMethod(methodId, f, cx, scope, thisObj, args);
     }
 
-    public Object get(int index, Scriptable start) {
+    public Object get(int index, Scriptable start)
+    {
         if (dense != null && 0 <= index && index < dense.length)
             return dense[index];
         return super.get(index, start);
     }
 
-    public boolean has(int index, Scriptable start) {
+    public boolean has(int index, Scriptable start)
+    {
         if (dense != null && 0 <= index && index < dense.length)
             return dense[index] != NOT_FOUND;
         return super.has(index, start);
@@ -202,7 +219,8 @@ public class NativeArray extends IdScriptable {
 
     // if id is an array index (ECMA 15.4.0), return the number,
     // otherwise return -1L
-    private static long toArrayIndex(String id) {
+    private static long toArrayIndex(String id)
+    {
         double d = ScriptRuntime.toNumber(id);
         if (d == d) {
             long index = ScriptRuntime.toUint32(d);
@@ -217,43 +235,51 @@ public class NativeArray extends IdScriptable {
         return -1;
     }
 
-    public void put(String id, Scriptable start, Object value) {
+    public void put(String id, Scriptable start, Object value)
+    {
+        super.put(id, start, value);
         if (start == this) {
+            // If the object is sealed, super will throw exception
             long index = toArrayIndex(id);
             if (index >= length) {
                 length = index + 1;
             }
         }
-        super.put(id, start, value);
     }
 
-    public void put(int index, Scriptable start, Object value) {
+    public void put(int index, Scriptable start, Object value)
+    {
+        if (start == this && !isSealed()
+            && dense != null && 0 <= index && index < dense.length)
+        {
+            // If start == this && sealed, super will throw exception
+            dense[index] = value;
+        } else {
+            super.put(index, start, value);
+        }
         if (start == this) {
             // only set the array length if given an array index (ECMA 15.4.0)
             if (this.length <= index) {
                 // avoid overflowing index!
                 this.length = (long)index + 1;
             }
-
-            if (dense != null && 0 <= index && index < dense.length) {
-                dense[index] = value;
-                return;
-            }
         }
-        super.put(index, start, value);
+
     }
 
-    public void delete(int index) {
-        if (!isSealed()) {
-            if (dense != null && 0 <= index && index < dense.length) {
-                dense[index] = NOT_FOUND;
-                return;
-            }
+    public void delete(int index)
+    {
+        if (!isSealed()
+            && dense != null && 0 <= index && index < dense.length)
+        {
+            dense[index] = NOT_FOUND;
+        } else {
+            super.delete(index);
         }
-        super.delete(index);
     }
 
-    public Object[] getIds() {
+    public Object[] getIds()
+    {
         Object[] superIds = super.getIds();
         if (dense == null) { return superIds; }
         int N = dense.length;
@@ -262,30 +288,31 @@ public class NativeArray extends IdScriptable {
             N = (int)currentLength;
         }
         if (N == 0) { return superIds; }
-        int shift = superIds.length;
-        Object[] ids = new Object[shift + N];
+        int superLength = superIds.length;
+        Object[] ids = new Object[N + superLength];
         // Make a copy of dense to be immune to removing
         // of array elems from other thread when calculating presentCount
-        System.arraycopy(dense, 0, ids, shift, N);
+        System.arraycopy(dense, 0, ids, 0, N);
         int presentCount = 0;
         for (int i = 0; i != N; ++i) {
             // Replace existing elements by their indexes
-            if (ids[shift + i] != NOT_FOUND) {
-                ids[shift + presentCount] = new Integer(i);
+            if (ids[i] != NOT_FOUND) {
+                ids[presentCount] = new Integer(i);
                 ++presentCount;
             }
         }
         if (presentCount != N) {
             // dense contains deleted elems, need to shrink the result
-            Object[] tmp = new Object[shift + presentCount];
-            System.arraycopy(ids, shift, tmp, shift, presentCount);
+            Object[] tmp = new Object[presentCount + superLength];
+            System.arraycopy(ids, 0, tmp, 0, presentCount);
             ids = tmp;
         }
-        System.arraycopy(superIds, 0, ids, 0, shift);
+        System.arraycopy(superIds, 0, ids, presentCount, superLength);
         return ids;
     }
 
-    public Object getDefaultValue(Class hint) {
+    public Object getDefaultValue(Class hint)
+    {
         if (hint == ScriptRuntime.NumberClass) {
             Context cx = Context.getContext();
             if (cx.getLanguageVersion() == Context.VERSION_1_2)
@@ -426,23 +453,8 @@ public class NativeArray extends IdScriptable {
         }
     }
 
-    private static String js_toString(Context cx, Scriptable thisObj,
-                                      Object[] args)
-        throws JavaScriptException
-    {
-        return toStringHelper(cx, thisObj,
-            cx.hasFeature(Context.FEATURE_TO_STRING_AS_SOURCE),
-            false);
-    }
-
-    private static String js_toLocaleString(Context cx, Scriptable thisObj,
-                                            Object[] args)
-        throws JavaScriptException
-    {
-        return toStringHelper(cx, thisObj, false, true);
-    }
-
-    private static String toStringHelper(Context cx, Scriptable thisObj,
+    private static String toStringHelper(Context cx, Scriptable scope,
+                                         Scriptable thisObj,
                                          boolean toSource, boolean toLocale)
         throws JavaScriptException
     {
@@ -491,7 +503,10 @@ public class NativeArray extends IdScriptable {
                     }
                     haslast = true;
 
-                    if (elem instanceof String) {
+                    if (toSource) {
+                        result.append(ScriptRuntime.uneval(cx, scope, elem));
+
+                    } else if (elem instanceof String) {
                         String s = (String)elem;
                         if (toSource) {
                             result.append('\"');
@@ -500,6 +515,7 @@ public class NativeArray extends IdScriptable {
                         } else {
                             result.append(s);
                         }
+
                     } else {
                         if (toLocale && elem != Undefined.instance &&
                             elem != null)
@@ -537,26 +553,46 @@ public class NativeArray extends IdScriptable {
     private static String js_join(Context cx, Scriptable thisObj,
                                   Object[] args)
     {
-        StringBuffer result = new StringBuffer();
         String separator;
 
-        long length = getLengthProperty(thisObj);
-
+        long llength = getLengthProperty(thisObj);
+        int length = (int)llength;
+        if (llength != length) {
+            throw Context.reportRuntimeError1(
+                "msg.arraylength.too.big", String.valueOf(llength));
+        }
         // if no args, use "," as separator
-        if ((args.length < 1) || (args[0] == Undefined.instance)) {
+        if (args.length < 1 || args[0] == Undefined.instance) {
             separator = ",";
         } else {
             separator = ScriptRuntime.toString(args[0]);
         }
-        for (long i=0; i < length; i++) {
-            if (i > 0)
-                result.append(separator);
-            Object temp = getElem(thisObj, i);
-            if (temp == null || temp == Undefined.instance)
-                continue;
-            result.append(ScriptRuntime.toString(temp));
+        if (length == 0) {
+            return "";
         }
-        return result.toString();
+        String[] buf = new String[length];
+        int total_size = 0;
+        for (int i = 0; i != length; i++) {
+            Object temp = getElem(thisObj, i);
+            if (temp != null && temp != Undefined.instance) {
+                String str = ScriptRuntime.toString(temp);
+                total_size += str.length();
+                buf[i] = str;
+            }
+        }
+        total_size += (length - 1) * separator.length();
+        StringBuffer sb = new StringBuffer(total_size);
+        for (int i = 0; i != length; i++) {
+            if (i != 0) {
+                sb.append(separator);
+            }
+            String str = buf[i];
+            if (str != null) {
+                // str == null for undefined or null
+                sb.append(str);
+            }
+        }
+        return sb.toString();
     }
 
     /**
@@ -633,9 +669,9 @@ public class NativeArray extends IdScriptable {
     {
         if (check) {
             if (cmp == null) {
-                if (cmpBuf != null) Context.codeBug();
+                if (cmpBuf != null) Kit.codeBug();
             } else {
-                if (cmpBuf == null || cmpBuf.length != 2) Context.codeBug();
+                if (cmpBuf == null || cmpBuf.length != 2) Kit.codeBug();
             }
         }
 
@@ -681,7 +717,7 @@ public class NativeArray extends IdScriptable {
                                  Object cmp, Object[] cmpBuf)
         throws JavaScriptException
     {
-        if (check && length <= 1) Context.codeBug();
+        if (check && length <= 1) Kit.codeBug();
 
         // Build heap
         for (int i = length / 2; i != 0;) {
@@ -736,7 +772,7 @@ public class NativeArray extends IdScriptable {
                                           Object cmp, Object[] cmpBuf)
         throws JavaScriptException
     {
-        if (check && length <= 1) Context.codeBug();
+        if (check && length <= 1) Kit.codeBug();
 
         // Build heap
         for (long i = length / 2; i != 0;) {
@@ -906,7 +942,7 @@ public class NativeArray extends IdScriptable {
         long length = getLengthProperty(thisObj);
 
         /* Convert the first argument into a starting index. */
-           long begin = toSliceIndex(ScriptRuntime.toInteger(args[0]), length);
+        long begin = toSliceIndex(ScriptRuntime.toInteger(args[0]), length);
         argc--;
 
         /* Convert the second argument into count */
@@ -1002,7 +1038,7 @@ public class NativeArray extends IdScriptable {
         /* Put the target in the result array; only add it as an array
          * if it looks like one.
          */
-        if (ScriptRuntime.instanceOf(scope, thisObj, ctor)) {
+        if (ScriptRuntime.instanceOf(thisObj, ctor, scope)) {
             length = getLengthProperty(thisObj);
 
             // Copy from the target object into the result
@@ -1019,7 +1055,7 @@ public class NativeArray extends IdScriptable {
          * elements separately; otherwise, just copy the argument.
          */
         for (int i = 0; i < args.length; i++) {
-            if (ScriptRuntime.instanceOf(scope, args[i], ctor)) {
+            if (ScriptRuntime.instanceOf(args[i], ctor, scope)) {
                 // ScriptRuntime.instanceOf => instanceof Scriptable
                 Scriptable arg = (Scriptable)args[i];
                 length = getLengthProperty(arg);
@@ -1078,7 +1114,8 @@ public class NativeArray extends IdScriptable {
         return result;
     }
 
-    protected String getIdName(int id) {
+    protected String getIdName(int id)
+    {
         if (id == Id_length) { return "length"; }
 
         if (prototypeFlag) {
@@ -1086,6 +1123,7 @@ public class NativeArray extends IdScriptable {
                 case Id_constructor:     return "constructor";
                 case Id_toString:        return "toString";
                 case Id_toLocaleString:  return "toLocaleString";
+                case Id_toSource:        return "toSource";
                 case Id_join:            return "join";
                 case Id_reverse:         return "reverse";
                 case Id_sort:            return "sort";
@@ -1107,7 +1145,8 @@ public class NativeArray extends IdScriptable {
 
     { setMaxId(MAX_INSTANCE_ID); }
 
-    protected int mapNameToId(String s) {
+    protected int mapNameToId(String s)
+    {
         if (s.equals("length")) { return Id_length; }
         else if (prototypeFlag) {
             return toPrototypeId(s);
@@ -1117,9 +1156,10 @@ public class NativeArray extends IdScriptable {
 
 // #string_id_map#
 
-    private static int toPrototypeId(String s) {
+    private static int toPrototypeId(String s)
+    {
         int id;
-// #generated# Last update: 2001-04-23 11:46:01 GMT+02:00
+// #generated# Last update: 2004-03-17 13:17:02 CET
         L0: { id = 0; String X = null; int c;
             L: switch (s.length()) {
             case 3: X="pop";id=Id_pop; break L;
@@ -1134,14 +1174,16 @@ public class NativeArray extends IdScriptable {
                 break L;
             case 6: c=s.charAt(0);
                 if (c=='c') { X="concat";id=Id_concat; }
-                else if (c=='l') { X="length";id=Id_length; }
                 else if (c=='s') { X="splice";id=Id_splice; }
                 break L;
             case 7: c=s.charAt(0);
                 if (c=='r') { X="reverse";id=Id_reverse; }
                 else if (c=='u') { X="unshift";id=Id_unshift; }
                 break L;
-            case 8: X="toString";id=Id_toString; break L;
+            case 8: c=s.charAt(3);
+                if (c=='o') { X="toSource";id=Id_toSource; }
+                else if (c=='t') { X="toString";id=Id_toString; }
+                break L;
             case 11: X="constructor";id=Id_constructor; break L;
             case 14: X="toLocaleString";id=Id_toLocaleString; break L;
             }
@@ -1155,18 +1197,19 @@ public class NativeArray extends IdScriptable {
         Id_constructor          = MAX_INSTANCE_ID + 1,
         Id_toString             = MAX_INSTANCE_ID + 2,
         Id_toLocaleString       = MAX_INSTANCE_ID + 3,
-        Id_join                 = MAX_INSTANCE_ID + 4,
-        Id_reverse              = MAX_INSTANCE_ID + 5,
-        Id_sort                 = MAX_INSTANCE_ID + 6,
-        Id_push                 = MAX_INSTANCE_ID + 7,
-        Id_pop                  = MAX_INSTANCE_ID + 8,
-        Id_shift                = MAX_INSTANCE_ID + 9,
-        Id_unshift              = MAX_INSTANCE_ID + 10,
-        Id_splice               = MAX_INSTANCE_ID + 11,
-        Id_concat               = MAX_INSTANCE_ID + 12,
-        Id_slice                = MAX_INSTANCE_ID + 13,
+        Id_toSource             = MAX_INSTANCE_ID + 4,
+        Id_join                 = MAX_INSTANCE_ID + 5,
+        Id_reverse              = MAX_INSTANCE_ID + 6,
+        Id_sort                 = MAX_INSTANCE_ID + 7,
+        Id_push                 = MAX_INSTANCE_ID + 8,
+        Id_pop                  = MAX_INSTANCE_ID + 9,
+        Id_shift                = MAX_INSTANCE_ID + 10,
+        Id_unshift              = MAX_INSTANCE_ID + 11,
+        Id_splice               = MAX_INSTANCE_ID + 12,
+        Id_concat               = MAX_INSTANCE_ID + 13,
+        Id_slice                = MAX_INSTANCE_ID + 14,
 
-        MAX_PROTOTYPE_ID        = MAX_INSTANCE_ID + 13;
+        MAX_PROTOTYPE_ID        = MAX_INSTANCE_ID + 14;
 
 // #/string_id_map#
 

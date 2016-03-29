@@ -39,27 +39,43 @@ package org.mozilla.javascript;
 
 public class IdFunction extends BaseFunction
 {
-    public static final int FUNCTION_ONLY = 0;
-
-    public static final int CONSTRUCTOR_ONLY = 1;
-
-    public static final int FUNCTION_AND_CONSTRUCTOR = 2;
-
-    public IdFunction(IdFunctionMaster master, String name, int id) {
+    public IdFunction(IdFunctionMaster master, String name, int id)
+    {
         this.functionName = name;
         this.master = master;
         this.methodId = id;
     }
 
-    public final int functionType() {
-        return functionType;
+    public static void define(Scriptable scope, String name,
+                              IdFunctionMaster master, int id)
+    {
+        define(scope, name, master, id, ScriptableObject.DONTENUM, false);
     }
 
-    public void setFunctionType(int type) {
-        functionType = type;
+    public static void define(Scriptable scope, String name,
+                              IdFunctionMaster master, int id,
+                              int attributes)
+    {
+        define(scope, name, master, id, attributes, false);
     }
 
-    public Scriptable getPrototype() {
+    public static void define(Scriptable scope, String name,
+                              IdFunctionMaster master, int id,
+                              int attributes, boolean sealed)
+    {
+        IdFunction f = new IdFunction(master, name, id);
+        f.setParentScope(scope);
+        if (sealed) { f.sealObject(); }
+        ScriptableObject.defineProperty(scope, name, f, attributes);
+    }
+
+    public final int getMethodId()
+    {
+        return methodId;
+    }
+
+    public Scriptable getPrototype()
+    {
         // Lazy initialization of prototype: for native functions this
         // may not be called at all
         Scriptable proto = super.getPrototype();
@@ -74,32 +90,25 @@ public class IdFunction extends BaseFunction
                        Object[] args)
         throws JavaScriptException
     {
-        if (functionType != CONSTRUCTOR_ONLY) {
-            return master.execMethod(methodId, this, cx, scope, thisObj, args);
-        }
-        else {
-            return Undefined.instance;
-        }
+        return master.execMethod(methodId, this, cx, scope, thisObj, args);
     }
 
-    public Scriptable construct(Context cx, Scriptable scope, Object[] args)
-        throws JavaScriptException
+    public Scriptable createObject(Context cx, Scriptable scope)
     {
-        if (functionType != FUNCTION_ONLY) {
-            // It is program error not to return Scriptable from constructor
-            Scriptable result = (Scriptable)master.execMethod(methodId, this,
-                                                              cx, scope,
-                                                              null, args);
-            postConstruction(result);
-            return result;
+        if (useCallAsConstructor) {
+            return null;
         }
-        else {
-            return Undefined.instance;
-        }
+        // Throw error if not explicitly coded to be used as constructor,
+        // to satisfy ECMAScript standard (see bugzilla 202019).
+        // To follow current (2003-05-01) SpiderMonkey behavior, change it to:
+        // return super.createObject(cx, scope);
+        throw ScriptRuntime.typeError1("msg.not.ctor", functionName);
     }
 
-    public String decompile(Context cx, int indent, boolean justbody) {
+    String decompile(int indent, int flags)
+    {
         StringBuffer sb = new StringBuffer();
+        boolean justbody = (0 != (flags & Decompiler.ONLY_BODY_FLAG));
         if (!justbody) {
             sb.append("function ");
             sb.append(getFunctionName());
@@ -118,7 +127,8 @@ public class IdFunction extends BaseFunction
         return sb.toString();
     }
 
-    public int getArity() {
+    public int getArity()
+    {
         int arity = master.methodArity(methodId);
         if (arity < 0) {
             throw onBadMethodId(master, methodId);
@@ -132,33 +142,21 @@ public class IdFunction extends BaseFunction
      ** @param scope constructor scope
      ** @param prototype DontEnum, DontDelete, ReadOnly prototype property
      ** of the constructor */
-    public void initAsConstructor(Scriptable scope, Scriptable prototype) {
-        setFunctionType(FUNCTION_AND_CONSTRUCTOR);
+    public void initAsConstructor(Scriptable scope, Scriptable prototype)
+    {
+        useCallAsConstructor = true;
         setParentScope(scope);
         setImmunePrototypeProperty(prototype);
     }
 
-    static RuntimeException onBadMethodId(IdFunctionMaster master, int id) {
+    static RuntimeException onBadMethodId(IdFunctionMaster master, int id)
+    {
         // It is program error to call id-like methods for unknown or
         // non-function id
         return new RuntimeException("BAD FUNCTION ID="+id+" MASTER="+master);
     }
 
-    // Copied from NativeFunction.construct
-    private void postConstruction(Scriptable newObj) {
-        if (newObj.getPrototype() == null) {
-            newObj.setPrototype(getClassPrototype());
-        }
-        if (newObj.getParentScope() == null) {
-            Scriptable parent = getParentScope();
-            if (newObj != parent) {
-                newObj.setParentScope(parent);
-            }
-        }
-    }
-
-    protected IdFunctionMaster master;
-    protected int methodId;
-
-    protected int functionType = FUNCTION_ONLY;
+    IdFunctionMaster master;
+    private int methodId;
+    private boolean useCallAsConstructor;
 }

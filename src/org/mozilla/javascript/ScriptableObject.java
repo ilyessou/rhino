@@ -119,19 +119,9 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
      * @param start the object in which the lookup began
      * @return true if and only if the property was found in the object
      */
-    public boolean has(String name, Scriptable start) {
-        // See comments in get about cache operations
-        Slot slot = lastAccess;
-        if (name != slot.stringKey || slot.wasDeleted != 0) {
-            slot = getSlot(name, name.hashCode());
-            if (slot == null) {
-                return false;
-            }
-
-            slot.stringKey = name;
-            lastAccess = slot;
-        }
-        return true;
+    public boolean has(String name, Scriptable start)
+    {
+        return null != getNamedSlot(name);
     }
 
     /**
@@ -141,8 +131,9 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
      * @param start the object in which the lookup began
      * @return true if and only if the property was found in the object
      */
-    public boolean has(int index, Scriptable start) {
-        return getSlot(null, index) != null;
+    public boolean has(int index, Scriptable start)
+    {
+        return null != getSlot(null, index);
     }
 
     /**
@@ -155,22 +146,12 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
      * @param start the object in which the lookup began
      * @return the value of the property (may be null), or NOT_FOUND
      */
-    public Object get(String name, Scriptable start) {
-        // Query last access cache and check that it was not deleted
-        Slot slot = lastAccess;
-        if (name != slot.stringKey || slot.wasDeleted != 0) {
-            slot = getSlot(name, name.hashCode());
-            if (slot == null) {
-                return Scriptable.NOT_FOUND;
-            }
-
-            // Update cache - here stringKey.equals(name) holds, but it can be
-            // that slot.stringKey != name. To make last name cache work, need
-            // to change the key
-            slot.stringKey = name;
-            lastAccess = slot;
+    public Object get(String name, Scriptable start)
+    {
+        Slot slot = getNamedSlot(name);
+        if (slot == null) {
+            return Scriptable.NOT_FOUND;
         }
-
         if ((slot.flags & Slot.HAS_GETTER) != 0) {
             return getByGetter((GetterSlot) slot, start);
         }
@@ -178,31 +159,34 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
         return slot.value;
     }
 
-    private Object getByGetter(GetterSlot slot, Scriptable start) {
-        try {
-            if (slot.delegateTo == null) {
+    private Object getByGetter(GetterSlot slot, Scriptable start)
+    {
+        Object getterThis;
+        Object[] args;
+        if (slot.delegateTo == null) {
+            if (start != this) {
                 // Walk the prototype chain to find an appropriate
                 // object to invoke the getter on.
                 Class clazz = slot.getter.getDeclaringClass();
                 while (!clazz.isInstance(start)) {
                     start = start.getPrototype();
+                    if (start == this) {
+                        break;
+                    }
                     if (start == null) {
                         start = this;
                         break;
                     }
                 }
-                return slot.getter.invoke(start, ScriptRuntime.emptyArgs);
             }
-            Object[] args = { this };
-            return slot.getter.invoke(slot.delegateTo, args);
-        }
-        catch (InvocationTargetException e) {
-            throw WrappedException.wrapException(e);
-        }
-        catch (IllegalAccessException e) {
-            throw WrappedException.wrapException(e);
+            getterThis = start;
+            args = ScriptRuntime.emptyArgs;
+        } else {
+            getterThis = slot.delegateTo;
+            args = new Object[] { this };
         }
 
+        return slot.getter.invoke(getterThis, args);
     }
 
     /**
@@ -212,10 +196,12 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
      * @param start the object in which the lookup began
      * @return the value of the property (may be null), or NOT_FOUND
      */
-    public Object get(int index, Scriptable start) {
+    public Object get(int index, Scriptable start)
+    {
         Slot slot = getSlot(null, index);
-        if (slot == null)
+        if (slot == null) {
             return Scriptable.NOT_FOUND;
+        }
         return slot.value;
     }
 
@@ -234,7 +220,8 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
      * @param start the object whose property is being set
      * @param value value to set the property to
      */
-    public void put(String name, Scriptable start, Object value) {
+    public void put(String name, Scriptable start, Object value)
+    {
         Slot slot = lastAccess; // Get local copy
         if (name != slot.stringKey || slot.wasDeleted != 0) {
             int hash = name.hashCode();
@@ -244,11 +231,13 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
                     start.put(name, start, value);
                     return;
                 }
-                slot = getSlotToSet(name, hash);
+                slot = addSlot(name, hash, null);
             }
             // Note: cache is not updated in put
         }
-
+        if (start == this && isSealed()) {
+            throw Context.reportRuntimeError1("msg.modify.sealed", name);
+        }
         if ((slot.attributes & ScriptableObject.READONLY) != 0) {
             return;
         }
@@ -263,40 +252,42 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
         }
     }
 
-    private void setBySetter(GetterSlot slot, Scriptable start, Object value) {
+    private void setBySetter(GetterSlot slot, Scriptable start, Object value)
+    {
+        if (start != this) {
+            if (slot.delegateTo != null
+                || !slot.setter.getDeclaringClass().isInstance(start))
+            {
+                start.put(slot.stringKey, start, value);
+                return;
+            }
+        }
+
         Object setterThis;
         Object[] args;
         Object setterResult;
         Context cx = Context.getContext();
-        Class pTypes[] = slot.setter.getParameterTypes();
+        Class pTypes[] = slot.setter.argTypes;
         Class desired = pTypes[pTypes.length - 1];
-        Object actualArg
-                = FunctionObject.convertArg(cx, start, value, desired);
+        // ALERT: cache tag since it is already calculated in defineProperty ?
+        int tag = FunctionObject.getTypeTag(desired);
+        Object actualArg = FunctionObject.convertArg(cx, start, value, tag);
         if (slot.delegateTo == null) {
-            // Walk the prototype chain to find an appropriate
-            // object to invoke the setter on.
-            Class clazz = slot.setter.getDeclaringClass();
-            while (!clazz.isInstance(start)) {
-                start = start.getPrototype();
-                if (start == null) {
-                    start = this;
-                    break;
-                }
-            }
             setterThis = start;
             args = new Object[] { actualArg };
         } else {
+            if (start != this) Kit.codeBug();
             setterThis = slot.delegateTo;
             args = new Object[] { this, actualArg };
         }
-
-        try {
-            setterResult = slot.setter.invoke(setterThis, args);
-        } catch (InvocationTargetException e) {
-            throw WrappedException.wrapException(e);
-        } catch (IllegalAccessException e) {
-            throw WrappedException.wrapException(e);
+        // Check start is sealed: start is always instance of ScriptableObject
+        // due to logic in if (start != this) above
+        if (((ScriptableObject)start).isSealed()) {
+            throw Context.reportRuntimeError1("msg.modify.sealed",
+                                              slot.stringKey);
         }
+
+        setterResult = slot.setter.invoke(setterThis, args);
 
         if (slot.setterReturnsValue) {
             // Replace Getter slot by a simple one
@@ -311,6 +302,10 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
                 // Check slot was not deleted/replaced before synchronization
                 if (i >= 0 && slots[i] == slot) {
                     slots[i] = replacement;
+                    // It is important to make sure that lastAccess != slot
+                    // to prevent accessing the old slot via lastAccess and
+                    // then invoking setter one more time
+                    lastAccess = replacement;
                 }
             }
         }
@@ -323,17 +318,23 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
      * @param start the object whose property is being set
      * @param value value to set the property to
      */
-    public void put(int index, Scriptable start, Object value) {
+    public void put(int index, Scriptable start, Object value)
+    {
         Slot slot = getSlot(null, index);
         if (slot == null) {
             if (start != this) {
                 start.put(index, start, value);
                 return;
             }
-            slot = getSlotToSet(null, index);
+            slot = addSlot(null, index, null);
         }
-        if ((slot.attributes & ScriptableObject.READONLY) != 0)
+        if (start == this && isSealed()) {
+            throw Context.reportRuntimeError1("msg.modify.sealed",
+                                              Integer.toString(index));
+        }
+        if ((slot.attributes & ScriptableObject.READONLY) != 0) {
             return;
+        }
         if (this == start) {
             slot.value = value;
         } else {
@@ -366,28 +367,67 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
     }
 
     /**
+     * @deprecated Use {@link #getAttributes(String name)}. The engine always
+     * ignored the start argument.
+     */
+    public final int getAttributes(String name, Scriptable start)
+        throws PropertyException
+    {
+        return getAttributes(name);
+    }
+
+    /**
+     * @deprecated Use {@link #getAttributes(int index)}. The engine always
+     * ignored the start argument.
+     */
+    public final int getAttributes(int index, Scriptable start)
+        throws PropertyException
+    {
+        return getAttributes(index);
+    }
+
+    /**
+     * @deprecated Use {@link #setAttributes(String name, int attributes)}.
+     * The engine always ignored the start argument.
+     */
+    public final void setAttributes(String name, Scriptable start,
+                                    int attributes)
+        throws PropertyException
+    {
+        setAttributes(name, attributes);
+    }
+
+    /**
+     * @deprecated Use {@link #setAttributes(int index, int attributes)}.
+     * The engine always ignored the start argument.
+     */
+    public void setAttributes(int index, Scriptable start,
+                              int attributes)
+        throws PropertyException
+    {
+        setAttributes(index, attributes);
+    }
+
+    /**
      * Get the attributes of a named property.
      *
      * The property is specified by <code>name</code>
      * as defined for <code>has</code>.<p>
      *
      * @param name the identifier for the property
-     * @param start the object in which the lookup began
      * @return the bitset of attributes
-     * @exception PropertyException if the named property
-     *            is not found
+     * @exception EvaluatorException if the named property is not found
      * @see org.mozilla.javascript.ScriptableObject#has
      * @see org.mozilla.javascript.ScriptableObject#READONLY
      * @see org.mozilla.javascript.ScriptableObject#DONTENUM
      * @see org.mozilla.javascript.ScriptableObject#PERMANENT
      * @see org.mozilla.javascript.ScriptableObject#EMPTY
      */
-    public int getAttributes(String name, Scriptable start)
-        throws PropertyException
+    public int getAttributes(String name)
     {
         Slot slot = getSlot(name, name.hashCode());
         if (slot == null) {
-            throw PropertyException.withMessage0("msg.prop.not.found");
+            throw Context.reportRuntimeError1("msg.prop.not.found", name);
         }
         return slot.attributes;
     }
@@ -396,8 +436,7 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
      * Get the attributes of an indexed property.
      *
      * @param index the numeric index for the property
-     * @param start the object in which the lookup began
-     * @exception PropertyException if the indexed property
+     * @exception EvaluatorException if the named property is not found
      *            is not found
      * @return the bitset of attributes
      * @see org.mozilla.javascript.ScriptableObject#has
@@ -406,12 +445,12 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
      * @see org.mozilla.javascript.ScriptableObject#PERMANENT
      * @see org.mozilla.javascript.ScriptableObject#EMPTY
      */
-    public int getAttributes(int index, Scriptable start)
-        throws PropertyException
+    public int getAttributes(int index)
     {
         Slot slot = getSlot(null, index);
         if (slot == null) {
-            throw PropertyException.withMessage0("msg.prop.not.found");
+            throw Context.reportRuntimeError1("msg.prop.not.found",
+                                              String.valueOf(index));
         }
         return slot.attributes;
     }
@@ -429,25 +468,21 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
      * bits are reserved for future use.
      *
      * @param name the name of the property
-     * @param start the object in which the lookup began
      * @param attributes the bitset of attributes
-     * @exception PropertyException if the named property
-     *            is not found
+     * @exception EvaluatorException if the named property is not found
      * @see org.mozilla.javascript.Scriptable#has
      * @see org.mozilla.javascript.ScriptableObject#READONLY
      * @see org.mozilla.javascript.ScriptableObject#DONTENUM
      * @see org.mozilla.javascript.ScriptableObject#PERMANENT
      * @see org.mozilla.javascript.ScriptableObject#EMPTY
      */
-    public void setAttributes(String name, Scriptable start,
-                              int attributes)
-        throws PropertyException
+    public void setAttributes(String name, int attributes)
     {
         final int mask = READONLY | DONTENUM | PERMANENT;
         attributes &= mask; // mask out unused bits
         Slot slot = getSlot(name, name.hashCode());
         if (slot == null) {
-            throw PropertyException.withMessage0("msg.prop.not.found");
+            throw Context.reportRuntimeError1("msg.prop.not.found", name);
         }
         slot.attributes = (short) attributes;
     }
@@ -456,25 +491,22 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
      * Set the attributes of an indexed property.
      *
      * @param index the numeric index for the property
-     * @param start the object in which the lookup began
      * @param attributes the bitset of attributes
-     * @exception PropertyException if the indexed property
-     *            is not found
+     * @exception EvaluatorException if the named property is not found
      * @see org.mozilla.javascript.Scriptable#has
      * @see org.mozilla.javascript.ScriptableObject#READONLY
      * @see org.mozilla.javascript.ScriptableObject#DONTENUM
      * @see org.mozilla.javascript.ScriptableObject#PERMANENT
      * @see org.mozilla.javascript.ScriptableObject#EMPTY
      */
-    public void setAttributes(int index, Scriptable start,
-                              int attributes)
-        throws PropertyException
+    public void setAttributes(int index, int attributes)
     {
         final int mask = READONLY | DONTENUM | PERMANENT;
         attributes &= mask; // mask out unused bits
         Slot slot = getSlot(null, index);
         if (slot == null) {
-            throw PropertyException.withMessage0("msg.prop.not.found");
+            throw Context.reportRuntimeError1("msg.prop.not.found",
+                                              String.valueOf(index));
         }
         slot.attributes = (short) attributes;
     }
@@ -605,8 +637,8 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
                 }
                 if (val != null && (val == Undefined.instance ||
                                     !(val instanceof Scriptable) ||
-                                    typeHint == Scriptable.class ||
-                                    typeHint == Function.class))
+                                    typeHint == ScriptRuntime.ScriptableClass ||
+                                    typeHint == ScriptRuntime.FunctionClass))
                 {
                     return val;
                 }
@@ -623,8 +655,8 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
         catch (JavaScriptException jse) {
             // fall through to error
         }
-        Object arg = (typeHint == null) ? "undefined" : typeHint.toString();
-        throw NativeGlobal.typeError1("msg.default.value", arg, this);
+        String arg = (typeHint == null) ? "undefined" : typeHint.getName();
+        throw ScriptRuntime.typeError1("msg.default.value", arg);
     }
 
     /**
@@ -788,7 +820,7 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
                 continue;
             Class[] parmTypes = method.getParameterTypes();
             if (parmTypes.length == 3 &&
-                parmTypes[0] == ContextClass &&
+                parmTypes[0] == ScriptRuntime.ContextClass &&
                 parmTypes[1] == ScriptRuntime.ScriptableClass &&
                 parmTypes[2] == Boolean.TYPE &&
                 Modifier.isStatic(method.getModifiers()))
@@ -811,7 +843,6 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
 
         // If we got here, there isn't an "init" method with the right
         // parameter types.
-        Hashtable exclusionList = getExclusionList();
 
         Constructor[] ctors = clazz.getConstructors();
         Constructor protoCtor = null;
@@ -834,60 +865,13 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
         // Find out whether there are any methods that begin with
         // "js". If so, then only methods that begin with special
         // prefixes will be defined as JavaScript entities.
-        // The prefixes "js_" and "jsProperty_" are deprecated.
-        final String genericPrefix = "js_";
         final String functionPrefix = "jsFunction_";
         final String staticFunctionPrefix = "jsStaticFunction_";
-        final String propertyPrefix = "jsProperty_";
         final String getterPrefix = "jsGet_";
         final String setterPrefix = "jsSet_";
         final String ctorName = "jsConstructor";
 
-        boolean hasPrefix = false;
-        Method[] ctorMeths = FunctionObject.findMethods(clazz, ctorName);
-        Member ctorMember = null;
-        if (ctorMeths != null) {
-            if (ctorMeths.length > 1) {
-                throw new ClassDefinitionException(
-                    Context.getMessage2("msg.multiple.ctors",
-                                        ctorMeths[0], ctorMeths[1]));
-            }
-            ctorMember = ctorMeths[0];
-            hasPrefix = true;
-        }
-
-        // Deprecated: look for functions with the same name as the class
-        // and consider them constructors.
-        for (int i=0; i < methods.length; i++) {
-            String name = methods[i].getName();
-            String prefix = null;
-            if (!name.startsWith("js")) // common start to all prefixes
-                prefix = null;
-            else if (name.startsWith(genericPrefix))
-                prefix = genericPrefix;
-            else if (name.startsWith(functionPrefix))
-                prefix = functionPrefix;
-            else if (name.startsWith(staticFunctionPrefix))
-                prefix = staticFunctionPrefix;
-            else if (name.startsWith(propertyPrefix))
-                prefix = propertyPrefix;
-            else if (name.startsWith(getterPrefix))
-                prefix = getterPrefix;
-            else if (name.startsWith(setterPrefix))
-                prefix = setterPrefix;
-            if (prefix != null) {
-                hasPrefix = true;
-                name = name.substring(prefix.length());
-            }
-            if (name.equals(className)) {
-                if (ctorMember != null) {
-                    throw new ClassDefinitionException(
-                        Context.getMessage2("msg.multiple.ctors",
-                                            ctorMember, methods[i]));
-                }
-                ctorMember = methods[i];
-            }
-        }
+        Member ctorMember = FunctionObject.findSingleMethod(methods, ctorName);
 
         if (ctorMember == null) {
             if (ctors.length == 1) {
@@ -912,12 +896,11 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
         }
         ctor.addAsConstructor(scope, proto);
 
-        if (!hasPrefix && exclusionList == null)
-            exclusionList = getExclusionList();
         Method finishInit = null;
         for (int i=0; i < methods.length; i++) {
-            if (!hasPrefix && methods[i].getDeclaringClass() != clazz)
+            if (methods[i] == ctorMember) {
                 continue;
+            }
             String name = methods[i].getName();
             if (name.equals("finishInit")) {
                 Class[] parmTypes = methods[i].getParameterTypes();
@@ -936,100 +919,44 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
                 continue;
             if (name.equals(ctorName))
                 continue;
+
             String prefix = null;
-            if (hasPrefix) {
-                if (name.startsWith(genericPrefix)) {
-                    prefix = genericPrefix;
-                } else if (name.startsWith(functionPrefix)) {
-                    prefix = functionPrefix;
-                } else if (name.startsWith(staticFunctionPrefix)) {
-                    prefix = staticFunctionPrefix;
-                    if (!Modifier.isStatic(methods[i].getModifiers())) {
-                        throw new ClassDefinitionException(
-                            "jsStaticFunction must be used with static method.");
-                    }
-                } else if (name.startsWith(propertyPrefix)) {
-                    prefix = propertyPrefix;
-                } else if (name.startsWith(getterPrefix)) {
-                    prefix = getterPrefix;
-                } else if (name.startsWith(setterPrefix)) {
-                    prefix = setterPrefix;
-                } else {
-                    continue;
+            if (name.startsWith(functionPrefix)) {
+                prefix = functionPrefix;
+            } else if (name.startsWith(staticFunctionPrefix)) {
+                prefix = staticFunctionPrefix;
+                if (!Modifier.isStatic(methods[i].getModifiers())) {
+                    throw new ClassDefinitionException(
+                        "jsStaticFunction must be used with static method.");
                 }
-                name = name.substring(prefix.length());
-            } else if (exclusionList.get(name) != null)
-                continue;
-            if (methods[i] == ctorMember) {
+            } else if (name.startsWith(getterPrefix)) {
+                prefix = getterPrefix;
+            } else if (name.startsWith(setterPrefix)) {
+                prefix = setterPrefix;
+            } else {
                 continue;
             }
-            if (prefix != null && prefix.equals(setterPrefix))
+            name = name.substring(prefix.length());
+            if (prefix == setterPrefix)
                 continue;   // deal with set when we see get
-            if (prefix != null && prefix.equals(getterPrefix)) {
+            if (prefix == getterPrefix) {
                 if (!(proto instanceof ScriptableObject)) {
                     throw PropertyException.withMessage2
                         ("msg.extend.scriptable",                                                         proto.getClass().toString(), name);
                 }
-                Method[] setter = FunctionObject.findMethods(
-                                    clazz,
+                Method setter = FunctionObject.findSingleMethod(
+                                    methods,
                                     setterPrefix + name);
-                if (setter != null && setter.length != 1) {
-                    throw PropertyException.withMessage2
-                        ("msg.no.overload", name, clazz.getName());
-                }
                 int attr = ScriptableObject.PERMANENT |
                            ScriptableObject.DONTENUM  |
                            (setter != null ? 0
                                            : ScriptableObject.READONLY);
-                Method m = setter == null ? null : setter[0];
                 ((ScriptableObject) proto).defineProperty(name, null,
-                                                          methods[i], m,
+                                                          methods[i], setter,
                                                           attr);
                 continue;
             }
-            if ((name.startsWith("get") || name.startsWith("set")) &&
-                name.length() > 3 &&
-                !(hasPrefix && (prefix.equals(functionPrefix) ||
-                                prefix.equals(staticFunctionPrefix))))
-            {
-                if (!(proto instanceof ScriptableObject)) {
-                    throw PropertyException.withMessage2
-                        ("msg.extend.scriptable",
-                         proto.getClass().toString(), name);
-                }
-                if (name.startsWith("set"))
-                    continue;   // deal with set when we see get
-                StringBuffer buf = new StringBuffer();
-                char c = name.charAt(3);
-                buf.append(Character.toLowerCase(c));
-                if (name.length() > 4)
-                    buf.append(name.substring(4));
-                String propertyName = buf.toString();
-                buf.setCharAt(0, c);
-                buf.insert(0, "set");
-                String setterName = buf.toString();
-                Method[] setter = FunctionObject.findMethods(
-                                    clazz,
-                                    hasPrefix ? genericPrefix + setterName
-                                              : setterName);
-                if (setter != null && setter.length != 1) {
-                    throw PropertyException.withMessage2
-                        ("msg.no.overload", name, clazz.getName());
-                }
-                if (setter == null && hasPrefix)
-                    setter = FunctionObject.findMethods(
-                                clazz,
-                                propertyPrefix + setterName);
-                int attr = ScriptableObject.PERMANENT |
-                           ScriptableObject.DONTENUM  |
-                           (setter != null ? 0
-                                           : ScriptableObject.READONLY);
-                Method m = setter == null ? null : setter[0];
-                ((ScriptableObject) proto).defineProperty(propertyName, null,
-                                                          methods[i], m,
-                                                          attr);
-                continue;
-            }
+
             FunctionObject f = new FunctionObject(name, methods[i], proto);
             if (f.isVarArgsConstructor()) {
                 throw Context.reportRuntimeError1
@@ -1041,7 +968,6 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
             defineProperty(dest, name, f, DONTENUM);
             if (sealed) {
                 f.sealObject();
-                f.addPropertyAttribute(READONLY);
             }
         }
 
@@ -1053,10 +979,8 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
 
         if (sealed) {
             ctor.sealObject();
-            ctor.addPropertyAttribute(READONLY);
             if (proto instanceof ScriptableObject) {
                 ((ScriptableObject) proto).sealObject();
-                ((ScriptableObject) proto).addPropertyAttribute(READONLY);
             }
         }
     }
@@ -1075,12 +999,7 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
                                int attributes)
     {
         put(propertyName, this, value);
-        try {
-            setAttributes(propertyName, this, attributes);
-        }
-        catch (PropertyException e) {
-            throw new RuntimeException("Cannot create property");
-        }
+        setAttributes(propertyName, attributes);
     }
 
     /**
@@ -1093,14 +1012,12 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
                                       String propertyName, Object value,
                                       int attributes)
     {
-        ScriptableObject obj;
-        try {
-            obj = (ScriptableObject)destination;
-        }catch (ClassCastException e) {
+        if (!(destination instanceof ScriptableObject)) {
             destination.put(propertyName, destination, value);
             return;
         }
-        obj.defineProperty(propertyName, value, attributes);
+        ScriptableObject so = (ScriptableObject)destination;
+        so.defineProperty(propertyName, value, attributes);
     }
 
     /**
@@ -1130,19 +1047,25 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
                                int attributes)
         throws PropertyException
     {
-        StringBuffer buf = new StringBuffer(propertyName);
-        buf.setCharAt(0, Character.toUpperCase(propertyName.charAt(0)));
-        String s = buf.toString();
-        Method[] getter = FunctionObject.findMethods(clazz, "get" + s);
-        Method[] setter = FunctionObject.findMethods(clazz, "set" + s);
+        int length = propertyName.length();
+        if (length == 0) throw new IllegalArgumentException();
+        char[] buf = new char[3 + length];
+        propertyName.getChars(0, length, buf, 3);
+        buf[3] = Character.toUpperCase(buf[3]);
+        buf[0] = 'g';
+        buf[1] = 'e';
+        buf[2] = 't';
+        String getterName = new String(buf);
+        buf[0] = 's';
+        String setterName = new String(buf);
+
+        Method[] methods = FunctionObject.getMethodList(clazz);
+        Method getter = FunctionObject.findSingleMethod(methods, getterName);
+        Method setter = FunctionObject.findSingleMethod(methods, setterName);
         if (setter == null)
             attributes |= ScriptableObject.READONLY;
-        if (getter.length != 1 || (setter != null && setter.length != 1)) {
-            throw PropertyException.withMessage2
-                ("msg.no.overload", propertyName, clazz.getName());
-        }
-        defineProperty(propertyName, null, getter[0],
-                       setter == null ? null : setter[0], attributes);
+        defineProperty(propertyName, null, getter,
+                       setter == null ? null : setter, attributes);
     }
 
     /**
@@ -1198,7 +1121,7 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
         Class[] parmTypes = getter.getParameterTypes();
         if (parmTypes.length != 0) {
             if (parmTypes.length != 1 ||
-                parmTypes[0] != ScriptableObject.class)
+                parmTypes[0] != ScriptRuntime.ScriptableObjectClass)
             {
                 throw PropertyException.withMessage1
                     ("msg.bad.getter.parms", getter.toString());
@@ -1216,7 +1139,7 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
             }
             parmTypes = setter.getParameterTypes();
             if (parmTypes.length == 2) {
-                if (parmTypes[0] != ScriptableObject.class) {
+                if (parmTypes[0] != ScriptRuntime.ScriptableObjectClass) {
                     throw PropertyException.withMessage0("msg.setter2.parms");
                 }
                 if (delegateTo == null) {
@@ -1231,17 +1154,28 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
             } else {
                 throw PropertyException.withMessage0("msg.setter.parms");
             }
+            Class setterType = parmTypes[parmTypes.length - 1];
+            int setterTypeTag = FunctionObject.getTypeTag(setterType);
+            if (setterTypeTag  == FunctionObject.JAVA_UNSUPPORTED_TYPE) {
+                throw PropertyException.withMessage2(
+                    "msg.setter2.expected", setterType.getName(),
+                    setter.toString());
+            }
         }
 
+        ClassCache cache = ClassCache.get(this);
         GetterSlot slot = new GetterSlot();
         slot.delegateTo = delegateTo;
-        slot.getter = getter;
-        slot.setter = setter;
-        slot.setterReturnsValue = setter != null && setter.getReturnType() != Void.TYPE;
+        slot.getter = new MemberBox(getter, cache);
+        slot.getter.prepareInvokerOptimization();
+        if (setter != null) {
+            slot.setter = new MemberBox(setter, cache);
+            slot.setter.prepareInvokerOptimization();
+            slot.setterReturnsValue = setter.getReturnType() != Void.TYPE;
+        }
         slot.value = null;
         slot.attributes = (short) attributes;
         slot.flags = (byte)flags;
-
         Slot inserted = addSlot(propertyName, propertyName.hashCode(), slot);
         if (inserted != slot) {
             throw new RuntimeException("Property already exists");
@@ -1269,18 +1203,15 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
                                          int attributes)
         throws PropertyException
     {
+        Method[] methods = FunctionObject.getMethodList(clazz);
         for (int i=0; i < names.length; i++) {
             String name = names[i];
-            Method[] m = FunctionObject.findMethods(clazz, name);
+            Method m = FunctionObject.findSingleMethod(methods, name);
             if (m == null) {
                 throw PropertyException.withMessage2
                     ("msg.method.not.found", name, clazz.getName());
             }
-            if (m.length > 1) {
-                throw PropertyException.withMessage2
-                    ("msg.no.overload", name, clazz.getName());
-            }
-            FunctionObject f = new FunctionObject(name, m[0], this);
+            FunctionObject f = new FunctionObject(name, m, this);
             defineProperty(name, f, attributes);
         }
     }
@@ -1373,7 +1304,7 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
      * @return true if sealed, false otherwise.
      * @since 1.4R3
      */
-    public boolean isSealed() {
+    public final boolean isSealed() {
         return count < 0;
     }
 
@@ -1541,16 +1472,40 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
      *         it will occur only once in this list.
      * @since 1.5R2
      */
-    public static Object[] getPropertyIds(Scriptable obj) {
-        ObjToIntMap map = new ObjToIntMap();
-        while (obj != null) {
-            Object[] ids = obj.getIds();
-            for (int i=0; i < ids.length; i++) {
-                map.put(ids[i], 0);
-            }
-            obj = (Scriptable)obj.getPrototype();
+    public static Object[] getPropertyIds(Scriptable obj)
+    {
+        if (obj == null) {
+            return ScriptRuntime.emptyArgs;
         }
-        return map.getKeys();
+        Object[] result = obj.getIds();
+        ObjToIntMap map = null;
+        for (;;) {
+            obj = obj.getPrototype();
+            if (obj == null) {
+                break;
+            }
+            Object[] ids = obj.getIds();
+            if (ids.length == 0) {
+                continue;
+            }
+            if (result.length == 0) {
+                result = ids;
+                continue;
+            }
+            if (map == null) {
+                for (int i = 0; i != result.length; ++i) {
+                    map.intern(result[i]);
+                }
+                result = null;
+            }
+            for (int i = 0; i != ids.length; ++i) {
+                map.intern(ids[i]);
+            }
+        }
+        if (map != null) {
+            result = map.getKeys();
+        }
+        return result;
     }
 
     /**
@@ -1565,16 +1520,14 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
                                     Object[] args)
         throws JavaScriptException
     {
-        Context cx = Context.enter();
-        try {
-            Object fun = getProperty(obj, methodName);
-            if (fun == NOT_FOUND)
-                fun = methodName;
-            return ScriptRuntime.call(cx, fun, obj, args,
-                                      getTopLevelScope(obj));
-        } finally {
-            Context.exit();
+        Object funObj = getProperty(obj, methodName);
+        if (!(funObj instanceof Function)) {
+            throw ScriptRuntime.typeError1(
+                "msg.isnt.function",
+                ScriptRuntime.toString(obj)+'.'+methodName);
         }
+        Function fun = (Function)funObj;
+        return Context.call(fun, getTopLevelScope(obj), obj, args);
     }
 
     private static Scriptable getBase(Scriptable obj, String name) {
@@ -1598,26 +1551,77 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
     }
 
     /**
-     * Adds a property attribute to all properties.
+     * Get arbitrary application-specific value associated with this object.
+     * @param key key object to select particular value.
+     * @see #associateValue(Object key, Object value)
      */
-    synchronized void addPropertyAttribute(int attribute) {
-        if (slots == null)
-            return;
-        for (int i = 0; i < slots.length; i++) {
-            Slot slot = slots[i];
-            if (slot == null || slot == REMOVED)
-                continue;
-            slot.attributes |= attribute;
-        }
+    public final Object getAssociatedValue(Object key)
+    {
+        Hashtable h = associatedValues;
+        if (h == null)
+            return null;
+        return h.get(key);
     }
 
-    private Slot getSlot(String id, int index) {
+    /**
+     * Associate arbitrary application-specific value with this object.
+     * Value can only be associated with the given object and key only once.
+     * The method ignores any subsequent attempts to change the already
+     * associated value.
+     * <p> The associated values are not serilized.
+     * @param key key object to select particular value.
+     * @param value the value to associate
+     * @return the passed value if the method is called first time for the
+     * given key or old value for any subsequent calls.
+     * @see #getAssociatedValue(Object key)
+     */
+    public final Object associateValue(Object key, Object value)
+    {
+        if (value == null) throw new IllegalArgumentException();
+        Hashtable h = associatedValues;
+        if (h == null) {
+            synchronized (this) {
+                h = associatedValues;
+                if (h == null) {
+                    h = new Hashtable();
+                    associatedValues = h;
+                }
+            }
+        }
+        return Kit.initHash(h, key, value);
+    }
+
+    private Slot getNamedSlot(String name)
+    {
+        // Query last access cache and check that it was not deleted
+        Slot slot = lastAccess;
+        if (name == slot.stringKey && slot.wasDeleted == 0) {
+            return slot;
+        }
+        int hash = name.hashCode();
+        Slot[] slots = this.slots; // Get stable local reference
+        int i = getSlotPosition(slots, name, hash);
+        if (i < 0) {
+            return null;
+        }
+        slot = slots[i];
+        // Update cache - here stringKey.equals(name) holds, but it can be
+        // that slot.stringKey != name. To make last name cache work, need
+        // to change the key
+        slot.stringKey = name;
+        lastAccess = slot;
+        return slot;
+    }
+
+    private Slot getSlot(String id, int index)
+    {
         Slot[] slots = this.slots; // Get local copy
         int i = getSlotPosition(slots, id, index);
         return (i < 0) ? null : slots[i];
     }
 
-    private static int getSlotPosition(Slot[] slots, String id, int index) {
+    private static int getSlotPosition(Slot[] slots, String id, int index)
+    {
         if (slots != null) {
             int start = (index & 0x7fffffff) % slots.length;
             int i = start;
@@ -1625,9 +1629,9 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
                 Slot slot = slots[i];
                 if (slot == null)
                     break;
-                if (slot != REMOVED && slot.intKey == index &&
-                    (slot.stringKey == id || (id != null &&
-                                              id.equals(slot.stringKey))))
+                if (slot != REMOVED && slot.intKey == index
+                    && (slot.stringKey == id
+                        || (id != null && id.equals(slot.stringKey))))
                 {
                     return i;
                 }
@@ -1636,40 +1640,6 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
             } while (i != start);
         }
         return -1;
-    }
-
-    // First search for the existing slot without using synchronization
-    // and if not found, call addSlot which is synchronized
-    private Slot getSlotToSet(String id, int index) {
-        // Get stable reference
-        Slot[] array = slots;
-        if (array == null) {
-            return addSlot(id, index, null);
-        }
-        int start = (index & 0x7fffffff) % array.length;
-        boolean sawRemoved = false;
-        int i = start;
-        do {
-            Slot slot = array[i];
-            if (slot == null) {
-                return addSlot(id, index, null);
-            }
-            if (slot == REMOVED) {
-                sawRemoved = true;
-            } else if (slot.intKey == index &&
-                       (slot.stringKey == id ||
-                        (id != null && id.equals(slot.stringKey))))
-            {
-                return slot;
-            }
-            if (++i == array.length)
-                i = 0;
-        } while (i != start);
-        if (Context.check && !sawRemoved) Context.codeBug();
-        // Table could be full, but with some REMOVED elements.
-        // Call to addSlot will use a slot currently taken by
-        // a REMOVED.
-        return addSlot(id, index, null);
     }
 
     /**
@@ -1681,8 +1651,10 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
      * caused the table to grow while this thread was searching.
      */
     private synchronized Slot addSlot(String id, int index, Slot newSlot) {
-        if (count < 0)
-            throw Context.reportRuntimeError0("msg.add.sealed");
+        if (isSealed()) {
+            String str = (id != null) ? id : Integer.toString(index);
+            throw Context.reportRuntimeError1("msg.add.sealed", str);
+        }
 
         if (slots == null) { slots = new Slot[5]; }
 
@@ -1717,7 +1689,7 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
                 i = 0;
         } while (i != start);
         // Unreachable code
-        if (Context.check) Context.codeBug();
+        if (Context.check) Kit.codeBug();
         return null;
     }
 
@@ -1729,8 +1701,10 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
      * deletes are not common.
      */
     private synchronized void removeSlot(String name, int index) {
-        if (count < 0)
-            throw Context.reportRuntimeError0("msg.remove.sealed");
+        if (isSealed()) {
+            String str = (name != null) ? name : Integer.toString(index);
+            throw Context.reportRuntimeError1("msg.remove.sealed", str);
+        }
 
         int i = getSlotPosition(slots, name, index);
         if (i >= 0) {
@@ -1775,18 +1749,6 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
         slots = newSlots;
     }
 
-    private static Hashtable getExclusionList() {
-        if (exclusionList != null)
-            return exclusionList;
-        Hashtable result = new Hashtable(17);
-        Method[] methods = ScriptRuntime.FunctionClass.getMethods();
-        for (int i=0; i < methods.length; i++) {
-            result.put(methods[i].getName(), Boolean.TRUE);
-        }
-        exclusionList = result;
-        return result;
-    }
-
     Object[] getIds(boolean getAll) {
         Slot[] s = slots;
         Object[] a = ScriptRuntime.emptyArgs;
@@ -1822,7 +1784,7 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
         }
         Slot[] s = slots;
         if (s == null) {
-            if (N != 0) Context.codeBug();
+            if (N != 0) Kit.codeBug();
             out.writeInt(0);
         } else {
             out.writeInt(s.length);
@@ -1864,16 +1826,15 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
     /**
      * The prototype of this object.
      */
-    protected Scriptable prototype;
+    private Scriptable prototype;
 
     /**
      * The parent scope of this object.
      */
-    protected Scriptable parent;
+    private Scriptable parent;
 
     private static final Object HAS_STATIC_ACCESSORS = Void.TYPE;
     private static final Slot REMOVED = new Slot();
-    private static Hashtable exclusionList = null;
 
     private transient Slot[] slots;
     // If count >= 0, it gives number of keys or if count < 0,
@@ -1882,6 +1843,9 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
 
     // cache; may be removed for smaller memory footprint
     private transient Slot lastAccess = REMOVED;
+
+    // associated values are not serialized
+    private transient volatile Hashtable associatedValues;
 
     private static class Slot implements Serializable {
         static final int HAS_GETTER  = 0x01;
@@ -1906,28 +1870,11 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
         transient byte wasDeleted;
     }
 
-    static class GetterSlot extends Slot implements Serializable {
+    static class GetterSlot extends Slot
+    {
         Object delegateTo;  // OPT: merge with "value"
-        transient Method getter;
-        transient Method setter;
+        MemberBox getter;
+        MemberBox setter;
         boolean setterReturnsValue;
-
-        private void writeObject(ObjectOutputStream out)
-            throws IOException
-        {
-            out.defaultWriteObject();
-            FunctionObject.writeMember(out, getter);
-            FunctionObject.writeMember(out, setter);
-        }
-
-        private void readObject(ObjectInputStream in)
-            throws IOException, ClassNotFoundException
-        {
-            in.defaultReadObject();
-            getter = (Method) FunctionObject.readMember(in);
-            setter = (Method) FunctionObject.readMember(in);
-        }
     }
-
-    private static final Class ContextClass = Context.class;
 }

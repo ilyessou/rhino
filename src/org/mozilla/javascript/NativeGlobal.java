@@ -37,8 +37,7 @@
 
 package org.mozilla.javascript;
 
-import java.io.StringReader;
-import java.io.IOException;
+import java.io.Serializable;
 import java.lang.reflect.Method;
 
 /**
@@ -50,19 +49,33 @@ import java.lang.reflect.Method;
  * @author Mike Shaver
  */
 
-public class NativeGlobal implements IdFunctionMaster {
+public class NativeGlobal implements Serializable, IdFunctionMaster
+{
 
     public static void init(Context cx, Scriptable scope, boolean sealed) {
         NativeGlobal obj = new NativeGlobal();
         obj.scopeSlaveFlag = true;
 
         for (int id = 1; id <= LAST_SCOPE_FUNCTION_ID; ++id) {
-            String name = getMethodName(id);
-            IdFunction f = new IdFunction(obj, name, id);
-            f.setParentScope(scope);
-            if (sealed) { f.sealObject(); }
-            ScriptableObject.defineProperty(scope, name, f,
-                                            ScriptableObject.DONTENUM);
+            String name;
+            switch (id) {
+                case Id_decodeURI:          name = "decodeURI";          break;
+                case Id_decodeURIComponent: name = "decodeURIComponent"; break;
+                case Id_encodeURI:          name = "encodeURI";          break;
+                case Id_encodeURIComponent: name = "encodeURIComponent"; break;
+                case Id_escape:             name = "escape";             break;
+                case Id_eval:               name = "eval";               break;
+                case Id_isFinite:           name = "isFinite";           break;
+                case Id_isNaN:              name = "isNaN";              break;
+                case Id_parseFloat:         name = "parseFloat";         break;
+                case Id_parseInt:           name = "parseInt";           break;
+                case Id_unescape:           name = "unescape";           break;
+                case Id_uneval:             name = "uneval";             break;
+                default:
+                    Kit.codeBug(); name = null;
+            }
+            IdFunction.define(scope, name, obj, id,
+                              ScriptableObject.DONTENUM, sealed);
         }
 
         ScriptableObject.defineProperty(scope, "NaN",
@@ -75,14 +88,17 @@ public class NativeGlobal implements IdFunctionMaster {
                                         Undefined.instance,
                                         ScriptableObject.DONTENUM);
 
-        String[] errorMethods = { "ConversionError",
-                                  "EvalError",
-                                  "RangeError",
-                                  "ReferenceError",
-                                  "SyntaxError",
-                                  "TypeError",
-                                  "URIError"
-                                };
+        String[] errorMethods = Kit.semicolonSplit(""
+                                    +"ConversionError;"
+                                    +"EvalError;"
+                                    +"RangeError;"
+                                    +"ReferenceError;"
+                                    +"SyntaxError;"
+                                    +"TypeError;"
+                                    +"URIError;"
+                                    +"InternalError;"
+                                    +"JavaException;"
+                                    );
 
         /*
             Each error constructor gets its own Error object as a prototype,
@@ -90,23 +106,21 @@ public class NativeGlobal implements IdFunctionMaster {
         */
         for (int i = 0; i < errorMethods.length; i++) {
             String name = errorMethods[i];
-            IdFunction ctor = new IdFunction(obj, name, Id_new_CommonError);
-            ctor.setFunctionType(IdFunction.FUNCTION_AND_CONSTRUCTOR);
-            ctor.setParentScope(scope);
-            ScriptableObject.defineProperty(scope, name, ctor,
-                                            ScriptableObject.DONTENUM);
-
-            Scriptable errorProto = ScriptRuntime.newObject
-                (cx, scope, "Error", ScriptRuntime.emptyArgs);
-
+            Scriptable errorProto = ScriptRuntime.
+                                        newObject(cx, scope, "Error",
+                                                  ScriptRuntime.emptyArgs);
             errorProto.put("name", errorProto, name);
-            ctor.put("prototype", ctor, errorProto);
+            IdFunction ctor = new IdFunction(obj, name, Id_new_CommonError);
+            ctor.initAsConstructor(scope, errorProto);
             if (sealed) {
                 ctor.sealObject();
                 if (errorProto instanceof ScriptableObject) {
                     ((ScriptableObject)errorProto).sealObject();
                 }
             }
+            ScriptableObject.defineProperty(scope, name, ctor,
+                                            ScriptableObject.DONTENUM);
+
         }
     }
 
@@ -118,16 +132,16 @@ public class NativeGlobal implements IdFunctionMaster {
         if (scopeSlaveFlag) {
             switch (methodId) {
                 case Id_decodeURI:
-                    return js_decodeURI(cx, args);
-
-                case Id_decodeURIComponent:
-                    return js_decodeURIComponent(cx, args);
+                case Id_decodeURIComponent: {
+                    String str = ScriptRuntime.toString(args, 0);
+                    return decode(cx, str, methodId == Id_decodeURI);
+                }
 
                 case Id_encodeURI:
-                    return js_encodeURI(cx, args);
-
-                case Id_encodeURIComponent:
-                    return js_encodeURIComponent(cx, args);
+                case Id_encodeURIComponent: {
+                    String str = ScriptRuntime.toString(args, 0);
+                    return encode(cx, str, methodId == Id_encodeURI);
+                }
 
                 case Id_escape:
                     return js_escape(cx, args);
@@ -135,11 +149,23 @@ public class NativeGlobal implements IdFunctionMaster {
                 case Id_eval:
                     return js_eval(cx, scope, args);
 
-                case Id_isFinite:
-                    return js_isFinite(cx, args);
+                case Id_isFinite: {
+                    if (args.length < 1)
+                        return Boolean.FALSE;
+                    double d = ScriptRuntime.toNumber(args[0]);
+                    return (d != d || d == Double.POSITIVE_INFINITY ||
+                            d == Double.NEGATIVE_INFINITY)
+                           ? Boolean.FALSE
+                           : Boolean.TRUE;
+                }
 
-                case Id_isNaN:
-                    return js_isNaN(cx, args);
+                case Id_isNaN: {
+                     // The global method isNaN, as per ECMA-262 15.1.2.6.
+                    if (args.length < 1)
+                        return Boolean.TRUE;
+                    double d = ScriptRuntime.toNumber(args[0]);
+                    return (d != d) ? Boolean.TRUE : Boolean.FALSE;
+                }
 
                 case Id_parseFloat:
                     return js_parseFloat(cx, args);
@@ -150,8 +176,17 @@ public class NativeGlobal implements IdFunctionMaster {
                 case Id_unescape:
                     return js_unescape(cx, args);
 
+                case Id_uneval: {
+                    Object value = (args.length != 0)
+                                   ? args[0] : Undefined.instance;
+                    return ScriptRuntime.uneval(cx, scope, value);
+                }
+
                 case Id_new_CommonError:
-                    return new_CommonError(function, cx, scope, args);
+                    // The implementation of all the ECMA error constructors
+                    // (SyntaxError, TypeError, etc.)
+
+                    return NativeError.make(cx, scope, function, args);
             }
         }
         throw IdFunction.onBadMethodId(this, methodId);
@@ -171,28 +206,12 @@ public class NativeGlobal implements IdFunctionMaster {
                 case Id_parseFloat:          return 1;
                 case Id_parseInt:            return 2;
                 case Id_unescape:            return 1;
+                case Id_uneval:              return 1;
 
                 case Id_new_CommonError:     return 1;
             }
         }
         return -1;
-    }
-
-    private static String getMethodName(int methodId) {
-        switch (methodId) {
-            case Id_decodeURI:           return "decodeURI";
-            case Id_decodeURIComponent:  return "decodeURIComponent";
-            case Id_encodeURI:           return "encodeURI";
-            case Id_encodeURIComponent:  return "encodeURIComponent";
-            case Id_escape:              return "escape";
-            case Id_eval:                return "eval";
-            case Id_isFinite:            return "isFinite";
-            case Id_isNaN:               return "isNaN";
-            case Id_parseFloat:          return "parseFloat";
-            case Id_parseInt:            return "parseInt";
-            case Id_unescape:            return "unescape";
-        }
-        return null;
     }
 
     /**
@@ -447,27 +466,6 @@ public class NativeGlobal implements IdFunctionMaster {
         return s;
     }
 
-    /**
-     * The global method isNaN, as per ECMA-262 15.1.2.6.
-     */
-
-    private Object js_isNaN(Context cx, Object[] args) {
-        if (args.length < 1)
-            return Boolean.TRUE;
-        double d = ScriptRuntime.toNumber(args[0]);
-        return (d != d) ? Boolean.TRUE : Boolean.FALSE;
-    }
-
-    private Object js_isFinite(Context cx, Object[] args) {
-        if (args.length < 1)
-            return Boolean.FALSE;
-        double d = ScriptRuntime.toNumber(args[0]);
-        return (d != d || d == Double.POSITIVE_INFINITY ||
-                d == Double.NEGATIVE_INFINITY)
-               ? Boolean.FALSE
-               : Boolean.TRUE;
-    }
-
     private Object js_eval(Context cx, Scriptable scope, Object[] args)
         throws JavaScriptException
     {
@@ -475,164 +473,48 @@ public class NativeGlobal implements IdFunctionMaster {
         throw NativeGlobal.constructError(cx, "EvalError", m, scope);
     }
 
-    /**
-     * The eval function property of the global object.
-     *
-     * See ECMA 15.1.2.1
-     */
-    public static Object evalSpecial(Context cx, Scriptable scope,
-                                     Object thisArg, Object[] args,
-                                     String filename, int lineNumber)
-        throws JavaScriptException
+    static boolean isEvalFunction(Object functionObj)
     {
-        if (args.length < 1)
-            return Undefined.instance;
-        Object x = args[0];
-        if (!(x instanceof String)) {
-            String message = Context.getMessage0("msg.eval.nonstring");
-            Context.reportWarning(message);
-            return x;
-        }
-        if (filename == null) {
-            int[] linep = new int[1];
-            filename = Context.getSourcePositionFromStack(linep);
-            if (filename != null) {
-                lineNumber = linep[0];
-            } else {
-                filename = "";
+        if (functionObj instanceof IdFunction) {
+            IdFunction function = (IdFunction)functionObj;
+            if (function.master instanceof NativeGlobal
+                && function.getMethodId() == Id_eval)
+            {
+                return true;
             }
         }
-        String sourceName = ScriptRuntime.
-            makeUrlForGeneratedScript(true, filename, lineNumber);
-
-        // Compile the reader with opt level of -1 to force interpreter
-        // mode.
-        int oldOptLevel = cx.getOptimizationLevel();
-        cx.setOptimizationLevel(-1);
-        Script script;
-        try {
-            script = cx.compileString(scope, (String)x, sourceName, 1,
-                                      null);
-        } finally {
-            cx.setOptimizationLevel(oldOptLevel);
-        }
-
-        // if the compile fails, an error has been reported by the
-        // compiler, but we need to stop execution to avoid
-        // infinite looping on while(true) { eval('foo bar') } -
-        // so we throw an EvaluatorException.
-        if (script == null) {
-            String message = Context.getMessage0("msg.syntax");
-            throw new EvaluatorException(message);
-        }
-
-        InterpretedScript is = (InterpretedScript) script;
-        is.itsData.itsFromEvalCode = true;
-        Object result = is.call(cx, scope, (Scriptable) thisArg,
-                                ScriptRuntime.emptyArgs);
-
-        return result;
+        return false;
     }
 
-
     /**
-     * The NativeError functions
-     *
-     * See ECMA 15.11.6
+     * @deprecated Use {@link ScriptRuntime#constructError(String,String)}
+     * instead.
      */
     public static EcmaError constructError(Context cx,
                                            String error,
                                            String message,
-                                           Object scope)
-    {
-        int[] linep = { 0 };
-        String filename = cx.getSourcePositionFromStack(linep);
-        return constructError(cx, error, message, scope,
-                              filename, linep[0], 0, null);
-    }
-
-    static EcmaError typeError0(String messageId, Object scope) {
-        return constructError(Context.getContext(), "TypeError",
-            ScriptRuntime.getMessage0(messageId), scope);
-    }
-
-    static EcmaError typeError1(String messageId, Object arg1, Object scope) {
-        return constructError(Context.getContext(), "TypeError",
-            ScriptRuntime.getMessage1(messageId, arg1), scope);
-    }
-
-    static RuntimeException undefReadError(Object object, String property,
                                            Scriptable scope)
     {
-        String msg = (object == null) ? "msg.null.prop.read"
-                                      : "msg.undef.prop.read";
-        return NativeGlobal.typeError1(msg, property, scope);
-    }
-
-    static RuntimeException undefWriteError(Object object, String property,
-                                            Object value, Scriptable scope)
-    {
-        String msg = (object == null) ? "msg.null.prop.write"
-                                      : "msg.undef.prop.write";
-        String valueStr = (value instanceof Scriptable)
-                          ? value.toString() : ScriptRuntime.toString(value);
-        return constructError(Context.getContext(), "TypeError",
-            ScriptRuntime.getMessage2(msg, property, valueStr), scope);
+        return ScriptRuntime.constructError(error, message);
     }
 
     /**
-     * The NativeError functions
-     *
-     * See ECMA 15.11.6
+     * @deprecated Use
+     * {@link ScriptRuntime#constructError(String,String,String,int,int,String)}
+     * instead.
      */
     public static EcmaError constructError(Context cx,
                                            String error,
                                            String message,
-                                           Object scope,
+                                           Scriptable scope,
                                            String sourceName,
                                            int lineNumber,
                                            int columnNumber,
                                            String lineSource)
     {
-        Scriptable scopeObject;
-        try {
-            scopeObject = (Scriptable) scope;
-        }
-        catch (ClassCastException x) {
-            throw new RuntimeException(x.toString());
-        }
-
-        Object args[] = { message };
-        try {
-            Scriptable errorObject = cx.newObject(scopeObject, error, args);
-            errorObject.put("name", errorObject, error);
-            return new EcmaError((NativeError)errorObject, sourceName,
-                                 lineNumber, columnNumber, lineSource);
-        }
-        catch (PropertyException x) {
-            throw new RuntimeException(x.toString());
-        }
-        catch (JavaScriptException x) {
-            throw new RuntimeException(x.toString());
-        }
-        catch (NotAFunctionException x) {
-            throw new RuntimeException(x.toString());
-        }
-    }
-
-    /**
-     * The implementation of all the ECMA error constructors (SyntaxError,
-     * TypeError, etc.)
-     */
-    private Object new_CommonError(IdFunction ctorObj, Context cx,
-                                   Scriptable scope, Object[] args)
-    {
-        Scriptable newInstance = new NativeError();
-        newInstance.setPrototype((Scriptable)(ctorObj.get("prototype", ctorObj)));
-        newInstance.setParentScope(scope);
-        if (args.length > 0)
-            newInstance.put("message", newInstance, args[0]);
-        return newInstance;
+        return ScriptRuntime.constructError(error, message,
+                                            sourceName, lineNumber,
+                                            lineSource, columnNumber);
     }
 
     /*
@@ -653,6 +535,12 @@ public class NativeGlobal implements IdFunctionMaster {
                     sb.append(C);
                 }
             } else {
+                if (sb == null) {
+                    sb = new StringBuffer(length + 3);
+                    sb.append(str);
+                    sb.setLength(k);
+                    utf8buf = new byte[6];
+                }
                 if (0xDC00 <= C && C <= 0xDFFF) {
                     throw cx.reportRuntimeError0("msg.bad.uri");
                 }
@@ -670,12 +558,6 @@ public class NativeGlobal implements IdFunctionMaster {
                     }
                     V = ((C - 0xD800) << 10) + (C2 - 0xDC00) + 0x10000;
                 }
-                if (utf8buf == null) {
-                    utf8buf = new byte[6];
-                    sb = new StringBuffer(length + 3);
-                    sb.append(str);
-                    sb.setLength(k);
-                }
                 int L = oneUcs4ToUtf8Char(utf8buf, V);
                 for (int j = 0; j < L; j++) {
                     int d = 0xff & utf8buf[j];
@@ -689,7 +571,7 @@ public class NativeGlobal implements IdFunctionMaster {
     }
 
     private static char toHexChar(int i) {
-        if (i >> 4 != 0) Context.codeBug();
+        if (i >> 4 != 0) Kit.codeBug();
         return (char)((i < 10) ? i + '0' : i - 10 + 'a');
     }
 
@@ -731,6 +613,7 @@ public class NativeGlobal implements IdFunctionMaster {
                     // str.length()
                     buf = new char[length];
                     str.getChars(0, k, buf, 0);
+                    bufTop = k;
                 }
                 int start = k;
                 if (k + 3 > length)
@@ -794,7 +677,7 @@ public class NativeGlobal implements IdFunctionMaster {
                         C = (char)ucs4Char;
                     }
                 }
-                if (fullUri && fullUriDecodeReserved(C)) {
+                if (fullUri && URI_DECODE_RESERVED.indexOf(C) >= 0) {
                     for (int x = start; x != k; x++) {
                         buf[bufTop++] = str.charAt(x);
                     }
@@ -812,61 +695,15 @@ public class NativeGlobal implements IdFunctionMaster {
         {
             return true;
         }
-        switch (c) {
-            case '-':
-            case '_':
-            case '.':
-            case '!':
-            case '~':
-            case '*':
-            case '\'':
-            case '(':
-            case ')':
-                return true;
-        }
+        if ("-_.!~*'()".indexOf(c) >= 0)
+            return true;
         if (fullUri) {
-            return fullUriDecodeReserved(c);
+            return URI_DECODE_RESERVED.indexOf(c) >= 0;
         }
         return false;
     }
 
-    private static boolean fullUriDecodeReserved(char c) {
-        switch (c) {
-            case ';':
-            case '/':
-            case '?':
-            case ':':
-            case '@':
-            case '&':
-            case '=':
-            case '+':
-            case '$':
-            case ',':
-            case '#':
-                return true;
-        }
-        return false;
-    }
-
-    private String js_decodeURI(Context cx, Object[] args) {
-        String str = ScriptRuntime.toString(args, 0);
-        return decode(cx, str, true);
-    }
-
-    private String js_decodeURIComponent(Context cx, Object[] args) {
-        String str = ScriptRuntime.toString(args, 0);
-        return decode(cx, str, false);
-    }
-
-    private Object js_encodeURI(Context cx, Object[] args) {
-        String str = ScriptRuntime.toString(args, 0);
-        return encode(cx, str, true);
-    }
-
-    private String js_encodeURIComponent(Context cx, Object[] args) {
-        String str = ScriptRuntime.toString(args, 0);
-        return encode(cx, str, false);
-    }
+    private static final String URI_DECODE_RESERVED = ";/?:@&=+$,#";
 
     /* Convert one UCS-4 char and write it into a UTF-8 buffer, which must be
     * at least 6 bytes long.  Return the number of UTF-8 bytes of data written.
@@ -907,10 +744,11 @@ public class NativeGlobal implements IdFunctionMaster {
         Id_parseFloat          =  9,
         Id_parseInt            = 10,
         Id_unescape            = 11,
+        Id_uneval              = 12,
 
-        LAST_SCOPE_FUNCTION_ID = 11,
+        LAST_SCOPE_FUNCTION_ID = 12,
 
-        Id_new_CommonError     = 12;
+        Id_new_CommonError     = 13;
 
     private boolean scopeSlaveFlag;
 

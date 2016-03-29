@@ -42,152 +42,182 @@ import java.io.*;
 
 import org.mozilla.javascript.debug.*;
 
-public class Interpreter {
+public class Interpreter
+{
 
 // Additional interpreter-specific codes
-    private static final int
-    // To indicating a line number change in icodes.
-        LINE_ICODE                      = TokenStream.LAST_TOKEN + 1,
-        SOURCEFILE_ICODE                = TokenStream.LAST_TOKEN + 2,
+    private static final int BASE_ICODE = Token.LAST_BYTECODE_TOKEN;
 
-    // To store shorts and ints inline
-        SHORTNUMBER_ICODE               = TokenStream.LAST_TOKEN + 3,
-        INTNUMBER_ICODE                 = TokenStream.LAST_TOKEN + 4,
+    private static final int
+
+    // Stack: ... value1 -> ... value1 value1
+        Icode_DUP                       = BASE_ICODE + 1,
+
+    // Stack: ... value2 value1 -> ... value2 value1 value2
+        Icode_DUPSECOND                 = BASE_ICODE + 2,
+
+    // Stack: ... value2 value1 -> ... value1 value2
+        Icode_SWAP                      = BASE_ICODE + 3,
+
+    // To jump conditionally and pop additional stack value
+        Icode_IFEQ_POP                  = BASE_ICODE + 4,
+
+    // various types of ++/--
+        Icode_NAMEINC                   = BASE_ICODE + 5,
+        Icode_PROPINC                   = BASE_ICODE + 6,
+        Icode_ELEMINC                   = BASE_ICODE + 7,
+        Icode_VARINC                    = BASE_ICODE + 8,
+        Icode_NAMEDEC                   = BASE_ICODE + 9,
+        Icode_PROPDEC                   = BASE_ICODE + 10,
+        Icode_ELEMDEC                   = BASE_ICODE + 11,
+        Icode_VARDEC                    = BASE_ICODE + 12,
+
+    // helper codes to deal with activation
+        Icode_SCOPE                     = BASE_ICODE + 13,
+        Icode_TYPEOFNAME                = BASE_ICODE + 14,
+
+    // helper for function calls
+        Icode_NAME_AND_THIS             = BASE_ICODE + 15,
+        Icode_PUSH_PARENT               = BASE_ICODE + 16,
+
+    // Access to parent scope and prototype
+        Icode_GETPROTO                  = BASE_ICODE + 17,
+        Icode_GETSCOPEPARENT            = BASE_ICODE + 18,
+        Icode_SETPROTO                  = BASE_ICODE + 19,
+        Icode_SETPARENT                 = BASE_ICODE + 20,
+
+    // Create closure object for nested functions
+        Icode_CLOSURE                   = BASE_ICODE + 21,
+
+    // Special calls
+        Icode_CALLSPECIAL               = BASE_ICODE + 22,
 
     // To return undefined value
-        RETURN_UNDEF_ICODE              = TokenStream.LAST_TOKEN + 5,
+        Icode_RETUNDEF                  = BASE_ICODE + 23,
+
+    // Exception handling implementation
+        Icode_CATCH                     = BASE_ICODE + 24,
+        Icode_GOSUB                     = BASE_ICODE + 25,
+        Icode_RETSUB                    = BASE_ICODE + 26,
+
+    // To indicating a line number change in icodes.
+        Icode_LINE                      = BASE_ICODE + 27,
+
+    // To store shorts and ints inline
+        Icode_SHORTNUMBER               = BASE_ICODE + 28,
+        Icode_INTNUMBER                 = BASE_ICODE + 29,
 
     // Last icode
-        END_ICODE                       = TokenStream.LAST_TOKEN + 6;
+        END_ICODE                       = BASE_ICODE + 30;
 
-    public IRFactory createIRFactory(Context cx, TokenStream ts)
+    public Object compile(Scriptable scope,
+                          CompilerEnvirons compilerEnv,
+                          ScriptOrFnNode tree,
+                          String encodedSource,
+                          boolean returnFunction,
+                          Object staticSecurityDomain)
     {
-        return new IRFactory(this, ts);
-    }
+        this.compilerEnv = compilerEnv;
+        (new NodeTransformer(compilerEnv)).transform(tree);
 
-    public FunctionNode createFunctionNode(IRFactory irFactory, String name)
-    {
-        return new FunctionNode(name);
-    }
+        if (Token.printTrees) {
+            System.out.println(tree.toStringTree(tree));
+        }
 
-    public ScriptOrFnNode
-    transform(Context cx, IRFactory irFactory, ScriptOrFnNode tree)
-    {
-        tree = (new NodeTransformer(irFactory)).transform(tree);
-        return tree;
-    }
+        if (returnFunction) {
+            tree = tree.getFunctionNode(0);
+        }
 
-    public Object
-    compile(Context cx, Scriptable scope, ScriptOrFnNode tree,
-            SecurityController securityController, Object securityDomain)
-    {
+        Context cx = Context.getContext();
+        SecurityController sc = cx.getSecurityController();
+        Object dynamicDomain;
+        if (sc != null) {
+            dynamicDomain = sc.getDynamicSecurityDomain(staticSecurityDomain);
+        } else {
+            if (staticSecurityDomain != null) {
+                throw new IllegalArgumentException();
+            }
+            dynamicDomain = null;
+        }
+
         scriptOrFn = tree;
-        version = cx.getLanguageVersion();
-        itsData = new InterpreterData(securityDomain);
+        itsData = new InterpreterData(sc, dynamicDomain,
+                                      compilerEnv.getLanguageVersion(),
+                                      scriptOrFn.getSourceName(),
+                                      encodedSource);
+        itsData.topLevel = true;
+
         if (tree instanceof FunctionNode) {
-            generateFunctionICode(cx, scope);
+            generateFunctionICode();
             return createFunction(cx, scope, itsData, false);
         } else {
-            generateScriptICode(cx, scope);
-            return new InterpretedScript(cx, itsData);
+            generateICodeFromTree(scriptOrFn);
+            itsData.itsFromEvalCode = compilerEnv.isFromEval();
+            return new InterpretedScript(itsData);
         }
     }
 
-    private void generateScriptICode(Context cx, Scriptable scope)
+    public void notifyDebuggerCompilationDone(Context cx,
+                                              Object scriptOrFunction,
+                                              String debugSource)
     {
-        itsSourceFile = scriptOrFn.getSourceName();
-        itsData.itsSourceFile = itsSourceFile;
-        debugSource = scriptOrFn.getOriginalSource();
+        InterpreterData idata;
+        if (scriptOrFunction instanceof InterpretedScript) {
+            idata = ((InterpretedScript)scriptOrFunction).itsData;
+        } else {
+            idata = ((InterpretedFunction)scriptOrFunction).itsData;
+        }
+        notifyDebugger_r(cx, idata, debugSource);
+    }
 
-        generateNestedFunctions(cx, scope);
-
-        generateRegExpLiterals(cx, scope);
-
-        generateICodeFromTree(scriptOrFn);
-        if (Context.printICode) dumpICode(itsData);
-
-        if (cx.debugger != null) {
-            cx.debugger.handleCompilationDone(cx, itsData, debugSource);
+    private static void notifyDebugger_r(Context cx, InterpreterData idata,
+                                         String debugSource)
+    {
+        cx.debugger.handleCompilationDone(cx, idata, debugSource);
+        if (idata.itsNestedFunctions != null) {
+            for (int i = 0; i != idata.itsNestedFunctions.length; ++i) {
+                notifyDebugger_r(cx, idata.itsNestedFunctions[i], debugSource);
+            }
         }
     }
 
-    private void generateFunctionICode(Context cx, Scriptable scope)
+    private void generateFunctionICode()
     {
         FunctionNode theFunction = (FunctionNode)scriptOrFn;
+
         itsData.itsFunctionType = theFunction.getFunctionType();
-        // check if function has own source, which is the case
-        // with Function(...)
-        String savedSource = debugSource;
-        debugSource = theFunction.getOriginalSource();
-        if (debugSource == null) {
-            debugSource = savedSource;
-        }
-        generateNestedFunctions(cx, scope);
-
-        generateRegExpLiterals(cx, scope);
-
         itsData.itsNeedsActivation = theFunction.requiresActivation();
+        itsData.itsName = theFunction.getFunctionName();
+        if ((theFunction.getParamAndVarCount() & ~0xFF) != 0) {
+            // Can not optimize vars as their index should fit 1 byte
+            itsData.itsNeedsActivation = true;
+        }
+        if (!theFunction.getIgnoreDynamicScope()) {
+            if (compilerEnv.isUseDynamicScope()) {
+                itsData.useDynamicScope = true;
+            }
+        }
 
         generateICodeFromTree(theFunction.getLastChild());
-
-        itsData.itsName = theFunction.getFunctionName();
-        itsData.itsSourceFile = theFunction.getSourceName();
-        itsData.itsSource = theFunction.getEncodedSource();
-        if (Context.printICode) dumpICode(itsData);
-
-        if (cx.debugger != null) {
-            cx.debugger.handleCompilationDone(cx, itsData, debugSource);
-        }
-        debugSource = savedSource;
     }
 
-    private void generateNestedFunctions(Context cx, Scriptable scope)
+    private void generateICodeFromTree(Node tree)
     {
-        int functionCount = scriptOrFn.getFunctionCount();
-        if (functionCount == 0) return;
+        generateNestedFunctions();
 
-        InterpreterData[] array = new InterpreterData[functionCount];
-        for (int i = 0; i != functionCount; i++) {
-            FunctionNode def = scriptOrFn.getFunctionNode(i);
-            Interpreter jsi = new Interpreter();
-            jsi.scriptOrFn = def;
-            jsi.itsSourceFile = itsSourceFile;
-            jsi.itsData = new InterpreterData(itsData.securityDomain);
-            jsi.itsData.itsCheckThis = def.getCheckThis();
-            jsi.itsInFunctionFlag = true;
-            jsi.debugSource = debugSource;
-            jsi.generateFunctionICode(cx, scope);
-            array[i] = jsi.itsData;
-        }
-        itsData.itsNestedFunctions = array;
-    }
+        generateRegExpLiterals();
 
-    private void generateRegExpLiterals(Context cx, Scriptable scope)
-    {
-        int N = scriptOrFn.getRegexpCount();
-        if (N == 0) return;
-
-        RegExpProxy rep = cx.getRegExpProxy();
-        if (rep == null) {
-            throw cx.reportRuntimeError0("msg.no.regexp");
-        }
-        Object[] array = new Object[N];
-        for (int i = 0; i != N; i++) {
-            String string = scriptOrFn.getRegexpString(i);
-            String flags = scriptOrFn.getRegexpFlags(i);
-            array[i] = rep.newRegExp(cx, scope, string, flags, false);
-        }
-        itsData.itsRegExpLiterals = array;
-    }
-
-    private void generateICodeFromTree(Node tree) {
         int theICodeTop = 0;
         theICodeTop = generateICode(tree, theICodeTop);
-        itsLabels.fixLabelGotos(itsData.itsICode);
-        // add END_ICODE only to scripts as function always ends with RETURN
+        fixLabelGotos();
+        // add RETURN_POPV only to scripts as function always ends with RETURN
         if (itsData.itsFunctionType == 0) {
-            theICodeTop = addByte(END_ICODE, theICodeTop);
+            theICodeTop = addToken(Token.RETURN_POPV, theICodeTop);
         }
+        // Add special CATCH to simplify Interpreter.interpret logic
+        // and workaround lack of goto in Java
+        theICodeTop = addIcode(Icode_CATCH, theICodeTop);
+
         itsData.itsICodeTop = theICodeTop;
 
         if (itsData.itsICode.length != theICodeTop) {
@@ -205,7 +235,7 @@ public class Interpreter {
             for (iter.start(); !iter.done(); iter.next()) {
                 String str = (String)iter.getKey();
                 int index = iter.getValue();
-                if (itsData.itsStringTable[index] != null) Context.codeBug();
+                if (itsData.itsStringTable[index] != null) Kit.codeBug();
                 itsData.itsStringTable[index] = str;
             }
         }
@@ -217,88 +247,134 @@ public class Interpreter {
                              itsDoubleTableTop);
             itsData.itsDoubleTable = tmp;
         }
+        if (itsExceptionTableTop != 0
+            && itsData.itsExceptionTable.length != itsExceptionTableTop)
+        {
+            int[] tmp = new int[itsExceptionTableTop];
+            System.arraycopy(itsData.itsExceptionTable, 0, tmp, 0,
+                             itsExceptionTableTop);
+            itsData.itsExceptionTable = tmp;
+        }
 
         itsData.itsMaxVars = scriptOrFn.getParamAndVarCount();
         // itsMaxFrameArray: interpret method needs this amount for its
         // stack and sDbl arrays
         itsData.itsMaxFrameArray = itsData.itsMaxVars
                                    + itsData.itsMaxLocals
-                                   + itsData.itsMaxTryDepth
                                    + itsData.itsMaxStack;
 
         itsData.argNames = scriptOrFn.getParamAndVarNames();
         itsData.argCount = scriptOrFn.getParamCount();
+
+        itsData.encodedSourceStart = scriptOrFn.getEncodedSourceStart();
+        itsData.encodedSourceEnd = scriptOrFn.getEncodedSourceEnd();
+
+        if (Token.printICode) dumpICode(itsData);
     }
 
-    private int updateLineNumber(Node node, int iCodeTop) {
+    private void generateNestedFunctions()
+    {
+        int functionCount = scriptOrFn.getFunctionCount();
+        if (functionCount == 0) return;
+
+        InterpreterData[] array = new InterpreterData[functionCount];
+        for (int i = 0; i != functionCount; i++) {
+            FunctionNode def = scriptOrFn.getFunctionNode(i);
+            Interpreter jsi = new Interpreter();
+            jsi.compilerEnv = compilerEnv;
+            jsi.scriptOrFn = def;
+            jsi.itsData = new InterpreterData(itsData);
+            jsi.itsData.itsCheckThis = def.getCheckThis();
+            jsi.itsInFunctionFlag = true;
+            jsi.generateFunctionICode();
+            array[i] = jsi.itsData;
+        }
+        itsData.itsNestedFunctions = array;
+    }
+
+    private void generateRegExpLiterals()
+    {
+        int N = scriptOrFn.getRegexpCount();
+        if (N == 0) return;
+
+        Context cx = Context.getContext();
+        RegExpProxy rep = ScriptRuntime.checkRegExpProxy(cx);
+        Object[] array = new Object[N];
+        for (int i = 0; i != N; i++) {
+            String string = scriptOrFn.getRegexpString(i);
+            String flags = scriptOrFn.getRegexpFlags(i);
+            array[i] = rep.compileRegExp(cx, string, flags);
+        }
+        itsData.itsRegExpLiterals = array;
+    }
+
+    private int updateLineNumber(Node node, int iCodeTop)
+    {
         int lineno = node.getLineno();
         if (lineno != itsLineNumber && lineno >= 0) {
             itsLineNumber = lineno;
-            iCodeTop = addByte(LINE_ICODE, iCodeTop);
+            iCodeTop = addIcode(Icode_LINE, iCodeTop);
             iCodeTop = addShort(lineno, iCodeTop);
         }
         return iCodeTop;
     }
 
-    private void badTree(Node node) {
-        try {
-            out = new PrintWriter(new FileOutputStream("icode.txt", true));
-            out.println("Un-handled node : " + node.toString());
-            out.close();
-        }
-        catch (IOException x) {}
-        throw new RuntimeException("Un-handled node : "
-                                        + node.toString());
+    private void badTree(Node node)
+    {
+        throw new RuntimeException("Un-handled node: "+node.toString());
     }
 
-    private int generateICode(Node node, int iCodeTop) {
+    private int generateICode(Node node, int iCodeTop)
+    {
         int type = node.getType();
         Node child = node.getFirstChild();
         Node firstChild = child;
+        int savedStackDepth = itsStackDepth;
+        int stackDelta = 0; // expected stack change for subtree code
+        boolean stackShouldBeZero = false;
         switch (type) {
 
-            case TokenStream.FUNCTION : {
+            case Token.FUNCTION : {
                 int fnIndex = node.getExistingIntProp(Node.FUNCTION_PROP);
                 FunctionNode fn = scriptOrFn.getFunctionNode(fnIndex);
-                if (fn.itsFunctionType != FunctionNode.FUNCTION_STATEMENT) {
+                if (fn.getFunctionType() != FunctionNode.FUNCTION_STATEMENT) {
+                    stackDelta = 1;
                     // Only function expressions or function expression
                     // statements needs closure code creating new function
                     // object on stack as function statements are initialized
                     // at script/function start
-                    iCodeTop = addByte(TokenStream.CLOSURE, iCodeTop);
+                    iCodeTop = addIcode(Icode_CLOSURE, iCodeTop);
                     iCodeTop = addIndex(fnIndex, iCodeTop);
                     itsStackDepth++;
                     if (itsStackDepth > itsData.itsMaxStack)
                         itsData.itsMaxStack = itsStackDepth;
+                } else {
+                    stackShouldBeZero = true;
                 }
                 break;
             }
 
-            case TokenStream.SCRIPT :
+            case Token.SCRIPT :
+                stackShouldBeZero = true;
                 iCodeTop = updateLineNumber(node, iCodeTop);
                 while (child != null) {
-                    if (child.getType() != TokenStream.FUNCTION)
+                    if (child.getType() != Token.FUNCTION)
                         iCodeTop = generateICode(child, iCodeTop);
                     child = child.getNext();
                 }
                 break;
 
-            case TokenStream.CASE :
-                iCodeTop = updateLineNumber(node, iCodeTop);
+            case Token.CASE :
+                // Skip case condition
                 child = child.getNext();
-                while (child != null) {
-                    iCodeTop = generateICode(child, iCodeTop);
-                    child = child.getNext();
-                }
-                break;
-
-            case TokenStream.LABEL :
-            case TokenStream.WITH :
-            case TokenStream.LOOP :
-            case TokenStream.DEFAULT :
-            case TokenStream.BLOCK :
-            case TokenStream.VOID :
-            case TokenStream.NOP :
+                // fallthrough
+            case Token.LABEL :
+            case Token.LOOP :
+            case Token.DEFAULT :
+            case Token.BLOCK :
+            case Token.EMPTY :
+            case Token.WITH :
+                stackShouldBeZero = true;
                 iCodeTop = updateLineNumber(node, iCodeTop);
                 while (child != null) {
                     iCodeTop = generateICode(child, iCodeTop);
@@ -306,25 +382,75 @@ public class Interpreter {
                 }
                 break;
 
-            case TokenStream.COMMA :
+            case Token.LOCAL_BLOCK :
+                stackShouldBeZero = true;
+                if ((itsLocalTop & ~0xFF) != 0) {
+                    throw Context.reportRuntimeError(
+                        "Program too complex (out of locals)");
+                }
+                node.putIntProp(Node.LOCAL_PROP, itsLocalTop);
+                ++itsLocalTop;
+                if (itsLocalTop > itsData.itsMaxLocals) {
+                    itsData.itsMaxLocals = itsLocalTop;
+                }
+                iCodeTop = updateLineNumber(node, iCodeTop);
+                while (child != null) {
+                    iCodeTop = generateICode(child, iCodeTop);
+                    child = child.getNext();
+                }
+                --itsLocalTop;
+                break;
+
+            case Token.LOCAL_LOAD : {
+                stackDelta = 1;
+                iCodeTop = addToken(Token.LOCAL_LOAD, iCodeTop);
+                iCodeTop = addLocalBlockRef(node, iCodeTop);
+                itsStackDepth++;
+                if (itsStackDepth > itsData.itsMaxStack)
+                    itsData.itsMaxStack = itsStackDepth;
+                break;
+            }
+
+            case Token.COMMA :
+                stackDelta = 1;
                 iCodeTop = generateICode(child, iCodeTop);
                 while (null != (child = child.getNext())) {
-                    iCodeTop = addByte(TokenStream.POP, iCodeTop);
+                    if (1 != itsStackDepth - savedStackDepth) Kit.codeBug();
+                    iCodeTop = addToken(Token.POP, iCodeTop);
                     itsStackDepth--;
                     iCodeTop = generateICode(child, iCodeTop);
                 }
                 break;
 
-            case TokenStream.SWITCH : {
-                iCodeTop = updateLineNumber(node, iCodeTop);
+            case Token.INIT_LIST :
+                stackDelta = 1;
                 iCodeTop = generateICode(child, iCodeTop);
-                int theLocalSlot = itsData.itsMaxLocals++;
-                iCodeTop = addByte(TokenStream.NEWTEMP, iCodeTop);
-                iCodeTop = addByte(theLocalSlot, iCodeTop);
-                iCodeTop = addByte(TokenStream.POP, iCodeTop);
-                itsStackDepth--;
+                while (null != (child = child.getNext())) {
+                    if (1 != itsStackDepth - savedStackDepth) Kit.codeBug();
+                    iCodeTop = addIcode(Icode_DUP, iCodeTop);
+                    // No stack adjusting: USE_STACK in subtree will do it
+                    iCodeTop = generateICode(child, iCodeTop);
+                    iCodeTop = addToken(Token.POP, iCodeTop);
+                    itsStackDepth--;
+                }
+                break;
 
-                ObjArray cases = (ObjArray) node.getProp(Node.CASES_PROP);
+            case Token.USE_STACK:
+                // Indicates that stack was modified externally,
+                // like placed catch object
+                stackDelta = 1;
+                itsStackDepth++;
+                if (itsStackDepth > itsData.itsMaxStack)
+                    itsData.itsMaxStack = itsStackDepth;
+                break;
+
+            case Token.SWITCH : {
+                stackShouldBeZero = true;
+                Node.Jump switchNode = (Node.Jump)node;
+                iCodeTop = updateLineNumber(switchNode, iCodeTop);
+                iCodeTop = generateICode(child, iCodeTop);
+
+                ObjArray cases = (ObjArray) switchNode.getProp(Node.CASES_PROP);
                 for (int i = 0; i < cases.size(); i++) {
                     Node thisCase = (Node)cases.get(i);
                     Node first = thisCase.getFirstChild();
@@ -333,342 +459,321 @@ public class Interpreter {
                     // statements are encountered as siblings of
                     // the switch statement.
                     iCodeTop = generateICode(first, iCodeTop);
-                    iCodeTop = addByte(TokenStream.USETEMP, iCodeTop);
-                    iCodeTop = addByte(theLocalSlot, iCodeTop);
+                    iCodeTop = addIcode(Icode_DUPSECOND, iCodeTop);
                     itsStackDepth++;
                     if (itsStackDepth > itsData.itsMaxStack)
                         itsData.itsMaxStack = itsStackDepth;
-                    iCodeTop = addByte(TokenStream.SHEQ, iCodeTop);
+                    iCodeTop = addToken(Token.SHEQ, iCodeTop);
                     itsStackDepth--;
-                    Node target = new Node(TokenStream.TARGET);
+                    Node.Target target = new Node.Target();
                     thisCase.addChildAfter(target, first);
-                    iCodeTop = addGoto(target, TokenStream.IFEQ, iCodeTop);
+                    // If true, Icode_IFEQ_POP will jump and remove case value
+                    // from stack
+                    iCodeTop = addGoto(target, Icode_IFEQ_POP, iCodeTop);
+                    itsStackDepth--;
                 }
+                iCodeTop = addToken(Token.POP, iCodeTop);
+                itsStackDepth--;
 
-                Node defaultNode = (Node) node.getProp(Node.DEFAULT_PROP);
+                Node defaultNode = (Node) switchNode.getProp(Node.DEFAULT_PROP);
                 if (defaultNode != null) {
-                    Node defaultTarget = new Node(TokenStream.TARGET);
+                    Node.Target defaultTarget = new Node.Target();
                     defaultNode.getFirstChild().
                         addChildToFront(defaultTarget);
-                    iCodeTop = addGoto(defaultTarget, TokenStream.GOTO,
+                    iCodeTop = addGoto(defaultTarget, Token.GOTO,
                                        iCodeTop);
                 }
 
-                Node breakTarget = (Node) node.getProp(Node.BREAK_PROP);
-                iCodeTop = addGoto(breakTarget, TokenStream.GOTO,
-                                   iCodeTop);
+                Node.Target breakTarget = switchNode.target;
+                iCodeTop = addGoto(breakTarget, Token.GOTO, iCodeTop);
                 break;
             }
 
-            case TokenStream.TARGET : {
-                markTargetLabel(node, iCodeTop);
-                // if this target has a FINALLY_PROP, it is a JSR target
-                // and so has a PC value on the top of the stack
-                if (node.getProp(Node.FINALLY_PROP) != null) {
-                    itsStackDepth = 1;
-                    if (itsStackDepth > itsData.itsMaxStack)
-                        itsData.itsMaxStack = itsStackDepth;
-                }
+            case Token.TARGET :
+                stackShouldBeZero = true;
+                markTargetLabel((Node.Target)node, iCodeTop);
                 break;
-            }
 
-            case TokenStream.EQOP :
-            case TokenStream.RELOP : {
-                iCodeTop = generateICode(child, iCodeTop);
-                child = child.getNext();
-                iCodeTop = generateICode(child, iCodeTop);
-                int op = node.getOperation();
-                if (version == Context.VERSION_1_2) {
-                    if (op == TokenStream.EQ) {
-                        op = TokenStream.SHEQ;
-                    } else if (op == TokenStream.NE) {
-                        op = TokenStream.SHNE;
-                    }
-                }
-                iCodeTop = addByte(op, iCodeTop);
-                itsStackDepth--;
-                break;
-            }
-
-            case TokenStream.NEW :
-            case TokenStream.CALL : {
-                if (itsSourceFile != null
-                    && (itsData.itsSourceFile == null
-                        || !itsSourceFile.equals(itsData.itsSourceFile)))
-                {
-                    itsData.itsSourceFile = itsSourceFile;
-                }
-                iCodeTop = addByte(SOURCEFILE_ICODE, iCodeTop);
-
-                int childCount = 0;
-                String functionName = null;
-                while (child != null) {
+            case Token.NEW :
+            case Token.CALL : {
+                stackDelta = 1;
+                if (type == Token.NEW) {
                     iCodeTop = generateICode(child, iCodeTop);
-                    if (functionName == null) {
-                        int childType = child.getType();
-                        if (childType == TokenStream.NAME
-                            || childType == TokenStream.GETPROP)
-                        {
-                            functionName = lastAddString;
-                        }
-                    }
-                    child = child.getNext();
-                    childCount++;
-                }
-                if (node.getIntProp(Node.SPECIALCALL_PROP, 0) != 0) {
-                    // embed line number and source filename
-                    iCodeTop = addByte(TokenStream.CALLSPECIAL, iCodeTop);
-                    iCodeTop = addShort(itsLineNumber, iCodeTop);
-                    iCodeTop = addString(itsSourceFile, iCodeTop);
                 } else {
-                    iCodeTop = addByte(type, iCodeTop);
+                    iCodeTop = generateCallFunAndThis(child, iCodeTop);
+                    if (itsStackDepth - savedStackDepth != 2)
+                        Kit.codeBug();
+                }
+                String functionName = null;
+                int childType = child.getType();
+                if (childType == Token.NAME || childType == Token.GETPROP
+                    || childType == Token.GETVAR)
+                {
+                    functionName = lastAddString;
+                }
+                int argCount = 0;
+                while ((child = child.getNext()) != null) {
+                    iCodeTop = generateICode(child, iCodeTop);
+                    ++argCount;
+                }
+                int callType = node.getIntProp(Node.SPECIALCALL_PROP,
+                                               Node.NON_SPECIALCALL);
+                if (callType != Node.NON_SPECIALCALL) {
+                    // embed line number and source filename
+                    iCodeTop = addIcode(Icode_CALLSPECIAL, iCodeTop);
+                    iCodeTop = addByte(callType, iCodeTop);
+                    iCodeTop = addByte(type == Token.NEW ? 1 : 0, iCodeTop);
+                    iCodeTop = addShort(itsLineNumber, iCodeTop);
+                } else {
+                    iCodeTop = addToken(type, iCodeTop);
                     iCodeTop = addString(functionName, iCodeTop);
                 }
-
-                itsStackDepth -= (childCount - 1);  // always a result value
-                // subtract from child count to account for [thisObj &] fun
-                if (type == TokenStream.NEW) {
-                    childCount -= 1;
+                // adjust stack
+                if (type == Token.NEW) {
+                    // f, args -> results
+                   itsStackDepth -= argCount;
                 } else {
-                    childCount -= 2;
+                    // f, thisObj, args -> results
+                   itsStackDepth -= (argCount + 1);
                 }
-                iCodeTop = addIndex(childCount, iCodeTop);
-                if (childCount > itsData.itsMaxCalleeArgs)
-                    itsData.itsMaxCalleeArgs = childCount;
-
-                iCodeTop = addByte(SOURCEFILE_ICODE, iCodeTop);
+                iCodeTop = addIndex(argCount, iCodeTop);
+                if (argCount > itsData.itsMaxCalleeArgs)
+                    itsData.itsMaxCalleeArgs = argCount;
                 break;
             }
 
-            case TokenStream.NEWLOCAL :
-            case TokenStream.NEWTEMP : {
-                iCodeTop = generateICode(child, iCodeTop);
-                iCodeTop = addByte(TokenStream.NEWTEMP, iCodeTop);
-                iCodeTop = addLocalRef(node, iCodeTop);
-                break;
-            }
-
-            case TokenStream.USELOCAL : {
-                if (node.getProp(Node.TARGET_PROP) != null) {
-                    iCodeTop = addByte(TokenStream.RETSUB, iCodeTop);
-                } else {
-                    iCodeTop = addByte(TokenStream.USETEMP, iCodeTop);
-                    itsStackDepth++;
-                    if (itsStackDepth > itsData.itsMaxStack)
-                        itsData.itsMaxStack = itsStackDepth;
-                }
-                Node temp = (Node) node.getProp(Node.LOCAL_PROP);
-                iCodeTop = addLocalRef(temp, iCodeTop);
-                break;
-            }
-
-            case TokenStream.USETEMP : {
-                iCodeTop = addByte(TokenStream.USETEMP, iCodeTop);
-                Node temp = (Node) node.getProp(Node.TEMP_PROP);
-                iCodeTop = addLocalRef(temp, iCodeTop);
-                itsStackDepth++;
-                if (itsStackDepth > itsData.itsMaxStack)
-                    itsData.itsMaxStack = itsStackDepth;
-                break;
-            }
-
-            case TokenStream.IFEQ :
-            case TokenStream.IFNE :
+            case Token.IFEQ :
+            case Token.IFNE :
                 iCodeTop = generateICode(child, iCodeTop);
                 itsStackDepth--;    // after the conditional GOTO, really
                     // fall thru...
-            case TokenStream.GOTO : {
-                Node target = (Node)(node.getProp(Node.TARGET_PROP));
+            case Token.GOTO : {
+                stackShouldBeZero = true;
+                Node.Target target = ((Node.Jump)node).target;
                 iCodeTop = addGoto(target, (byte) type, iCodeTop);
                 break;
             }
 
-            case TokenStream.JSR : {
-                /*
-                    mark the target with a FINALLY_PROP to indicate
-                    that it will have an incoming PC value on the top
-                    of the stack.
-                    !!!
-                    This only works if the target follows the JSR
-                    in the tree.
-                    !!!
-                */
-                Node target = (Node)(node.getProp(Node.TARGET_PROP));
-                target.putProp(Node.FINALLY_PROP, node);
-                // Bug 115717 is due to adding a GOSUB here before
-                // we insert an ENDTRY. I'm not sure of the best way
-                // to fix this; perhaps we need to maintain a stack
-                // of pending trys and have some knowledge of how
-                // many trys we need to close when we perform a
-                // GOTO or GOSUB.
-                iCodeTop = addGoto(target, TokenStream.GOSUB, iCodeTop);
+            case Token.JSR : {
+                stackShouldBeZero = true;
+                Node.Target target = ((Node.Jump)node).target;
+                iCodeTop = addGoto(target, Icode_GOSUB, iCodeTop);
                 break;
             }
 
-            case TokenStream.AND : {
+            case Token.FINALLY : {
+                stackShouldBeZero = true;
+                // Account for incomming exception or GOTOSUB address
+                ++itsStackDepth;
+                if (itsStackDepth > itsData.itsMaxStack)
+                    itsData.itsMaxStack = itsStackDepth;
+
+                int finallyRegister = getLocalBlockRef(node);
+                iCodeTop = addToken(Token.LOCAL_SAVE, iCodeTop);
+                iCodeTop = addByte(finallyRegister, iCodeTop);
+                itsStackDepth--;
+                while (child != null) {
+                    iCodeTop = generateICode(child, iCodeTop);
+                    if (itsStackDepth != 0) Kit.codeBug();
+                    child = child.getNext();
+                }
+                iCodeTop = addIcode(Icode_RETSUB, iCodeTop);
+                iCodeTop = addByte(finallyRegister, iCodeTop);
+                break;
+            }
+
+            case Token.AND :
+            case Token.OR : {
+                stackDelta = 1;
                 iCodeTop = generateICode(child, iCodeTop);
-                iCodeTop = addByte(TokenStream.DUP, iCodeTop);
+                iCodeTop = addIcode(Icode_DUP, iCodeTop);
                 itsStackDepth++;
                 if (itsStackDepth > itsData.itsMaxStack)
                     itsData.itsMaxStack = itsStackDepth;
-                int falseJumpStart = iCodeTop;
-                iCodeTop = addForwardGoto(TokenStream.IFNE, iCodeTop);
-                iCodeTop = addByte(TokenStream.POP, iCodeTop);
+                int afterSecondJumpStart = iCodeTop;
+                int jump = (type == Token.AND) ? Token.IFNE : Token.IFEQ;
+                iCodeTop = addForwardGoto(jump, iCodeTop);
+                itsStackDepth--;
+                iCodeTop = addToken(Token.POP, iCodeTop);
                 itsStackDepth--;
                 child = child.getNext();
                 iCodeTop = generateICode(child, iCodeTop);
-                resolveForwardGoto(falseJumpStart, iCodeTop);
+                resolveForwardGoto(afterSecondJumpStart, iCodeTop);
                 break;
             }
 
-            case TokenStream.OR : {
+            case Token.HOOK : {
+                stackDelta = 1;
+                Node ifThen = child.getNext();
+                Node ifElse = ifThen.getNext();
                 iCodeTop = generateICode(child, iCodeTop);
-                iCodeTop = addByte(TokenStream.DUP, iCodeTop);
-                itsStackDepth++;
-                if (itsStackDepth > itsData.itsMaxStack)
-                    itsData.itsMaxStack = itsStackDepth;
-                int trueJumpStart = iCodeTop;
-                iCodeTop = addForwardGoto(TokenStream.IFEQ, iCodeTop);
-                iCodeTop = addByte(TokenStream.POP, iCodeTop);
+                int elseJumpStart = iCodeTop;
+                iCodeTop = addForwardGoto(Token.IFNE, iCodeTop);
                 itsStackDepth--;
-                child = child.getNext();
-                iCodeTop = generateICode(child, iCodeTop);
-                resolveForwardGoto(trueJumpStart, iCodeTop);
+                iCodeTop = generateICode(ifThen, iCodeTop);
+                int afterElseJumpStart = iCodeTop;
+                iCodeTop = addForwardGoto(Token.GOTO, iCodeTop);
+                resolveForwardGoto(elseJumpStart, iCodeTop);
+                itsStackDepth = savedStackDepth;
+                iCodeTop = generateICode(ifElse, iCodeTop);
+                resolveForwardGoto(afterElseJumpStart, iCodeTop);
                 break;
             }
 
-            case TokenStream.GETPROP : {
+            case Token.GETPROP : {
+                stackDelta = 1;
                 iCodeTop = generateICode(child, iCodeTop);
-                String s = (String) node.getProp(Node.SPECIAL_PROP_PROP);
-                if (s != null) {
-                    if (s.equals("__proto__")) {
-                        iCodeTop = addByte(TokenStream.GETPROTO, iCodeTop);
-                    } else if (s.equals("__parent__")) {
-                        iCodeTop = addByte(TokenStream.GETSCOPEPARENT,
-                                           iCodeTop);
+                int special = node.getIntProp(Node.SPECIAL_PROP_PROP, 0);
+                if (special != 0) {
+                    if (special == Node.SPECIAL_PROP_PROTO) {
+                        iCodeTop = addIcode(Icode_GETPROTO, iCodeTop);
+                    } else if (special == Node.SPECIAL_PROP_PARENT) {
+                        iCodeTop = addIcode(Icode_GETSCOPEPARENT, iCodeTop);
                     } else {
                         badTree(node);
                     }
                 } else {
                     child = child.getNext();
                     iCodeTop = generateICode(child, iCodeTop);
-                    iCodeTop = addByte(TokenStream.GETPROP, iCodeTop);
+                    iCodeTop = addToken(Token.GETPROP, iCodeTop);
                     itsStackDepth--;
                 }
                 break;
             }
 
-            case TokenStream.DELPROP :
-            case TokenStream.BITAND :
-            case TokenStream.BITOR :
-            case TokenStream.BITXOR :
-            case TokenStream.LSH :
-            case TokenStream.RSH :
-            case TokenStream.URSH :
-            case TokenStream.ADD :
-            case TokenStream.SUB :
-            case TokenStream.MOD :
-            case TokenStream.DIV :
-            case TokenStream.MUL :
-            case TokenStream.GETELEM :
+            case Token.DELPROP :
+            case Token.BITAND :
+            case Token.BITOR :
+            case Token.BITXOR :
+            case Token.LSH :
+            case Token.RSH :
+            case Token.URSH :
+            case Token.ADD :
+            case Token.SUB :
+            case Token.MOD :
+            case Token.DIV :
+            case Token.MUL :
+            case Token.GETELEM :
+            case Token.EQ:
+            case Token.NE:
+            case Token.SHEQ:
+            case Token.SHNE:
+            case Token.IN :
+            case Token.INSTANCEOF :
+            case Token.LE :
+            case Token.LT :
+            case Token.GE :
+            case Token.GT :
+                stackDelta = 1;
                 iCodeTop = generateICode(child, iCodeTop);
                 child = child.getNext();
                 iCodeTop = generateICode(child, iCodeTop);
-                iCodeTop = addByte(type, iCodeTop);
+                iCodeTop = addToken(type, iCodeTop);
                 itsStackDepth--;
                 break;
 
-            case TokenStream.CONVERT : {
+            case Token.POS :
+            case Token.NEG :
+            case Token.NOT :
+            case Token.BITNOT :
+            case Token.TYPEOF :
+            case Token.VOID :
+                stackDelta = 1;
                 iCodeTop = generateICode(child, iCodeTop);
-                Object toType = node.getProp(Node.TYPE_PROP);
-                if (toType == ScriptRuntime.NumberClass) {
-                    iCodeTop = addByte(TokenStream.POS, iCodeTop);
+                if (type == Token.VOID) {
+                    iCodeTop = addToken(Token.POP, iCodeTop);
+                    iCodeTop = addToken(Token.UNDEFINED, iCodeTop);
                 } else {
-                    badTree(node);
-                }
-                break;
-            }
-
-            case TokenStream.UNARYOP :
-                iCodeTop = generateICode(child, iCodeTop);
-                switch (node.getOperation()) {
-                    case TokenStream.VOID :
-                        iCodeTop = addByte(TokenStream.POP, iCodeTop);
-                        iCodeTop = addByte(TokenStream.UNDEFINED, iCodeTop);
-                        break;
-                    case TokenStream.NOT : {
-                        int trueJumpStart = iCodeTop;
-                        iCodeTop = addForwardGoto(TokenStream.IFEQ,
-                                                  iCodeTop);
-                        iCodeTop = addByte(TokenStream.TRUE, iCodeTop);
-                        int beyondJumpStart = iCodeTop;
-                        iCodeTop = addForwardGoto(TokenStream.GOTO,
-                                                  iCodeTop);
-                        resolveForwardGoto(trueJumpStart, iCodeTop);
-                        iCodeTop = addByte(TokenStream.FALSE, iCodeTop);
-                        resolveForwardGoto(beyondJumpStart, iCodeTop);
-                        break;
-                    }
-                    case TokenStream.BITNOT :
-                        iCodeTop = addByte(TokenStream.BITNOT, iCodeTop);
-                        break;
-                    case TokenStream.TYPEOF :
-                        iCodeTop = addByte(TokenStream.TYPEOF, iCodeTop);
-                        break;
-                    case TokenStream.SUB :
-                        iCodeTop = addByte(TokenStream.NEG, iCodeTop);
-                        break;
-                    case TokenStream.ADD :
-                        iCodeTop = addByte(TokenStream.POS, iCodeTop);
-                        break;
-                    default:
-                        badTree(node);
-                        break;
+                    iCodeTop = addToken(type, iCodeTop);
                 }
                 break;
 
-            case TokenStream.SETPROP : {
+            case Token.SETPROP :
+            case Token.SETPROP_OP : {
+                stackDelta = 1;
                 iCodeTop = generateICode(child, iCodeTop);
                 child = child.getNext();
-                iCodeTop = generateICode(child, iCodeTop);
-                String s = (String) node.getProp(Node.SPECIAL_PROP_PROP);
-                if (s != null) {
-                    if (s.equals("__proto__")) {
-                        iCodeTop = addByte(TokenStream.SETPROTO, iCodeTop);
-                    } else if (s.equals("__parent__")) {
-                        iCodeTop = addByte(TokenStream.SETPARENT, iCodeTop);
+                int special = node.getIntProp(Node.SPECIAL_PROP_PROP, 0);
+                if (special != 0) {
+                    if (type == Token.SETPROP_OP) {
+                        iCodeTop = addIcode(Icode_DUP, iCodeTop);
+                        if (itsStackDepth > itsData.itsMaxStack)
+                            itsData.itsMaxStack = itsStackDepth;
+                        if (special == Node.SPECIAL_PROP_PROTO) {
+                            iCodeTop = addIcode(Icode_GETPROTO, iCodeTop);
+                        } else if (special == Node.SPECIAL_PROP_PARENT) {
+                            iCodeTop = addIcode(Icode_GETSCOPEPARENT, iCodeTop);
+                        } else {
+                            badTree(node);
+                        }
+                        // Compensate for the following USE_STACK
+                        itsStackDepth--;
+                    }
+                    iCodeTop = generateICode(child, iCodeTop);
+                    if (special == Node.SPECIAL_PROP_PROTO) {
+                        iCodeTop = addIcode(Icode_SETPROTO, iCodeTop);
+                    } else if (special == Node.SPECIAL_PROP_PARENT) {
+                        iCodeTop = addIcode(Icode_SETPARENT, iCodeTop);
                     } else {
                         badTree(node);
                     }
+                    itsStackDepth--;
                 } else {
-                    child = child.getNext();
                     iCodeTop = generateICode(child, iCodeTop);
-                    iCodeTop = addByte(TokenStream.SETPROP, iCodeTop);
+                    child = child.getNext();
+                    if (type == Token.SETPROP_OP) {
+                        iCodeTop = addIcode(Icode_DUPSECOND, iCodeTop);
+                        iCodeTop = addIcode(Icode_DUPSECOND, iCodeTop);
+                        itsStackDepth += 2;
+                        if (itsStackDepth > itsData.itsMaxStack)
+                            itsData.itsMaxStack = itsStackDepth;
+                        iCodeTop = addToken(Token.GETPROP, iCodeTop);
+                        itsStackDepth--;
+                        // Compensate for the following USE_STACK
+                        itsStackDepth--;
+                    }
+                    iCodeTop = generateICode(child, iCodeTop);
+                    iCodeTop = addToken(Token.SETPROP, iCodeTop);
                     itsStackDepth -= 2;
                 }
                 break;
             }
 
-            case TokenStream.SETELEM :
+            case Token.SETELEM :
+            case Token.SETELEM_OP :
+                stackDelta = 1;
                 iCodeTop = generateICode(child, iCodeTop);
                 child = child.getNext();
                 iCodeTop = generateICode(child, iCodeTop);
                 child = child.getNext();
+                if (type == Token.SETELEM_OP) {
+                    iCodeTop = addIcode(Icode_DUPSECOND, iCodeTop);
+                    iCodeTop = addIcode(Icode_DUPSECOND, iCodeTop);
+                    itsStackDepth += 2;
+                    if (itsStackDepth > itsData.itsMaxStack)
+                        itsData.itsMaxStack = itsStackDepth;
+                    iCodeTop = addToken(Token.GETELEM, iCodeTop);
+                    itsStackDepth--;
+                    // Compensate for the following USE_STACK
+                    itsStackDepth--;
+                }
                 iCodeTop = generateICode(child, iCodeTop);
-                iCodeTop = addByte(type, iCodeTop);
+                iCodeTop = addToken(Token.SETELEM, iCodeTop);
                 itsStackDepth -= 2;
                 break;
 
-            case TokenStream.SETNAME :
+            case Token.SETNAME :
+                stackDelta = 1;
                 iCodeTop = generateICode(child, iCodeTop);
                 child = child.getNext();
                 iCodeTop = generateICode(child, iCodeTop);
-                iCodeTop = addByte(TokenStream.SETNAME, iCodeTop);
+                iCodeTop = addToken(Token.SETNAME, iCodeTop);
                 iCodeTop = addString(firstChild.getString(), iCodeTop);
                 itsStackDepth--;
                 break;
 
-            case TokenStream.TYPEOF : {
+            case Token.TYPEOFNAME : {
+                stackDelta = 1;
                 String name = node.getString();
                 int index = -1;
                 // use typeofname if an activation frame exists
@@ -676,12 +781,12 @@ public class Interpreter {
                 if (itsInFunctionFlag && !itsData.itsNeedsActivation)
                     index = scriptOrFn.getParamOrVarIndex(name);
                 if (index == -1) {
-                    iCodeTop = addByte(TokenStream.TYPEOFNAME, iCodeTop);
+                    iCodeTop = addIcode(Icode_TYPEOFNAME, iCodeTop);
                     iCodeTop = addString(name, iCodeTop);
                 } else {
-                    iCodeTop = addByte(TokenStream.GETVAR, iCodeTop);
+                    iCodeTop = addToken(Token.GETVAR, iCodeTop);
                     iCodeTop = addByte(index, iCodeTop);
-                    iCodeTop = addByte(TokenStream.TYPEOF, iCodeTop);
+                    iCodeTop = addToken(Token.TYPEOF, iCodeTop);
                 }
                 itsStackDepth++;
                 if (itsStackDepth > itsData.itsMaxStack)
@@ -689,46 +794,43 @@ public class Interpreter {
                 break;
             }
 
-            case TokenStream.PARENT :
-                iCodeTop = generateICode(child, iCodeTop);
-                iCodeTop = addByte(TokenStream.GETPARENT, iCodeTop);
-                break;
-
-            case TokenStream.GETBASE :
-            case TokenStream.BINDNAME :
-            case TokenStream.NAME :
-            case TokenStream.STRING :
-                iCodeTop = addByte(type, iCodeTop);
+            case Token.GETBASE :
+            case Token.BINDNAME :
+            case Token.NAME :
+            case Token.STRING :
+                stackDelta = 1;
+                iCodeTop = addToken(type, iCodeTop);
                 iCodeTop = addString(node.getString(), iCodeTop);
                 itsStackDepth++;
                 if (itsStackDepth > itsData.itsMaxStack)
                     itsData.itsMaxStack = itsStackDepth;
                 break;
 
-            case TokenStream.INC :
-            case TokenStream.DEC : {
+            case Token.INC :
+            case Token.DEC : {
+                stackDelta = 1;
                 int childType = child.getType();
                 switch (childType) {
-                    case TokenStream.GETVAR : {
+                    case Token.GETVAR : {
                         String name = child.getString();
                         if (itsData.itsNeedsActivation) {
-                            iCodeTop = addByte(TokenStream.SCOPE, iCodeTop);
-                            iCodeTop = addByte(TokenStream.STRING, iCodeTop);
+                            iCodeTop = addIcode(Icode_SCOPE, iCodeTop);
+                            iCodeTop = addToken(Token.STRING, iCodeTop);
                             iCodeTop = addString(name, iCodeTop);
                             itsStackDepth += 2;
                             if (itsStackDepth > itsData.itsMaxStack)
                                 itsData.itsMaxStack = itsStackDepth;
-                            iCodeTop = addByte(type == TokenStream.INC
-                                               ? TokenStream.PROPINC
-                                               : TokenStream.PROPDEC,
-                                               iCodeTop);
+                            iCodeTop = addIcode(type == Token.INC
+                                                ? Icode_PROPINC
+                                                : Icode_PROPDEC,
+                                                iCodeTop);
                             itsStackDepth--;
                         } else {
                             int i = scriptOrFn.getParamOrVarIndex(name);
-                            iCodeTop = addByte(type == TokenStream.INC
-                                               ? TokenStream.VARINC
-                                               : TokenStream.VARDEC,
-                                               iCodeTop);
+                            iCodeTop = addIcode(type == Token.INC
+                                                ? Icode_VARINC
+                                                : Icode_VARDEC,
+                                                iCodeTop);
                             iCodeTop = addByte(i, iCodeTop);
                             itsStackDepth++;
                             if (itsStackDepth > itsData.itsMaxStack)
@@ -736,31 +838,29 @@ public class Interpreter {
                         }
                         break;
                     }
-                    case TokenStream.GETPROP :
-                    case TokenStream.GETELEM : {
+                    case Token.GETPROP :
+                    case Token.GETELEM : {
                         Node getPropChild = child.getFirstChild();
                         iCodeTop = generateICode(getPropChild, iCodeTop);
                         getPropChild = getPropChild.getNext();
                         iCodeTop = generateICode(getPropChild, iCodeTop);
-                        if (childType == TokenStream.GETPROP) {
-                            iCodeTop = addByte(type == TokenStream.INC
-                                               ? TokenStream.PROPINC
-                                               : TokenStream.PROPDEC,
-                                               iCodeTop);
+                        int icode;
+                        if (childType == Token.GETPROP) {
+                            icode = (type == Token.INC)
+                                    ? Icode_PROPINC : Icode_PROPDEC;
                         } else {
-                            iCodeTop = addByte(type == TokenStream.INC
-                                               ? TokenStream.ELEMINC
-                                               : TokenStream.ELEMDEC,
-                                               iCodeTop);
+                            icode = (type == Token.INC)
+                                    ? Icode_ELEMINC : Icode_ELEMDEC;
                         }
+                        iCodeTop = addIcode(icode, iCodeTop);
                         itsStackDepth--;
                         break;
                     }
                     default : {
-                        iCodeTop = addByte(type == TokenStream.INC
-                                           ? TokenStream.NAMEINC
-                                           : TokenStream.NAMEDEC,
-                                           iCodeTop);
+                        iCodeTop = addIcode(type == Token.INC
+                                            ? Icode_NAMEINC
+                                            : Icode_NAMEDEC,
+                                            iCodeTop);
                         iCodeTop = addString(child.getString(), iCodeTop);
                         itsStackDepth++;
                         if (itsStackDepth > itsData.itsMaxStack)
@@ -771,23 +871,28 @@ public class Interpreter {
                 break;
             }
 
-            case TokenStream.NUMBER : {
+            case Token.NUMBER : {
+                stackDelta = 1;
                 double num = node.getDouble();
                 int inum = (int)num;
                 if (inum == num) {
                     if (inum == 0) {
-                        iCodeTop = addByte(TokenStream.ZERO, iCodeTop);
+                        iCodeTop = addToken(Token.ZERO, iCodeTop);
+                        // Check for negative zero
+                        if (1.0 / num < 0.0) {
+                            iCodeTop = addToken(Token.NEG, iCodeTop);
+                        }
                     } else if (inum == 1) {
-                        iCodeTop = addByte(TokenStream.ONE, iCodeTop);
+                        iCodeTop = addToken(Token.ONE, iCodeTop);
                     } else if ((short)inum == inum) {
-                        iCodeTop = addByte(SHORTNUMBER_ICODE, iCodeTop);
+                        iCodeTop = addIcode(Icode_SHORTNUMBER, iCodeTop);
                         iCodeTop = addShort(inum, iCodeTop);
                     } else {
-                        iCodeTop = addByte(INTNUMBER_ICODE, iCodeTop);
+                        iCodeTop = addIcode(Icode_INTNUMBER, iCodeTop);
                         iCodeTop = addInt(inum, iCodeTop);
                     }
                 } else {
-                    iCodeTop = addByte(TokenStream.NUMBER, iCodeTop);
+                    iCodeTop = addToken(Token.NUMBER, iCodeTop);
                     iCodeTop = addDouble(num, iCodeTop);
                 }
                 itsStackDepth++;
@@ -796,142 +901,134 @@ public class Interpreter {
                 break;
             }
 
-            case TokenStream.POP :
-            case TokenStream.POPV :
+            case Token.POPV :
+                stackShouldBeZero = true;
+                // fallthrough
+            case Token.POP :
                 iCodeTop = updateLineNumber(node, iCodeTop);
-            case TokenStream.ENTERWITH :
                 iCodeTop = generateICode(child, iCodeTop);
-                iCodeTop = addByte(type, iCodeTop);
+                iCodeTop = addToken(type, iCodeTop);
                 itsStackDepth--;
                 break;
 
-            case TokenStream.GETTHIS :
+            case Token.ENTERWITH :
+                stackShouldBeZero = true;
                 iCodeTop = generateICode(child, iCodeTop);
-                iCodeTop = addByte(type, iCodeTop);
+                iCodeTop = addToken(Token.ENTERWITH, iCodeTop);
+                itsStackDepth--;
                 break;
 
-            case TokenStream.NEWSCOPE :
-                iCodeTop = addByte(type, iCodeTop);
-                itsStackDepth++;
-                if (itsStackDepth > itsData.itsMaxStack)
-                    itsData.itsMaxStack = itsStackDepth;
+            case Token.CATCH_SCOPE :
+                stackDelta = 1;
+                iCodeTop = generateICode(child, iCodeTop);
+                iCodeTop = addToken(Token.CATCH_SCOPE, iCodeTop);
+                iCodeTop = addString(node.getString(), iCodeTop);
                 break;
 
-            case TokenStream.LEAVEWITH :
-                iCodeTop = addByte(type, iCodeTop);
+            case Token.LEAVEWITH :
+                stackShouldBeZero = true;
+                iCodeTop = addToken(Token.LEAVEWITH, iCodeTop);
                 break;
 
-            case TokenStream.TRY : {
-                itsTryDepth++;
-                if (itsTryDepth > itsData.itsMaxTryDepth)
-                    itsData.itsMaxTryDepth = itsTryDepth;
-                Node catchTarget = (Node)node.getProp(Node.TARGET_PROP);
-                Node finallyTarget = (Node)node.getProp(Node.FINALLY_PROP);
+            case Token.TRY : {
+                stackShouldBeZero = true;
+                Node.Jump tryNode = (Node.Jump)node;
+                int exceptionObjectLocal = getLocalBlockRef(tryNode);
+                Node catchTarget = tryNode.target;
+                Node finallyTarget = tryNode.getFinally();
+
                 int tryStart = iCodeTop;
-                if (catchTarget == null) {
-                    iCodeTop = addByte(TokenStream.TRY, iCodeTop);
-                    iCodeTop = addShort(0, iCodeTop);
-                } else {
-                    iCodeTop = addGoto(catchTarget, TokenStream.TRY, iCodeTop);
-                }
-                iCodeTop = addShort(0, iCodeTop);
+                int tryEnd = -1;
+                int catchStart = -1;
+                int finallyStart = -1;
 
-                Node lastChild = null;
-                /*
-                    when we encounter the child of the catchTarget, we
-                    set the stackDepth to 1 to account for the incoming
-                    exception object.
-                */
-                boolean insertedEndTry = false;
                 while (child != null) {
-                    if (catchTarget != null && lastChild == catchTarget) {
-                        itsStackDepth = 1;
-                        if (itsStackDepth > itsData.itsMaxStack)
-                            itsData.itsMaxStack = itsStackDepth;
+                    boolean generated = false;
+
+                    if (child == catchTarget) {
+                        if (tryEnd >= 0) Kit.codeBug();
+                        tryEnd = iCodeTop;
+                        catchStart = iCodeTop;
+
+                        markTargetLabel((Node.Target)child, iCodeTop);
+                        generated = true;
+
+                    } else if (child == finallyTarget) {
+                        if (tryEnd < 0) {
+                            tryEnd = iCodeTop;
+                        }
+                        finallyStart = iCodeTop;
+
+                        markTargetLabel((Node.Target)child, iCodeTop);
+                        generated = true;
                     }
-                    /*
-                        When the following child is the catchTarget
-                        (or the finallyTarget if there are no catches),
-                        the current child is the goto at the end of
-                        the try statemets, we need to emit the endtry
-                        before that goto.
-                    */
-                    Node nextSibling = child.getNext();
-                    if (!insertedEndTry && nextSibling != null &&
-                        (nextSibling == catchTarget ||
-                         nextSibling == finallyTarget))
-                    {
-                        iCodeTop = addByte(TokenStream.ENDTRY,
-                                           iCodeTop);
-                        insertedEndTry = true;
+
+                    if (!generated) {
+                        iCodeTop = generateICode(child, iCodeTop);
                     }
-                    iCodeTop = generateICode(child, iCodeTop);
-                    lastChild = child;
                     child = child.getNext();
                 }
-                itsStackDepth = 0;
-                if (finallyTarget != null) {
-                    // normal flow goes around the finally handler stublet
-                    int skippyJumpStart = iCodeTop;
-                    iCodeTop = addForwardGoto(TokenStream.GOTO, iCodeTop);
-                    int finallyOffset = iCodeTop - tryStart;
-                    recordJumpOffset(tryStart + 3, finallyOffset);
-                    // on entry the stack will have the exception object
-                    itsStackDepth = 1;
-                    if (itsStackDepth > itsData.itsMaxStack)
-                        itsData.itsMaxStack = itsStackDepth;
-                    int theLocalSlot = itsData.itsMaxLocals++;
-                    iCodeTop = addByte(TokenStream.NEWTEMP, iCodeTop);
-                    iCodeTop = addByte(theLocalSlot, iCodeTop);
-                    iCodeTop = addByte(TokenStream.POP, iCodeTop);
-                    iCodeTop = addGoto(finallyTarget, TokenStream.GOSUB,
-                                       iCodeTop);
-                    iCodeTop = addByte(TokenStream.USETEMP, iCodeTop);
-                    iCodeTop = addByte(theLocalSlot, iCodeTop);
-                    iCodeTop = addByte(TokenStream.JTHROW, iCodeTop);
-                    itsStackDepth = 0;
-                    resolveForwardGoto(skippyJumpStart, iCodeTop);
-                }
-                itsTryDepth--;
+                // [tryStart, tryEnd) contains GOSUB to call finally when it
+                // presents at the end of try code and before return, break
+                // continue that transfer control outside try.
+                // After finally is executed the control will be
+                // transfered back into [tryStart, tryEnd) and exception
+                // handling assumes that the only code executed after
+                // finally returns will be a jump outside try which could not
+                // trigger exceptions.
+                // It does not hold if instruction observer throws during
+                // goto. Currently it may lead to double execution of finally.
+                addExceptionHandler(tryStart, tryEnd, catchStart, finallyStart,
+                                    itsWithDepth, exceptionObjectLocal);
                 break;
             }
 
-            case TokenStream.THROW :
+            case Token.THROW :
+                stackShouldBeZero = true;
                 iCodeTop = updateLineNumber(node, iCodeTop);
                 iCodeTop = generateICode(child, iCodeTop);
-                iCodeTop = addByte(TokenStream.THROW, iCodeTop);
+                iCodeTop = addToken(Token.THROW, iCodeTop);
+                iCodeTop = addShort(itsLineNumber, iCodeTop);
                 itsStackDepth--;
                 break;
 
-            case TokenStream.RETURN :
+            case Token.RETURN :
+                stackShouldBeZero = true;
                 iCodeTop = updateLineNumber(node, iCodeTop);
                 if (child != null) {
                     iCodeTop = generateICode(child, iCodeTop);
-                    iCodeTop = addByte(TokenStream.RETURN, iCodeTop);
+                    iCodeTop = addToken(Token.RETURN, iCodeTop);
                     itsStackDepth--;
                 } else {
-                    iCodeTop = addByte(RETURN_UNDEF_ICODE, iCodeTop);
+                    iCodeTop = addIcode(Icode_RETUNDEF, iCodeTop);
                 }
                 break;
 
-            case TokenStream.GETVAR : {
+            case Token.RETURN_POPV :
+                stackShouldBeZero = true;
+                iCodeTop = updateLineNumber(node, iCodeTop);
+                iCodeTop = addToken(Token.RETURN_POPV, iCodeTop);
+                break;
+
+            case Token.GETVAR : {
+                stackDelta = 1;
                 String name = node.getString();
                 if (itsData.itsNeedsActivation) {
                     // SETVAR handled this by turning into a SETPROP, but
                     // we can't do that to a GETVAR without manufacturing
                     // bogus children. Instead we use a special op to
                     // push the current scope.
-                    iCodeTop = addByte(TokenStream.SCOPE, iCodeTop);
-                    iCodeTop = addByte(TokenStream.STRING, iCodeTop);
+                    iCodeTop = addIcode(Icode_SCOPE, iCodeTop);
+                    iCodeTop = addToken(Token.STRING, iCodeTop);
                     iCodeTop = addString(name, iCodeTop);
                     itsStackDepth += 2;
                     if (itsStackDepth > itsData.itsMaxStack)
                         itsData.itsMaxStack = itsStackDepth;
-                    iCodeTop = addByte(TokenStream.GETPROP, iCodeTop);
+                    iCodeTop = addToken(Token.GETPROP, iCodeTop);
                     itsStackDepth--;
                 } else {
                     int index = scriptOrFn.getParamOrVarIndex(name);
-                    iCodeTop = addByte(TokenStream.GETVAR, iCodeTop);
+                    iCodeTop = addToken(Token.GETVAR, iCodeTop);
                     iCodeTop = addByte(index, iCodeTop);
                     itsStackDepth++;
                     if (itsStackDepth > itsData.itsMaxStack)
@@ -940,53 +1037,59 @@ public class Interpreter {
                 break;
             }
 
-            case TokenStream.SETVAR : {
+            case Token.SETVAR : {
+                stackDelta = 1;
                 if (itsData.itsNeedsActivation) {
-                    child.setType(TokenStream.BINDNAME);
-                    node.setType(TokenStream.SETNAME);
+                    child.setType(Token.BINDNAME);
+                    node.setType(Token.SETNAME);
                     iCodeTop = generateICode(node, iCodeTop);
                 } else {
                     String name = child.getString();
                     child = child.getNext();
                     iCodeTop = generateICode(child, iCodeTop);
                     int index = scriptOrFn.getParamOrVarIndex(name);
-                    iCodeTop = addByte(TokenStream.SETVAR, iCodeTop);
+                    iCodeTop = addToken(Token.SETVAR, iCodeTop);
                     iCodeTop = addByte(index, iCodeTop);
                 }
                 break;
             }
 
-            case TokenStream.PRIMARY:
-                iCodeTop = addByte(node.getOperation(), iCodeTop);
+            case Token.NULL:
+            case Token.THIS:
+            case Token.THISFN:
+            case Token.FALSE:
+            case Token.TRUE:
+            case Token.UNDEFINED:
+                stackDelta = 1;
+                iCodeTop = addToken(type, iCodeTop);
                 itsStackDepth++;
                 if (itsStackDepth > itsData.itsMaxStack)
                     itsData.itsMaxStack = itsStackDepth;
                 break;
 
-            case TokenStream.ENUMINIT :
+            case Token.ENUM_INIT :
+                stackShouldBeZero = true;
                 iCodeTop = generateICode(child, iCodeTop);
-                iCodeTop = addByte(TokenStream.ENUMINIT, iCodeTop);
-                iCodeTop = addLocalRef(node, iCodeTop);
+                iCodeTop = addToken(Token.ENUM_INIT, iCodeTop);
+                iCodeTop = addLocalBlockRef(node, iCodeTop);
                 itsStackDepth--;
                 break;
 
-            case TokenStream.ENUMNEXT : {
-                iCodeTop = addByte(TokenStream.ENUMNEXT, iCodeTop);
-                Node init = (Node)node.getProp(Node.ENUM_PROP);
-                iCodeTop = addLocalRef(init, iCodeTop);
+            case Token.ENUM_NEXT :
+            case Token.ENUM_ID : {
+                stackDelta = 1;
+                iCodeTop = addToken(type, iCodeTop);
+                iCodeTop = addLocalBlockRef(node, iCodeTop);
                 itsStackDepth++;
                 if (itsStackDepth > itsData.itsMaxStack)
                     itsData.itsMaxStack = itsStackDepth;
                 break;
             }
 
-            case TokenStream.ENUMDONE :
-                // could release the local here??
-                break;
-
-            case TokenStream.REGEXP : {
+            case Token.REGEXP : {
+                stackDelta = 1;
                 int index = node.getExistingIntProp(Node.REGEXP_PROP);
-                iCodeTop = addByte(TokenStream.REGEXP, iCodeTop);
+                iCodeTop = addToken(Token.REGEXP, iCodeTop);
                 iCodeTop = addIndex(index, iCodeTop);
                 itsStackDepth++;
                 if (itsStackDepth > itsData.itsMaxStack)
@@ -998,66 +1101,173 @@ public class Interpreter {
                 badTree(node);
                 break;
         }
+        if (stackDelta != itsStackDepth - savedStackDepth) {
+            //System.out.println("Bad stack delta: type="+Token.name(type)+" expected="+stackDelta+" real="+ (itsStackDepth - savedStackDepth));
+            Kit.codeBug();
+        }
+        if (stackShouldBeZero && !(stackDelta == 0 && itsStackDepth == 0)) {
+            Kit.codeBug();
+        }
+
         return iCodeTop;
     }
 
-    private int addLocalRef(Node node, int iCodeTop)
+    private int generateCallFunAndThis(Node left, int iCodeTop)
     {
-        int theLocalSlot = node.getIntProp(Node.LOCAL_PROP, -1);
-        if (theLocalSlot == -1) {
-            theLocalSlot = itsData.itsMaxLocals++;
-            node.putIntProp(Node.LOCAL_PROP, theLocalSlot);
+        // Generate code to place on stack function and thisObj
+        int type = left.getType();
+        if (type == Token.NAME) {
+            String name = left.getString();
+            iCodeTop = addIcode(Icode_NAME_AND_THIS, iCodeTop);
+            iCodeTop = addString(name, iCodeTop);
+            itsStackDepth += 2;
+            if (itsStackDepth > itsData.itsMaxStack)
+                itsData.itsMaxStack = itsStackDepth;
+        } else if (type == Token.GETPROP || type == Token.GETELEM) {
+            // For Call(GetProp(a, b), c, d) or Call(GetElem(a, b), c, d)
+            // generate code to calculate a, dup it, calculate
+            // GetProp(use_stack, b) or GetElem(use_stack, b),
+            // and swap to get function, thisObj layout
+            Node leftLeft = left.getFirstChild();
+            left.removeChild(leftLeft);
+            left.addChildToFront(new Node(Token.USE_STACK));
+            iCodeTop = generateICode(leftLeft, iCodeTop);
+            iCodeTop = addIcode(Icode_DUP, iCodeTop);
+            // No stack adjusting: USE_STACK in subtree will do it
+            iCodeTop = generateICode(left, iCodeTop);
+            iCodeTop = addIcode(Icode_SWAP, iCodeTop);
+        } else {
+            // Including Token.GETVAR
+            iCodeTop = generateICode(left, iCodeTop);
+            iCodeTop = addIcode(Icode_PUSH_PARENT, iCodeTop);
+            itsStackDepth += 1;
+            if (itsStackDepth > itsData.itsMaxStack)
+                itsData.itsMaxStack = itsStackDepth;
         }
-        iCodeTop = addByte(theLocalSlot, iCodeTop);
-        if (theLocalSlot >= itsData.itsMaxLocals)
-            itsData.itsMaxLocals = theLocalSlot + 1;
         return iCodeTop;
     }
 
-    private int getTargetLabel(Node target) {
-        int targetLabel = target.getIntProp(Node.LABEL_PROP, -1);
-        if (targetLabel == -1) {
-            targetLabel = itsLabels.acquireLabel();
-            target.putIntProp(Node.LABEL_PROP, targetLabel);
+    private int getLocalBlockRef(Node node)
+    {
+        Node localBlock = (Node)node.getProp(Node.LOCAL_BLOCK_PROP);
+        return localBlock.getExistingIntProp(Node.LOCAL_PROP);
+    }
+
+    private int addLocalBlockRef(Node node, int iCodeTop)
+    {
+        int localSlot = getLocalBlockRef(node);
+        iCodeTop = addByte(localSlot, iCodeTop);
+        return iCodeTop;
+    }
+
+    private int getTargetLabel(Node.Target target)
+    {
+        int label = target.labelId;
+        if (label != -1) {
+            return label;
         }
-        return targetLabel;
+        label = itsLabelTableTop;
+        if (itsLabelTable == null || label == itsLabelTable.length) {
+            if (itsLabelTable == null) {
+                itsLabelTable = new int[MIN_LABEL_TABLE_SIZE];
+            }else {
+                int[] tmp = new int[itsLabelTable.length * 2];
+                System.arraycopy(itsLabelTable, 0, tmp, 0, label);
+                itsLabelTable = tmp;
+            }
+        }
+        itsLabelTableTop = label + 1;
+        itsLabelTable[label] = -1;
+
+        target.labelId = label;
+        return label;
     }
 
-    private void markTargetLabel(Node target, int iCodeTop) {
+    private void markTargetLabel(Node.Target target, int iCodeTop)
+    {
         int label = getTargetLabel(target);
-        itsLabels.markLabel(label, iCodeTop);
+        if (itsLabelTable[label] != -1) {
+            // Can mark label only once
+            Kit.codeBug();
+        }
+        itsLabelTable[label] = iCodeTop;
     }
 
-    private int addGoto(Node target, int gotoOp, int iCodeTop) {
-        int targetLabel = getTargetLabel(target);
+    private int addGoto(Node.Target target, int gotoOp, int iCodeTop)
+    {
+        int label = getTargetLabel(target);
+        if (!(label < itsLabelTableTop)) Kit.codeBug();
+        int targetPC = itsLabelTable[label];
 
         int gotoPC = iCodeTop;
-        iCodeTop = addByte(gotoOp, iCodeTop);
+        if (gotoOp > BASE_ICODE) {
+            iCodeTop = addIcode(gotoOp, iCodeTop);
+        } else {
+            iCodeTop = addToken(gotoOp, iCodeTop);
+        }
+        int jumpSite = iCodeTop;
         iCodeTop = addShort(0, iCodeTop);
 
-        int targetPC = itsLabels.getLabelPC(targetLabel);
         if (targetPC != -1) {
-            recordJumpOffset(gotoPC + 1, targetPC - gotoPC);
+            recordJumpOffset(jumpSite, targetPC - gotoPC);
         } else {
-            itsLabels.addLabelFixup(targetLabel, gotoPC + 1);
+            int top = itsFixupTableTop;
+            if (itsFixupTable == null || top == itsFixupTable.length) {
+                if (itsFixupTable == null) {
+                    itsFixupTable = new long[MIN_FIXUP_TABLE_SIZE];
+                } else {
+                    long[] tmp = new long[itsFixupTable.length * 2];
+                    System.arraycopy(itsFixupTable, 0, tmp, 0, top);
+                    itsFixupTable = tmp;
+                }
+            }
+            itsFixupTableTop = top + 1;
+            itsFixupTable[top] = ((long)label << 32) | jumpSite;
         }
         return iCodeTop;
     }
 
-    private int addForwardGoto(int gotoOp, int iCodeTop) {
-        iCodeTop = addByte(gotoOp, iCodeTop);
+    private void fixLabelGotos()
+    {
+        byte[] codeBuffer = itsData.itsICode;
+        for (int i = 0; i < itsFixupTableTop; i++) {
+            long fixup = itsFixupTable[i];
+            int label = (int)(fixup >> 32);
+            int fixupSite = (int)fixup;
+            int pc = itsLabelTable[label];
+            if (pc == -1) {
+                // Unlocated label
+                throw new RuntimeException();
+            }
+            // -1 to get delta from instruction start
+            int offset = pc - (fixupSite - 1);
+            if ((short)offset != offset) {
+                throw new RuntimeException
+                    ("Program too complex: too big jump offset");
+            }
+            codeBuffer[fixupSite] = (byte)(offset >> 8);
+            codeBuffer[fixupSite + 1] = (byte)offset;
+        }
+        itsFixupTableTop = 0;
+    }
+
+    private int addForwardGoto(int gotoOp, int iCodeTop)
+    {
+        iCodeTop = addToken(gotoOp, iCodeTop);
         iCodeTop = addShort(0, iCodeTop);
         return iCodeTop;
     }
 
-    private void resolveForwardGoto(int jumpStart, int iCodeTop) {
-        if (jumpStart + 3 > iCodeTop) Context.codeBug();
+    private void resolveForwardGoto(int jumpStart, int iCodeTop)
+    {
+        if (jumpStart + 3 > iCodeTop) Kit.codeBug();
         int offset = iCodeTop - jumpStart;
         // +1 to write after jump icode
         recordJumpOffset(jumpStart + 1, offset);
     }
 
-    private void recordJumpOffset(int pos, int offset) {
+    private void recordJumpOffset(int pos, int offset)
+    {
         if (offset != (short)offset) {
             throw Context.reportRuntimeError0("msg.too.big.jump");
         }
@@ -1065,16 +1275,34 @@ public class Interpreter {
         itsData.itsICode[pos + 1] = (byte)offset;
     }
 
-    private int addByte(int b, int iCodeTop) {
+    private int addByte(int value, int iCodeTop)
+    {
         byte[] array = itsData.itsICode;
         if (iCodeTop == array.length) {
             array = increaseICodeCapasity(iCodeTop, 1);
         }
-        array[iCodeTop++] = (byte)b;
+        array[iCodeTop++] = (byte)value;
         return iCodeTop;
     }
 
-    private int addShort(int s, int iCodeTop) {
+    private int addToken(int token, int iCodeTop)
+    {
+        if (!(Token.FIRST_BYTECODE_TOKEN <= token
+            && token <= Token.LAST_BYTECODE_TOKEN))
+        {
+            Kit.codeBug();
+        }
+        return addByte(token, iCodeTop);
+    }
+
+    private int addIcode(int icode, int iCodeTop)
+    {
+        if (!(BASE_ICODE < icode && icode < END_ICODE)) Kit.codeBug();
+        return addByte(icode, iCodeTop);
+    }
+
+    private int addShort(int s, int iCodeTop)
+    {
         byte[] array = itsData.itsICode;
         if (iCodeTop + 2 > array.length) {
             array = increaseICodeCapasity(iCodeTop, 2);
@@ -1084,8 +1312,9 @@ public class Interpreter {
         return iCodeTop + 2;
     }
 
-    private int addIndex(int index, int iCodeTop) {
-        if (index < 0) Context.codeBug();
+    private int addIndex(int index, int iCodeTop)
+    {
+        if (index < 0) Kit.codeBug();
         if (index > 0xFFFF) {
             throw Context.reportRuntimeError0("msg.too.big.index");
         }
@@ -1098,7 +1327,8 @@ public class Interpreter {
         return iCodeTop + 2;
     }
 
-    private int addInt(int i, int iCodeTop) {
+    private int addInt(int i, int iCodeTop)
+    {
         byte[] array = itsData.itsICode;
         if (iCodeTop + 4 > array.length) {
             array = increaseICodeCapasity(iCodeTop, 4);
@@ -1110,7 +1340,8 @@ public class Interpreter {
         return iCodeTop + 4;
     }
 
-    private int addDouble(double num, int iCodeTop) {
+    private int addDouble(double num, int iCodeTop)
+    {
         int index = itsDoubleTableTop;
         if (index == 0) {
             itsData.itsDoubleTable = new double[64];
@@ -1126,7 +1357,8 @@ public class Interpreter {
         return iCodeTop;
     }
 
-    private int addString(String str, int iCodeTop) {
+    private int addString(String str, int iCodeTop)
+    {
         int index = itsStrings.get(str, -1);
         if (index == -1) {
             index = itsStrings.size();
@@ -1137,9 +1369,34 @@ public class Interpreter {
         return iCodeTop;
     }
 
+    private void addExceptionHandler(int icodeStart, int icodeEnd,
+                                     int catchStart, int finallyStart,
+                                     int withDepth, int exceptionObjectLocal)
+    {
+        int top = itsExceptionTableTop;
+        int[] table = itsData.itsExceptionTable;
+        if (table == null) {
+            if (top != 0) Kit.codeBug();
+            table = new int[EXCEPTION_SLOT_SIZE * 2];
+            itsData.itsExceptionTable = table;
+        } else if (table.length == top) {
+            table = new int[table.length * 2];
+            System.arraycopy(itsData.itsExceptionTable, 0, table, 0, top);
+            itsData.itsExceptionTable = table;
+        }
+        table[top + EXCEPTION_TRY_START_SLOT]  = icodeStart;
+        table[top + EXCEPTION_TRY_END_SLOT]    = icodeEnd;
+        table[top + EXCEPTION_CATCH_SLOT]      = catchStart;
+        table[top + EXCEPTION_FINALLY_SLOT]    = finallyStart;
+        table[top + EXCEPTION_WITH_DEPTH_SLOT] = withDepth;
+        table[top + EXCEPTION_LOCAL_SLOT]      = exceptionObjectLocal;
+
+        itsExceptionTableTop = top + EXCEPTION_SLOT_SIZE;
+    }
+
     private byte[] increaseICodeCapasity(int iCodeTop, int extraSize) {
         int capacity = itsData.itsICode.length;
-        if (iCodeTop + extraSize <= capacity) Context.codeBug();
+        if (iCodeTop + extraSize <= capacity) Kit.codeBug();
         capacity *= 2;
         if (iCodeTop + extraSize > capacity) {
             capacity = iCodeTop + extraSize;
@@ -1168,30 +1425,63 @@ public class Interpreter {
         return pc - 1 + displacement;
     }
 
-    static PrintWriter out;
-    static {
-        if (Context.printICode) {
-            try {
-                out = new PrintWriter(new FileOutputStream("icode.txt"));
-                out.close();
-            }
-            catch (IOException x) {
+    private static int getExceptionHandler(int[] exceptionTable, int pc)
+    {
+        // OPT: use binary search
+        if (exceptionTable == null) { return -1; }
+        int best = -1, bestStart = 0, bestEnd = 0;
+        for (int i = 0; i != exceptionTable.length; i += EXCEPTION_SLOT_SIZE) {
+            int start = exceptionTable[i + EXCEPTION_TRY_START_SLOT];
+            int end = exceptionTable[i + EXCEPTION_TRY_END_SLOT];
+            if (start <= pc && pc < end) {
+                if (best < 0 || bestStart <= start) {
+                    // Check handlers are nested
+                    if (best >= 0 && bestEnd < end) Kit.codeBug();
+                    best = i;
+                    bestStart = start;
+                    bestEnd = end;
+                }
             }
         }
+        return best;
     }
 
-    private static String icodeToName(int icode) {
-        if (Context.printICode) {
-            if (icode <= TokenStream.LAST_TOKEN) {
-                return TokenStream.tokenToName(icode);
+    private static String icodeToName(int icode)
+    {
+        if (Token.printICode) {
+            if (icode <= Token.LAST_BYTECODE_TOKEN) {
+                return Token.name(icode);
             } else {
                 switch (icode) {
-                    case LINE_ICODE:         return "line";
-                    case SOURCEFILE_ICODE:   return "sourcefile";
-                    case SHORTNUMBER_ICODE:  return "shortnumber";
-                    case INTNUMBER_ICODE:    return "intnumber";
-                    case RETURN_UNDEF_ICODE: return "return_undef";
-                    case END_ICODE:          return "end";
+                    case Icode_DUP:              return "DUP";
+                    case Icode_DUPSECOND:        return "DUPSECOND";
+                    case Icode_SWAP:             return "SWAP";
+                    case Icode_IFEQ_POP:         return "IFEQ_POP";
+                    case Icode_NAMEINC:          return "NAMEINC";
+                    case Icode_PROPINC:          return "PROPINC";
+                    case Icode_ELEMINC:          return "ELEMINC";
+                    case Icode_VARINC:           return "VARINC";
+                    case Icode_NAMEDEC:          return "NAMEDEC";
+                    case Icode_PROPDEC:          return "PROPDEC";
+                    case Icode_ELEMDEC:          return "ELEMDEC";
+                    case Icode_VARDEC:           return "VARDEC";
+                    case Icode_SCOPE:            return "SCOPE";
+                    case Icode_TYPEOFNAME:       return "TYPEOFNAME";
+                    case Icode_NAME_AND_THIS:    return "NAME_AND_THIS";
+                    case Icode_GETPROTO:         return "GETPROTO";
+                    case Icode_PUSH_PARENT:      return "PUSH_PARENT";
+                    case Icode_GETSCOPEPARENT:   return "GETSCOPEPARENT";
+                    case Icode_SETPROTO:         return "SETPROTO";
+                    case Icode_SETPARENT:        return "SETPARENT";
+                    case Icode_CLOSURE:          return "CLOSURE";
+                    case Icode_CALLSPECIAL:      return "CALLSPECIAL";
+                    case Icode_RETUNDEF:         return "RETUNDEF";
+                    case Icode_CATCH:            return "CATCH";
+                    case Icode_GOSUB:            return "GOSUB";
+                    case Icode_RETSUB:           return "RETSUB";
+                    case Icode_LINE:             return "LINE";
+                    case Icode_SHORTNUMBER:      return "SHORTNUMBER";
+                    case Icode_INTNUMBER:        return "INTNUMBER";
                 }
             }
             return "<UNKNOWN ICODE: "+icode+">";
@@ -1199,298 +1489,319 @@ public class Interpreter {
         return "";
     }
 
-    private static void dumpICode(InterpreterData idata) {
-        if (Context.printICode) {
-            try {
-                int iCodeLength = idata.itsICodeTop;
-                byte iCode[] = idata.itsICode;
-                String[] strings = idata.itsStringTable;
+    private static void dumpICode(InterpreterData idata)
+    {
+        if (Token.printICode) {
+            int iCodeLength = idata.itsICodeTop;
+            byte iCode[] = idata.itsICode;
+            String[] strings = idata.itsStringTable;
+            PrintStream out = System.out;
+            out.println("ICode dump, for " + idata.itsName
+                        + ", length = " + iCodeLength);
+            out.println("MaxStack = " + idata.itsMaxStack);
 
-                out = new PrintWriter(new FileOutputStream("icode.txt", true));
-                out.println("ICode dump, for " + idata.itsName
-                            + ", length = " + iCodeLength);
-                out.println("MaxStack = " + idata.itsMaxStack);
+            for (int pc = 0; pc < iCodeLength; ) {
+                out.flush();
+                out.print(" [" + pc + "] ");
+                int token = iCode[pc] & 0xFF;
+                String tname = icodeToName(token);
+                int old_pc = pc;
+                ++pc;
+                int icodeLength = icodeTokenLength(token);
+                switch (token) {
+                    default:
+                        if (icodeLength != 1) Kit.codeBug();
+                        out.println(tname);
+                        break;
 
-                for (int pc = 0; pc < iCodeLength; ) {
-                    out.print("[" + pc + "] ");
-                    int token = iCode[pc] & 0xff;
-                    String tname = icodeToName(token);
-                    int old_pc = pc;
-                    ++pc;
-                    int icodeLength = icodeTokenLength(token);
-                    switch (token) {
-                        default:
-                            if (icodeLength != 1) Context.codeBug();
-                            out.println(tname);
-                            break;
-
-                        case TokenStream.GOSUB :
-                        case TokenStream.GOTO :
-                        case TokenStream.IFEQ :
-                        case TokenStream.IFNE : {
-                            int newPC = getTarget(iCode, pc);
-                            out.println(tname + " " + newPC);
-                            pc += 2;
-                            break;
-                        }
-                        case TokenStream.TRY : {
-                            int catch_offset = getShort(iCode, pc);
-                            int finally_offset = getShort(iCode, pc + 2);
-                            int catch_pc = (catch_offset == 0)
-                                           ? -1 : pc - 1 + catch_offset;
-                            int finally_pc = (finally_offset == 0)
-                                           ? -1 : pc - 1 + finally_offset;
-                            out.println(tname + " " + catch_pc
-                                        + " " + finally_pc);
-                            pc += 4;
-                            break;
-                        }
-                        case TokenStream.RETSUB :
-                        case TokenStream.ENUMINIT :
-                        case TokenStream.ENUMNEXT :
-                        case TokenStream.VARINC :
-                        case TokenStream.VARDEC :
-                        case TokenStream.GETVAR :
-                        case TokenStream.SETVAR :
-                        case TokenStream.NEWTEMP :
-                        case TokenStream.USETEMP : {
-                            int slot = (iCode[pc] & 0xFF);
-                            out.println(tname + " " + slot);
-                            pc++;
-                            break;
-                        }
-                        case TokenStream.CALLSPECIAL : {
-                            int line = getShort(iCode, pc);
-                            String name = strings[getIndex(iCode, pc + 2)];
-                            int count = getIndex(iCode, pc + 4);
-                            out.println(tname + " " + count
-                                        + " " + line + " " + name);
-                            pc += 6;
-                            break;
-                        }
-                        case TokenStream.REGEXP : {
-                            int i = getIndex(iCode, pc);
-                            Object regexp = idata.itsRegExpLiterals[i];
-                            out.println(tname + " " + regexp);
-                            pc += 2;
-                            break;
-                        }
-                        case TokenStream.CLOSURE : {
-                            int i = getIndex(iCode, pc);
-                            InterpreterData data2 = idata.itsNestedFunctions[i];
-                            out.println(tname + " " + data2);
-                            pc += 2;
-                            break;
-                        }
-                        case TokenStream.NEW :
-                        case TokenStream.CALL : {
-                            int count = getIndex(iCode, pc + 2);
-                            String name = strings[getIndex(iCode, pc)];
-                            out.println(tname + " " + count + " \""
-                                        + name + '"');
-                            pc += 4;
-                            break;
-                        }
-                        case SHORTNUMBER_ICODE : {
-                            int value = getShort(iCode, pc);
-                            out.println(tname + " " + value);
-                            pc += 2;
-                            break;
-                        }
-                        case INTNUMBER_ICODE : {
-                            int value = getInt(iCode, pc);
-                            out.println(tname + " " + value);
-                            pc += 4;
-                            break;
-                        }
-                        case TokenStream.NUMBER : {
-                            int index = getIndex(iCode, pc);
-                            double value = idata.itsDoubleTable[index];
-                            out.println(tname + " " + value);
-                            pc += 2;
-                            break;
-                        }
-                        case TokenStream.TYPEOFNAME :
-                        case TokenStream.GETBASE :
-                        case TokenStream.BINDNAME :
-                        case TokenStream.SETNAME :
-                        case TokenStream.NAME :
-                        case TokenStream.NAMEINC :
-                        case TokenStream.NAMEDEC :
-                        case TokenStream.STRING : {
-                            String str = strings[getIndex(iCode, pc)];
-                            out.println(tname + " \"" + str + '"');
-                            pc += 2;
-                            break;
-                        }
-                        case LINE_ICODE : {
-                            int line = getShort(iCode, pc);
-                            out.println(tname + " : " + line);
-                            pc += 2;
-                            break;
-                        }
+                    case Icode_GOSUB :
+                    case Token.GOTO :
+                    case Token.IFEQ :
+                    case Token.IFNE :
+                    case Icode_IFEQ_POP : {
+                        int newPC = getTarget(iCode, pc);
+                        out.println(tname + " " + newPC);
+                        pc += 2;
+                        break;
                     }
-                    if (old_pc + icodeLength != pc) Context.codeBug();
+                    case Icode_RETSUB :
+                    case Token.ENUM_INIT :
+                    case Token.ENUM_NEXT :
+                    case Token.ENUM_ID :
+                    case Icode_VARINC :
+                    case Icode_VARDEC :
+                    case Token.GETVAR :
+                    case Token.SETVAR :
+                    case Token.LOCAL_SAVE :
+                    case Token.LOCAL_LOAD : {
+                        int slot = (iCode[pc] & 0xFF);
+                        out.println(tname + " " + slot);
+                        pc++;
+                        break;
+                    }
+                    case Icode_CALLSPECIAL : {
+                        int callType = iCode[pc] & 0xFF;
+                        boolean isNew =  (iCode[pc + 1] != 0);
+                        int line = getShort(iCode, pc+2);
+                        int count = getIndex(iCode, pc + 4);
+                        out.println(tname+" "+callType+" "+isNew
+                                    +" "+count+" "+line);
+                        pc += 6;
+                        break;
+                    }
+                    case Token.REGEXP : {
+                        int i = getIndex(iCode, pc);
+                        Object regexp = idata.itsRegExpLiterals[i];
+                        out.println(tname + " " + regexp);
+                        pc += 2;
+                        break;
+                    }
+                    case Icode_CLOSURE : {
+                        int i = getIndex(iCode, pc);
+                        InterpreterData data2 = idata.itsNestedFunctions[i];
+                        out.println(tname + " " + data2);
+                        pc += 2;
+                        break;
+                    }
+                    case Token.NEW :
+                    case Token.CALL : {
+                        int count = getIndex(iCode, pc + 2);
+                        String name = strings[getIndex(iCode, pc)];
+                        out.println(tname+' '+count+" \""+name+'"');
+                        pc += 4;
+                        break;
+                    }
+                    case Token.THROW : {
+                        int line = getShort(iCode, pc);
+                        out.println(tname + " : " + line);
+                        pc += 2;
+                        break;
+                    }
+                    case Icode_SHORTNUMBER : {
+                        int value = getShort(iCode, pc);
+                        out.println(tname + " " + value);
+                        pc += 2;
+                        break;
+                    }
+                    case Icode_INTNUMBER : {
+                        int value = getInt(iCode, pc);
+                        out.println(tname + " " + value);
+                        pc += 4;
+                        break;
+                    }
+                    case Token.NUMBER : {
+                        int index = getIndex(iCode, pc);
+                        double value = idata.itsDoubleTable[index];
+                        out.println(tname + " " + value);
+                        pc += 2;
+                        break;
+                    }
+                    case Token.CATCH_SCOPE :
+                    case Icode_TYPEOFNAME :
+                    case Icode_NAME_AND_THIS :
+                    case Token.GETBASE :
+                    case Token.BINDNAME :
+                    case Token.SETNAME :
+                    case Token.NAME :
+                    case Icode_NAMEINC :
+                    case Icode_NAMEDEC :
+                    case Token.STRING : {
+                        String str = strings[getIndex(iCode, pc)];
+                        out.println(tname + " \"" + str + '"');
+                        pc += 2;
+                        break;
+                    }
+                    case Icode_LINE : {
+                        int line = getShort(iCode, pc);
+                        out.println(tname + " : " + line);
+                        pc += 2;
+                        break;
+                    }
                 }
-                out.close();
+                if (old_pc + icodeLength != pc) Kit.codeBug();
             }
-            catch (IOException x) {}
+
+            int[] table = idata.itsExceptionTable;
+            if (table != null) {
+                out.println("Exception handlers: "
+                             +table.length / EXCEPTION_SLOT_SIZE);
+                for (int i = 0; i != table.length;
+                     i += EXCEPTION_SLOT_SIZE)
+                {
+                    int tryStart       = table[i + EXCEPTION_TRY_START_SLOT];
+                    int tryEnd         = table[i + EXCEPTION_TRY_END_SLOT];
+                    int catchStart     = table[i + EXCEPTION_CATCH_SLOT];
+                    int finallyStart   = table[i + EXCEPTION_FINALLY_SLOT];
+                    int withDepth      = table[i + EXCEPTION_WITH_DEPTH_SLOT];
+                    int exceptionLocal = table[i + EXCEPTION_LOCAL_SLOT];
+
+                    out.println(" tryStart="+tryStart+" tryEnd="+tryEnd
+                                +" catchStart="+catchStart
+                                +" finallyStart="+finallyStart
+                                +" withDepth="+withDepth
+                                +" exceptionLocal="+exceptionLocal);
+                }
+            }
+            out.flush();
         }
     }
 
     private static int icodeTokenLength(int icodeToken) {
         switch (icodeToken) {
-            case TokenStream.SCOPE :
-            case TokenStream.GETPROTO :
-            case TokenStream.GETPARENT :
-            case TokenStream.GETSCOPEPARENT :
-            case TokenStream.SETPROTO :
-            case TokenStream.SETPARENT :
-            case TokenStream.DELPROP :
-            case TokenStream.TYPEOF :
-            case TokenStream.NEWSCOPE :
-            case TokenStream.ENTERWITH :
-            case TokenStream.LEAVEWITH :
-            case TokenStream.RETURN :
-            case TokenStream.ENDTRY :
-            case TokenStream.THROW :
-            case TokenStream.JTHROW :
-            case TokenStream.GETTHIS :
-            case TokenStream.SETELEM :
-            case TokenStream.GETELEM :
-            case TokenStream.SETPROP :
-            case TokenStream.GETPROP :
-            case TokenStream.PROPINC :
-            case TokenStream.PROPDEC :
-            case TokenStream.ELEMINC :
-            case TokenStream.ELEMDEC :
-            case TokenStream.BITNOT :
-            case TokenStream.BITAND :
-            case TokenStream.BITOR :
-            case TokenStream.BITXOR :
-            case TokenStream.LSH :
-            case TokenStream.RSH :
-            case TokenStream.URSH :
-            case TokenStream.NEG :
-            case TokenStream.POS :
-            case TokenStream.SUB :
-            case TokenStream.MUL :
-            case TokenStream.DIV :
-            case TokenStream.MOD :
-            case TokenStream.ADD :
-            case TokenStream.POPV :
-            case TokenStream.POP :
-            case TokenStream.DUP :
-            case TokenStream.LT :
-            case TokenStream.GT :
-            case TokenStream.LE :
-            case TokenStream.GE :
-            case TokenStream.IN :
-            case TokenStream.INSTANCEOF :
-            case TokenStream.EQ :
-            case TokenStream.NE :
-            case TokenStream.SHEQ :
-            case TokenStream.SHNE :
-            case TokenStream.ZERO :
-            case TokenStream.ONE :
-            case TokenStream.NULL :
-            case TokenStream.THIS :
-            case TokenStream.THISFN :
-            case TokenStream.FALSE :
-            case TokenStream.TRUE :
-            case TokenStream.UNDEFINED :
-            case SOURCEFILE_ICODE :
-            case RETURN_UNDEF_ICODE:
-            case END_ICODE:
+            case Icode_SCOPE :
+            case Icode_GETPROTO :
+            case Icode_PUSH_PARENT :
+            case Icode_GETSCOPEPARENT :
+            case Icode_SETPROTO :
+            case Icode_SETPARENT :
+            case Token.DELPROP :
+            case Token.TYPEOF :
+            case Token.ENTERWITH :
+            case Token.LEAVEWITH :
+            case Token.RETURN :
+            case Token.RETURN_POPV :
+            case Token.SETELEM :
+            case Token.GETELEM :
+            case Token.SETPROP :
+            case Token.GETPROP :
+            case Icode_PROPINC :
+            case Icode_PROPDEC :
+            case Icode_ELEMINC :
+            case Icode_ELEMDEC :
+            case Token.BITNOT :
+            case Token.BITAND :
+            case Token.BITOR :
+            case Token.BITXOR :
+            case Token.LSH :
+            case Token.RSH :
+            case Token.URSH :
+            case Token.NOT :
+            case Token.POS :
+            case Token.NEG :
+            case Token.SUB :
+            case Token.MUL :
+            case Token.DIV :
+            case Token.MOD :
+            case Token.ADD :
+            case Token.POPV :
+            case Token.POP :
+            case Icode_DUP :
+            case Icode_DUPSECOND :
+            case Icode_SWAP :
+            case Token.LT :
+            case Token.GT :
+            case Token.LE :
+            case Token.GE :
+            case Token.IN :
+            case Token.INSTANCEOF :
+            case Token.EQ :
+            case Token.NE :
+            case Token.SHEQ :
+            case Token.SHNE :
+            case Token.ZERO :
+            case Token.ONE :
+            case Token.NULL :
+            case Token.THIS :
+            case Token.THISFN :
+            case Token.FALSE :
+            case Token.TRUE :
+            case Token.UNDEFINED :
+            case Icode_CATCH:
+            case Icode_RETUNDEF:
                 return 1;
 
-            case TokenStream.GOSUB :
-            case TokenStream.GOTO :
-            case TokenStream.IFEQ :
-            case TokenStream.IFNE :
+            case Token.THROW :
+                // source line
+                return 1 + 2;
+
+            case Icode_GOSUB :
+            case Token.GOTO :
+            case Token.IFEQ :
+            case Token.IFNE :
+            case Icode_IFEQ_POP :
                 // target pc offset
                 return 1 + 2;
 
-            case TokenStream.TRY :
-                // catch pc offset or 0
-                // finally pc offset or 0
-                return 1 + 2 + 2;
-
-            case TokenStream.RETSUB :
-            case TokenStream.ENUMINIT :
-            case TokenStream.ENUMNEXT :
-            case TokenStream.VARINC :
-            case TokenStream.VARDEC :
-            case TokenStream.GETVAR :
-            case TokenStream.SETVAR :
-            case TokenStream.NEWTEMP :
-            case TokenStream.USETEMP :
+            case Icode_RETSUB :
+            case Token.ENUM_INIT :
+            case Token.ENUM_NEXT :
+            case Token.ENUM_ID :
+            case Icode_VARINC :
+            case Icode_VARDEC :
+            case Token.GETVAR :
+            case Token.SETVAR :
+            case Token.LOCAL_SAVE :
+            case Token.LOCAL_LOAD :
                 // slot index
                 return 1 + 1;
 
-            case TokenStream.CALLSPECIAL :
+            case Icode_CALLSPECIAL :
+                // call type
+                // is new
                 // line number
-                // name string index
                 // arg count
-                return 1 + 2 + 2 + 2;
+                return 1 + 1 + 1 + 2 + 2;
 
-            case TokenStream.REGEXP :
+            case Token.REGEXP :
                 // regexp index
                 return 1 + 2;
 
-            case TokenStream.CLOSURE :
+            case Icode_CLOSURE :
                 // index of closure master copy
                 return 1 + 2;
 
-            case TokenStream.NEW :
-            case TokenStream.CALL :
+            case Token.NEW :
+            case Token.CALL :
                 // name string index
                 // arg count
                 return 1 + 2 + 2;
 
-            case SHORTNUMBER_ICODE :
+            case Icode_SHORTNUMBER :
                 // short number
                 return 1 + 2;
 
-            case INTNUMBER_ICODE :
+            case Icode_INTNUMBER :
                 // int number
                 return 1 + 4;
 
-            case TokenStream.NUMBER :
+            case Token.NUMBER :
                 // index of double number
                 return 1 + 2;
 
-            case TokenStream.TYPEOFNAME :
-            case TokenStream.GETBASE :
-            case TokenStream.BINDNAME :
-            case TokenStream.SETNAME :
-            case TokenStream.NAME :
-            case TokenStream.NAMEINC :
-            case TokenStream.NAMEDEC :
-            case TokenStream.STRING :
+            case Token.CATCH_SCOPE :
+            case Icode_TYPEOFNAME :
+            case Icode_NAME_AND_THIS :
+            case Token.GETBASE :
+            case Token.BINDNAME :
+            case Token.SETNAME :
+            case Token.NAME :
+            case Icode_NAMEINC :
+            case Icode_NAMEDEC :
+            case Token.STRING :
                 // string index
                 return 1 + 2;
 
-            case LINE_ICODE :
+            case Icode_LINE :
                 // line number
                 return 1 + 2;
 
             default:
-                Context.codeBug(); // Bad icodeToken
+                Kit.codeBug(); // Bad icodeToken
                 return 0;
         }
     }
 
-    static int[] getLineNumbers(InterpreterData data) {
+    static int[] getLineNumbers(InterpreterData data)
+    {
         UintMap presentLines = new UintMap();
 
         int iCodeLength = data.itsICodeTop;
         byte[] iCode = data.itsICode;
         for (int pc = 0; pc != iCodeLength;) {
-            int icodeToken = iCode[pc] & 0xff;
+            int icodeToken = iCode[pc] & 0xFF;
             int icodeLength = icodeTokenLength(icodeToken);
-            if (icodeToken == LINE_ICODE) {
-                if (icodeLength != 3) Context.codeBug();
+            if (icodeToken == Icode_LINE) {
+                if (icodeLength != 3) Kit.codeBug();
                 int line = getShort(iCode, pc + 1);
                 presentLines.put(line, 0);
             }
@@ -1500,19 +1811,34 @@ public class Interpreter {
         return presentLines.getKeys();
     }
 
-    static Object getSourcesTree(InterpreterData idata) {
-        InterpreterData[] nested = idata.itsNestedFunctions;
-        if (nested == null || nested.length == 0) {
-            return idata.itsSource;
-        } else {
-            int N = nested.length;
-            Object[] result = new Object[N + 1];
-            result[0] = idata.itsSource;
-            for (int i = 0; i != N; ++i) {
-                result[1 + i] = getSourcesTree(nested[i]);
-            }
-            return result;
+    static String getSourcePositionFromStack(Context cx, int[] linep)
+    {
+        InterpreterData idata = cx.interpreterData;
+        linep[0] = getShort(idata.itsICode, cx.interpreterLineIndex);
+        return idata.itsSourceFile;
+    }
+
+    static String getEncodedSource(InterpreterData idata)
+    {
+        if (idata.encodedSource == null) {
+            return null;
         }
+        return idata.encodedSource.substring(idata.encodedSourceStart,
+                                             idata.encodedSourceEnd);
+    }
+
+    private static Scriptable[] wrapRegExps(Context cx, Scriptable scope,
+                                            InterpreterData idata)
+    {
+        if (idata.itsRegExpLiterals == null) Kit.codeBug();
+
+        RegExpProxy rep = ScriptRuntime.checkRegExpProxy(cx);
+        int N = idata.itsRegExpLiterals.length;
+        Scriptable[] array = new Scriptable[N];
+        for (int i = 0; i != N; ++i) {
+            array[i] = rep.wrapRegExp(cx, scope, idata.itsRegExpLiterals[i]);
+        }
+        return array;
     }
 
     private static InterpretedFunction createFunction(Context cx,
@@ -1520,18 +1846,9 @@ public class Interpreter {
                                                       InterpreterData idata,
                                                       boolean fromEvalCode)
     {
-        InterpretedFunction fn = new InterpretedFunction(cx, idata);
-        if (cx.hasCompileFunctionsWithDynamicScope()) {
-             // Nested functions are not affected by the dynamic scope flag
-             // as dynamic scope is already a parent of their scope
-             // Functions defined under the with statement also immune to
-             // this setup, in which case dynamic scope is ignored in favor
-             // of with object.
-             if (!(scope instanceof NativeCall
-                   || scope instanceof NativeWith))
-             {
-                 fn.itsUseDynamicScope = true;
-             }
+        InterpretedFunction fn = new InterpretedFunction(idata);
+        if (idata.itsRegExpLiterals != null) {
+            fn.itsRegExps = wrapRegExps(cx, scope, idata);
         }
         ScriptRuntime.initFunction(cx, scope, fn, idata.itsFunctionType,
                                    fromEvalCode);
@@ -1546,9 +1863,18 @@ public class Interpreter {
         throws JavaScriptException
     {
         if (cx.interpreterSecurityDomain != idata.securityDomain) {
-            return execWithNewDomain(cx, scope, thisObj,
-                                     args, argsDbl, argShift, argCount,
-                                     fnOrScript, idata);
+            if (argsDbl != null) {
+                args = getArgsArray(args, argsDbl, argShift, argCount);
+            }
+            SecurityController sc = idata.securityController;
+            Object savedDomain = cx.interpreterSecurityDomain;
+            cx.interpreterSecurityDomain = idata.securityDomain;
+            try {
+                return sc.callWithDomain(idata.securityDomain, cx, fnOrScript,
+                                         scope, thisObj, args);
+            } finally {
+                cx.interpreterSecurityDomain = savedDomain;
+            }
         }
 
         final Object DBL_MRK = Interpreter.DBL_MRK;
@@ -1557,26 +1883,24 @@ public class Interpreter {
         final int VAR_SHFT = 0;
         final int maxVars = idata.itsMaxVars;
         final int LOCAL_SHFT = VAR_SHFT + maxVars;
-        final int TRY_STACK_SHFT = LOCAL_SHFT + idata.itsMaxLocals;
-        final int STACK_SHFT = TRY_STACK_SHFT + idata.itsMaxTryDepth;
+        final int STACK_SHFT = LOCAL_SHFT + idata.itsMaxLocals;
 
 // stack[VAR_SHFT <= i < LOCAL_SHFT]: variables
 // stack[LOCAL_SHFT <= i < TRY_STACK_SHFT]: used for newtemp/usetemp
-// stack[TRY_STACK_SHFT <= i < STACK_SHFT]: stack of try scopes
 // stack[STACK_SHFT <= i < STACK_SHFT + idata.itsMaxStack]: stack data
 
-// sDbl[TRY_STACK_SHFT <= i < STACK_SHFT]: stack of try block pc, stored as doubles
-// sDbl[any other i]: if stack[i] is DBL_MRK, sDbl[i] holds the number value
+// sDbl[i]: if stack[i] is DBL_MRK, sDbl[i] holds the number value
 
         int maxFrameArray = idata.itsMaxFrameArray;
         if (maxFrameArray != STACK_SHFT + idata.itsMaxStack)
-            Context.codeBug();
+            Kit.codeBug();
 
         Object[] stack = new Object[maxFrameArray];
         double[] sDbl = new double[maxFrameArray];
 
         int stackTop = STACK_SHFT - 1;
-        int tryStackTop = 0; // add TRY_STACK_SHFT to get real index
+
+        int withDepth = 0;
 
         int definedArgs = fnOrScript.argCount;
         if (definedArgs > argCount) { definedArgs = argCount; }
@@ -1598,7 +1922,7 @@ public class Interpreter {
 
         if (idata.itsFunctionType != 0) {
             InterpretedFunction f = (InterpretedFunction)fnOrScript;
-            if (!f.itsUseDynamicScope) {
+            if (!idata.useDynamicScope) {
                 scope = fnOrScript.getParentScope();
             }
 
@@ -1617,13 +1941,13 @@ public class Interpreter {
             }
 
         } else {
-            scope = ScriptRuntime.initScript(cx, scope, fnOrScript, thisObj,
-                                             idata.itsFromEvalCode);
+            ScriptRuntime.initScript(cx, scope, fnOrScript, thisObj,
+                                     idata.itsFromEvalCode);
         }
 
         if (idata.itsNestedFunctions != null) {
             if (idata.itsFunctionType != 0 && !idata.itsNeedsActivation)
-                Context.codeBug();
+                Kit.codeBug();
             for (int i = 0; i < idata.itsNestedFunctions.length; i++) {
                 InterpreterData fdata = idata.itsNestedFunctions[i];
                 if (fdata.itsFunctionType == FunctionNode.FUNCTION_STATEMENT) {
@@ -1631,6 +1955,11 @@ public class Interpreter {
                 }
             }
         }
+
+        // Wrapped regexps for functions are stored in InterpretedFunction
+        // but for script which should not contain references to scope
+        // the regexps re-wrapped during each script execution
+        Scriptable[] scriptRegExps = null;
 
         boolean useActivationVars = false;
         if (debuggerFrame != null) {
@@ -1647,7 +1976,14 @@ public class Interpreter {
             debuggerFrame.onEnter(cx, scope, thisObj, args);
         }
 
+        InterpreterData savedData = cx.interpreterData;
+        cx.interpreterData = idata;
+
         Object result = undefined;
+        // If javaException != null on exit, it will be throw instead of
+        // normal return
+        Throwable javaException = null;
+        int exceptionPC = -1;
 
         byte[] iCode = idata.itsICode;
         String[] strings = idata.itsStringTable;
@@ -1662,22 +1998,130 @@ public class Interpreter {
         // other functions
         final int INVOCATION_COST = 100;
 
-        Loop: while (true) {
+        Loop: for (;;) {
             try {
-                switch (iCode[pc] & 0xff) {
+                switch (iCode[pc] & 0xFF) {
     // Back indent to ease imlementation reading
 
-    case TokenStream.ENDTRY :
-        tryStackTop--;
-        break;
-    case TokenStream.TRY :
-        stack[TRY_STACK_SHFT + tryStackTop] = scope;
-        sDbl[TRY_STACK_SHFT + tryStackTop] = (double)pc;
-        ++tryStackTop;
-        // Skip starting pc of catch/finally blocks
-        pc += 4;
-        break;
-    case TokenStream.GE : {
+    case Icode_CATCH: {
+        // The following code should be executed inside try/catch inside main
+        // loop, not in the loop catch block itself to deal with exceptions
+        // from observeInstructionCount. A special bytecode is used only to
+        // simplify logic.
+        if (javaException == null) Kit.codeBug();
+
+        int pcNew = -1;
+        boolean doCatch = false;
+        int handlerOffset = getExceptionHandler(idata.itsExceptionTable,
+                                                exceptionPC);
+
+        if (handlerOffset >= 0) {
+
+            final int SCRIPT_CAN_CATCH = 0, ONLY_FINALLY = 1, OTHER = 2;
+            int exType;
+            if (javaException instanceof JavaScriptException) {
+                exType = SCRIPT_CAN_CATCH;
+            } else if (javaException instanceof EcmaError) {
+                // an offical ECMA error object,
+                exType = SCRIPT_CAN_CATCH;
+            } else if (javaException instanceof EvaluatorException) {
+                exType = SCRIPT_CAN_CATCH;
+            } else if (javaException instanceof RuntimeException) {
+                exType = ONLY_FINALLY;
+            } else {
+                // Error instance
+                exType = OTHER;
+            }
+
+            if (exType != OTHER) {
+                // Do not allow for JS to interfere with Error instances
+                // (exType == OTHER), as they can be used to terminate
+                // long running script
+                if (exType == SCRIPT_CAN_CATCH) {
+                    // Allow JS to catch only JavaScriptException and
+                    // EcmaError
+                    pcNew = idata.itsExceptionTable[handlerOffset
+                                                    + EXCEPTION_CATCH_SLOT];
+                    if (pcNew >= 0) {
+                        // Has catch block
+                        doCatch = true;
+                    }
+                }
+                if (pcNew < 0) {
+                    pcNew = idata.itsExceptionTable[handlerOffset
+                                                    + EXCEPTION_FINALLY_SLOT];
+                }
+            }
+        }
+
+        if (debuggerFrame != null && !(javaException instanceof Error)) {
+            debuggerFrame.onExceptionThrown(cx, javaException);
+        }
+
+        if (pcNew < 0) {
+            break Loop;
+        }
+
+        // We caught an exception
+
+        // restore scope at try point
+        int tryWithDepth = idata.itsExceptionTable[
+                               handlerOffset + EXCEPTION_WITH_DEPTH_SLOT];
+        while (tryWithDepth != withDepth) {
+            if (scope == null) Kit.codeBug();
+            scope = ScriptRuntime.leaveWith(scope);
+            --withDepth;
+        }
+
+        if (doCatch) {
+            stackTop = STACK_SHFT - 1;
+            int exLocal = idata.itsExceptionTable[
+                              handlerOffset + EXCEPTION_LOCAL_SLOT];
+            stack[LOCAL_SHFT + exLocal] = ScriptRuntime.getCatchObject(
+                                              cx, scope, javaException);
+        } else {
+            stackTop = STACK_SHFT;
+            // Call finally handler with javaException on stack top to
+            // distinguish from normal invocation through GOSUB
+            // which would contain DBL_MRK on the stack
+            stack[stackTop] = javaException;
+        }
+        // clear exception
+        javaException = null;
+
+        // Notify instruction observer if necessary
+        // and point pc and pcPrevBranch to start of catch/finally block
+        if (instructionThreshold != 0) {
+            if (instructionCount > instructionThreshold) {
+                // Note: this can throw Error
+                cx.observeInstructionCount(instructionCount);
+                instructionCount = 0;
+            }
+        }
+        pcPrevBranch = pc = pcNew;
+        continue Loop;
+    }
+    case Token.THROW: {
+        Object value = stack[stackTop];
+        if (value == DBL_MRK) value = doubleWrap(sDbl[stackTop]);
+        --stackTop;
+
+        int sourceLine = getShort(iCode, pc + 1);
+        javaException = new JavaScriptException(value, idata.itsSourceFile,
+                                                sourceLine);
+        exceptionPC = pc;
+
+        if (instructionThreshold != 0) {
+            instructionCount += pc + 1 - pcPrevBranch;
+            if (instructionCount > instructionThreshold) {
+                cx.observeInstructionCount(instructionCount);
+                instructionCount = 0;
+            }
+        }
+        pcPrevBranch = pc = getJavaCatchPC(iCode);
+        continue Loop;
+    }
+    case Token.GE : {
         --stackTop;
         Object rhs = stack[stackTop + 1];
         Object lhs = stack[stackTop];
@@ -1692,7 +2136,7 @@ public class Interpreter {
         stack[stackTop] = valBln ? Boolean.TRUE : Boolean.FALSE;
         break;
     }
-    case TokenStream.LE : {
+    case Token.LE : {
         --stackTop;
         Object rhs = stack[stackTop + 1];
         Object lhs = stack[stackTop];
@@ -1707,7 +2151,7 @@ public class Interpreter {
         stack[stackTop] = valBln ? Boolean.TRUE : Boolean.FALSE;
         break;
     }
-    case TokenStream.GT : {
+    case Token.GT : {
         --stackTop;
         Object rhs = stack[stackTop + 1];
         Object lhs = stack[stackTop];
@@ -1722,7 +2166,7 @@ public class Interpreter {
         stack[stackTop] = valBln ? Boolean.TRUE : Boolean.FALSE;
         break;
     }
-    case TokenStream.LT : {
+    case Token.LT : {
         --stackTop;
         Object rhs = stack[stackTop + 1];
         Object lhs = stack[stackTop];
@@ -1737,7 +2181,7 @@ public class Interpreter {
         stack[stackTop] = valBln ? Boolean.TRUE : Boolean.FALSE;
         break;
     }
-    case TokenStream.IN : {
+    case Token.IN : {
         Object rhs = stack[stackTop];
         if (rhs == DBL_MRK) rhs = doubleWrap(sDbl[stackTop]);
         --stackTop;
@@ -1747,49 +2191,59 @@ public class Interpreter {
         stack[stackTop] = valBln ? Boolean.TRUE : Boolean.FALSE;
         break;
     }
-    case TokenStream.INSTANCEOF : {
+    case Token.INSTANCEOF : {
         Object rhs = stack[stackTop];
         if (rhs == DBL_MRK) rhs = doubleWrap(sDbl[stackTop]);
         --stackTop;
         Object lhs = stack[stackTop];
         if (lhs == DBL_MRK) lhs = doubleWrap(sDbl[stackTop]);
-        boolean valBln = ScriptRuntime.instanceOf(scope, lhs, rhs);
+        boolean valBln = ScriptRuntime.instanceOf(lhs, rhs, scope);
         stack[stackTop] = valBln ? Boolean.TRUE : Boolean.FALSE;
         break;
     }
-    case TokenStream.EQ : {
+    case Token.EQ : {
         --stackTop;
         boolean valBln = do_eq(stack, sDbl, stackTop);
         stack[stackTop] = valBln ? Boolean.TRUE : Boolean.FALSE;
         break;
     }
-    case TokenStream.NE : {
+    case Token.NE : {
         --stackTop;
         boolean valBln = !do_eq(stack, sDbl, stackTop);
         stack[stackTop] = valBln ? Boolean.TRUE : Boolean.FALSE;
         break;
     }
-    case TokenStream.SHEQ : {
+    case Token.SHEQ : {
         --stackTop;
         boolean valBln = do_sheq(stack, sDbl, stackTop);
         stack[stackTop] = valBln ? Boolean.TRUE : Boolean.FALSE;
         break;
     }
-    case TokenStream.SHNE : {
+    case Token.SHNE : {
         --stackTop;
         boolean valBln = !do_sheq(stack, sDbl, stackTop);
         stack[stackTop] = valBln ? Boolean.TRUE : Boolean.FALSE;
         break;
     }
-    case TokenStream.IFNE : {
-        Object val = stack[stackTop];
-        boolean valBln;
-        if (val != DBL_MRK) {
-            valBln = !ScriptRuntime.toBoolean(val);
-        } else {
-            double valDbl = sDbl[stackTop];
-            valBln = !(valDbl == valDbl && valDbl != 0.0);
+    case Token.IFNE : {
+        boolean valBln = stack_boolean(stack, sDbl, stackTop);
+        --stackTop;
+        if (!valBln) {
+            if (instructionThreshold != 0) {
+                instructionCount += pc + 3 - pcPrevBranch;
+                if (instructionCount > instructionThreshold) {
+                    cx.observeInstructionCount(instructionCount);
+                    instructionCount = 0;
+                }
+            }
+            pcPrevBranch = pc = getTarget(iCode, pc + 1);
+            continue Loop;
         }
+        pc += 2;
+        break;
+    }
+    case Token.IFEQ : {
+        boolean valBln = stack_boolean(stack, sDbl, stackTop);
         --stackTop;
         if (valBln) {
             if (instructionThreshold != 0) {
@@ -1800,20 +2254,13 @@ public class Interpreter {
                 }
             }
             pcPrevBranch = pc = getTarget(iCode, pc + 1);
-            continue;
+            continue Loop;
         }
         pc += 2;
         break;
     }
-    case TokenStream.IFEQ : {
-        boolean valBln;
-        Object val = stack[stackTop];
-        if (val != DBL_MRK) {
-            valBln = ScriptRuntime.toBoolean(val);
-        } else {
-            double valDbl = sDbl[stackTop];
-            valBln = (valDbl == valDbl && valDbl != 0.0);
-        }
+    case Icode_IFEQ_POP : {
+        boolean valBln = stack_boolean(stack, sDbl, stackTop);
         --stackTop;
         if (valBln) {
             if (instructionThreshold != 0) {
@@ -1824,12 +2271,13 @@ public class Interpreter {
                 }
             }
             pcPrevBranch = pc = getTarget(iCode, pc + 1);
-            continue;
+            stack[stackTop--] = null;
+            continue Loop;
         }
         pc += 2;
         break;
     }
-    case TokenStream.GOTO :
+    case Token.GOTO :
         if (instructionThreshold != 0) {
             instructionCount += pc + 3 - pcPrevBranch;
             if (instructionCount > instructionThreshold) {
@@ -1838,9 +2286,11 @@ public class Interpreter {
             }
         }
         pcPrevBranch = pc = getTarget(iCode, pc + 1);
-        continue;
-    case TokenStream.GOSUB :
-        sDbl[++stackTop] = pc + 3;
+        continue Loop;
+    case Icode_GOSUB :
+        ++stackTop;
+        stack[stackTop] = DBL_MRK;
+        sDbl[stackTop] = pc + 3;
         if (instructionThreshold != 0) {
             instructionCount += pc + 3 - pcPrevBranch;
             if (instructionCount > instructionThreshold) {
@@ -1848,8 +2298,8 @@ public class Interpreter {
                 instructionCount = 0;
             }
         }
-        pcPrevBranch = pc = getTarget(iCode, pc + 1);                                    continue;
-    case TokenStream.RETSUB : {
+        pcPrevBranch = pc = getTarget(iCode, pc + 1);                                    continue Loop;
+    case Icode_RETSUB : {
         int slot = (iCode[pc + 1] & 0xFF);
         if (instructionThreshold != 0) {
             instructionCount += pc + 2 - pcPrevBranch;
@@ -1858,39 +2308,67 @@ public class Interpreter {
                 instructionCount = 0;
             }
         }
-        pcPrevBranch = pc = (int)sDbl[LOCAL_SHFT + slot];
-        continue;
+        int newPC;
+        Object value = stack[LOCAL_SHFT + slot];
+        if (value != DBL_MRK) {
+            // Invocation from exception handler, restore object to rethrow
+            javaException = (Throwable)value;
+            exceptionPC = pc;
+            newPC = getJavaCatchPC(iCode);
+        } else {
+            // Normal return from GOSUB
+            newPC = (int)sDbl[LOCAL_SHFT + slot];
+        }
+        pcPrevBranch = pc = newPC;
+        continue Loop;
     }
-    case TokenStream.POP :
+    case Token.POP :
+        stack[stackTop] = null;
         stackTop--;
         break;
-    case TokenStream.DUP :
+    case Icode_DUP :
         stack[stackTop + 1] = stack[stackTop];
         sDbl[stackTop + 1] = sDbl[stackTop];
         stackTop++;
         break;
-    case TokenStream.POPV :
+    case Icode_DUPSECOND : {
+        stack[stackTop + 1] = stack[stackTop - 1];
+        sDbl[stackTop + 1] = sDbl[stackTop - 1];
+        stackTop++;
+        break;
+    }
+    case Icode_SWAP : {
+        Object o = stack[stackTop];
+        stack[stackTop] = stack[stackTop - 1];
+        stack[stackTop - 1] = o;
+        double d = sDbl[stackTop];
+        sDbl[stackTop] = sDbl[stackTop - 1];
+        sDbl[stackTop - 1] = d;
+        break;
+    }
+    case Token.POPV :
         result = stack[stackTop];
         if (result == DBL_MRK) result = doubleWrap(sDbl[stackTop]);
+        stack[stackTop] = null;
         --stackTop;
         break;
-    case TokenStream.RETURN :
+    case Token.RETURN :
         result = stack[stackTop];
         if (result == DBL_MRK) result = doubleWrap(sDbl[stackTop]);
         --stackTop;
         break Loop;
-    case RETURN_UNDEF_ICODE :
+    case Token.RETURN_POPV :
+        break Loop;
+    case Icode_RETUNDEF :
         result = undefined;
         break Loop;
-    case END_ICODE:
-        break Loop;
-    case TokenStream.BITNOT : {
+    case Token.BITNOT : {
         int rIntValue = stack_int32(stack, sDbl, stackTop);
         stack[stackTop] = DBL_MRK;
         sDbl[stackTop] = ~rIntValue;
         break;
     }
-    case TokenStream.BITAND : {
+    case Token.BITAND : {
         int rIntValue = stack_int32(stack, sDbl, stackTop);
         --stackTop;
         int lIntValue = stack_int32(stack, sDbl, stackTop);
@@ -1898,7 +2376,7 @@ public class Interpreter {
         sDbl[stackTop] = lIntValue & rIntValue;
         break;
     }
-    case TokenStream.BITOR : {
+    case Token.BITOR : {
         int rIntValue = stack_int32(stack, sDbl, stackTop);
         --stackTop;
         int lIntValue = stack_int32(stack, sDbl, stackTop);
@@ -1906,7 +2384,7 @@ public class Interpreter {
         sDbl[stackTop] = lIntValue | rIntValue;
         break;
     }
-    case TokenStream.BITXOR : {
+    case Token.BITXOR : {
         int rIntValue = stack_int32(stack, sDbl, stackTop);
         --stackTop;
         int lIntValue = stack_int32(stack, sDbl, stackTop);
@@ -1914,7 +2392,7 @@ public class Interpreter {
         sDbl[stackTop] = lIntValue ^ rIntValue;
         break;
     }
-    case TokenStream.LSH : {
+    case Token.LSH : {
         int rIntValue = stack_int32(stack, sDbl, stackTop);
         --stackTop;
         int lIntValue = stack_int32(stack, sDbl, stackTop);
@@ -1922,7 +2400,7 @@ public class Interpreter {
         sDbl[stackTop] = lIntValue << rIntValue;
         break;
     }
-    case TokenStream.RSH : {
+    case Token.RSH : {
         int rIntValue = stack_int32(stack, sDbl, stackTop);
         --stackTop;
         int lIntValue = stack_int32(stack, sDbl, stackTop);
@@ -1930,7 +2408,7 @@ public class Interpreter {
         sDbl[stackTop] = lIntValue >> rIntValue;
         break;
     }
-    case TokenStream.URSH : {
+    case Token.URSH : {
         int rIntValue = stack_int32(stack, sDbl, stackTop) & 0x1F;
         --stackTop;
         double lDbl = stack_double(stack, sDbl, stackTop);
@@ -1938,11 +2416,11 @@ public class Interpreter {
         sDbl[stackTop] = ScriptRuntime.toUint32(lDbl) >>> rIntValue;
         break;
     }
-    case TokenStream.ADD :
+    case Token.ADD :
         --stackTop;
         do_add(stack, sDbl, stackTop);
         break;
-    case TokenStream.SUB : {
+    case Token.SUB : {
         double rDbl = stack_double(stack, sDbl, stackTop);
         --stackTop;
         double lDbl = stack_double(stack, sDbl, stackTop);
@@ -1950,19 +2428,19 @@ public class Interpreter {
         sDbl[stackTop] = lDbl - rDbl;
         break;
     }
-    case TokenStream.NEG : {
+    case Token.NEG : {
         double rDbl = stack_double(stack, sDbl, stackTop);
         stack[stackTop] = DBL_MRK;
         sDbl[stackTop] = -rDbl;
         break;
     }
-    case TokenStream.POS : {
+    case Token.POS : {
         double rDbl = stack_double(stack, sDbl, stackTop);
         stack[stackTop] = DBL_MRK;
         sDbl[stackTop] = rDbl;
         break;
     }
-    case TokenStream.MUL : {
+    case Token.MUL : {
         double rDbl = stack_double(stack, sDbl, stackTop);
         --stackTop;
         double lDbl = stack_double(stack, sDbl, stackTop);
@@ -1970,7 +2448,7 @@ public class Interpreter {
         sDbl[stackTop] = lDbl * rDbl;
         break;
     }
-    case TokenStream.DIV : {
+    case Token.DIV : {
         double rDbl = stack_double(stack, sDbl, stackTop);
         --stackTop;
         double lDbl = stack_double(stack, sDbl, stackTop);
@@ -1979,7 +2457,7 @@ public class Interpreter {
         sDbl[stackTop] = lDbl / rDbl;
         break;
     }
-    case TokenStream.MOD : {
+    case Token.MOD : {
         double rDbl = stack_double(stack, sDbl, stackTop);
         --stackTop;
         double lDbl = stack_double(stack, sDbl, stackTop);
@@ -1987,39 +2465,43 @@ public class Interpreter {
         sDbl[stackTop] = lDbl % rDbl;
         break;
     }
-    case TokenStream.BINDNAME : {
+    case Token.NOT : {
+        stack[stackTop] = stack_boolean(stack, sDbl, stackTop)
+                          ? Boolean.FALSE : Boolean.TRUE;
+        break;
+    }
+    case Token.BINDNAME : {
         String name = strings[getIndex(iCode, pc + 1)];
         stack[++stackTop] = ScriptRuntime.bind(scope, name);
         pc += 2;
         break;
     }
-    case TokenStream.GETBASE : {
+    case Token.GETBASE : {
         String name = strings[getIndex(iCode, pc + 1)];
         stack[++stackTop] = ScriptRuntime.getBase(scope, name);
         pc += 2;
         break;
     }
-    case TokenStream.SETNAME : {
+    case Token.SETNAME : {
         String name = strings[getIndex(iCode, pc + 1)];
         Object rhs = stack[stackTop];
         if (rhs == DBL_MRK) rhs = doubleWrap(sDbl[stackTop]);
         --stackTop;
-        // what about class cast exception here for lhs?
         Scriptable lhs = (Scriptable)stack[stackTop];
         stack[stackTop] = ScriptRuntime.setName(lhs, rhs, scope, name);
         pc += 2;
         break;
     }
-    case TokenStream.DELPROP : {
+    case Token.DELPROP : {
         Object rhs = stack[stackTop];
         if (rhs == DBL_MRK) rhs = doubleWrap(sDbl[stackTop]);
         --stackTop;
         Object lhs = stack[stackTop];
         if (lhs == DBL_MRK) lhs = doubleWrap(sDbl[stackTop]);
-        stack[stackTop] = ScriptRuntime.delete(lhs, rhs);
+        stack[stackTop] = ScriptRuntime.delete(cx, scope, lhs, rhs);
         break;
     }
-    case TokenStream.GETPROP : {
+    case Token.GETPROP : {
         String name = (String)stack[stackTop];
         --stackTop;
         Object lhs = stack[stackTop];
@@ -2027,7 +2509,7 @@ public class Interpreter {
         stack[stackTop] = ScriptRuntime.getProp(lhs, name, scope);
         break;
     }
-    case TokenStream.SETPROP : {
+    case Token.SETPROP : {
         Object rhs = stack[stackTop];
         if (rhs == DBL_MRK) rhs = doubleWrap(sDbl[stackTop]);
         --stackTop;
@@ -2038,15 +2520,15 @@ public class Interpreter {
         stack[stackTop] = ScriptRuntime.setProp(lhs, name, rhs, scope);
         break;
     }
-    case TokenStream.GETELEM :
+    case Token.GETELEM :
         do_getElem(cx, stack, sDbl, stackTop, scope);
         --stackTop;
         break;
-    case TokenStream.SETELEM :
+    case Token.SETELEM :
         do_setElem(cx, stack, sDbl, stackTop, scope);
         stackTop -= 2;
         break;
-    case TokenStream.PROPINC : {
+    case Icode_PROPINC : {
         String name = (String)stack[stackTop];
         --stackTop;
         Object lhs = stack[stackTop];
@@ -2054,7 +2536,7 @@ public class Interpreter {
         stack[stackTop] = ScriptRuntime.postIncrement(lhs, name, scope);
         break;
     }
-    case TokenStream.PROPDEC : {
+    case Icode_PROPDEC : {
         String name = (String)stack[stackTop];
         --stackTop;
         Object lhs = stack[stackTop];
@@ -2062,7 +2544,7 @@ public class Interpreter {
         stack[stackTop] = ScriptRuntime.postDecrement(lhs, name, scope);
         break;
     }
-    case TokenStream.ELEMINC : {
+    case Icode_ELEMINC : {
         Object rhs = stack[stackTop];
         if (rhs == DBL_MRK) rhs = doubleWrap(sDbl[stackTop]);
         --stackTop;
@@ -2071,7 +2553,7 @@ public class Interpreter {
         stack[stackTop] = ScriptRuntime.postIncrementElem(lhs, rhs, scope);
         break;
     }
-    case TokenStream.ELEMDEC : {
+    case Icode_ELEMDEC : {
         Object rhs = stack[stackTop];
         if (rhs == DBL_MRK) rhs = doubleWrap(sDbl[stackTop]);
         --stackTop;
@@ -2080,54 +2562,58 @@ public class Interpreter {
         stack[stackTop] = ScriptRuntime.postDecrementElem(lhs, rhs, scope);
         break;
     }
-    case TokenStream.GETTHIS : {
-        Scriptable lhs = (Scriptable)stack[stackTop];
-        stack[stackTop] = ScriptRuntime.getThis(lhs);
-        break;
-    }
-    case TokenStream.NEWTEMP : {
+    case Token.LOCAL_SAVE : {
         int slot = (iCode[++pc] & 0xFF);
         stack[LOCAL_SHFT + slot] = stack[stackTop];
         sDbl[LOCAL_SHFT + slot] = sDbl[stackTop];
+        --stackTop;
         break;
     }
-    case TokenStream.USETEMP : {
+    case Token.LOCAL_LOAD : {
         int slot = (iCode[++pc] & 0xFF);
         ++stackTop;
         stack[stackTop] = stack[LOCAL_SHFT + slot];
         sDbl[stackTop] = sDbl[LOCAL_SHFT + slot];
         break;
     }
-    case TokenStream.CALLSPECIAL : {
+    case Icode_CALLSPECIAL : {
         if (instructionThreshold != 0) {
             instructionCount += INVOCATION_COST;
             cx.instructionCount = instructionCount;
             instructionCount = -1;
         }
-        int lineNum = getShort(iCode, pc + 1);
-        String name = strings[getIndex(iCode, pc + 3)];
+        int callType = iCode[pc + 1] & 0xFF;
+        boolean isNew =  (iCode[pc + 2] != 0);
+        int sourceLine = getShort(iCode, pc + 3);
         int count = getIndex(iCode, pc + 5);
         stackTop -= count;
         Object[] outArgs = getArgsArray(stack, sDbl, stackTop + 1, count);
-        Object rhs = stack[stackTop];
-        if (rhs == DBL_MRK) rhs = doubleWrap(sDbl[stackTop]);
-        --stackTop;
-        Object lhs = stack[stackTop];
-        if (lhs == DBL_MRK) lhs = doubleWrap(sDbl[stackTop]);
+        Object functionThis;
+        if (isNew) {
+            functionThis = null;
+        } else {
+            functionThis = stack[stackTop];
+            if (functionThis == DBL_MRK) {
+                functionThis = doubleWrap(sDbl[stackTop]);
+            }
+            --stackTop;
+        }
+        Object function = stack[stackTop];
+        if (function == DBL_MRK) function = doubleWrap(sDbl[stackTop]);
         stack[stackTop] = ScriptRuntime.callSpecial(
-                            cx, lhs, rhs, outArgs,
-                            thisObj, scope, name, lineNum);
+                              cx, function, isNew, functionThis, outArgs,
+                              scope, thisObj, callType,
+                              idata.itsSourceFile, sourceLine);
         pc += 6;
         instructionCount = cx.instructionCount;
         break;
     }
-    case TokenStream.CALL : {
+    case Token.CALL : {
         if (instructionThreshold != 0) {
             instructionCount += INVOCATION_COST;
             cx.instructionCount = instructionCount;
             instructionCount = -1;
         }
-        cx.instructionCount = instructionCount;
         int count = getIndex(iCode, pc + 3);
         stackTop -= count;
         int calleeArgShft = stackTop + 1;
@@ -2135,7 +2621,6 @@ public class Interpreter {
         if (rhs == DBL_MRK) rhs = doubleWrap(sDbl[stackTop]);
         --stackTop;
         Object lhs = stack[stackTop];
-
         Scriptable calleeScope = scope;
         if (idata.itsNeedsActivation) {
             calleeScope = ScriptableObject.getTopLevelScope(scope);
@@ -2167,15 +2652,15 @@ public class Interpreter {
                 lhs = strings[getIndex(iCode, pc + 1)];
                 if (lhs == null) lhs = undefined;
             }
-            throw NativeGlobal.typeError1
-                ("msg.isnt.function", ScriptRuntime.toString(lhs), calleeScope);
+            throw ScriptRuntime.typeError1("msg.isnt.function",
+                                           ScriptRuntime.toString(lhs));
         }
 
         pc += 4;
         instructionCount = cx.instructionCount;
         break;
     }
-    case TokenStream.NEW : {
+    case Token.NEW : {
         if (instructionThreshold != 0) {
             instructionCount += INVOCATION_COST;
             cx.instructionCount = instructionCount;
@@ -2211,66 +2696,74 @@ public class Interpreter {
                 lhs = strings[getIndex(iCode, pc + 1)];
                 if (lhs == null) lhs = undefined;
             }
-            throw NativeGlobal.typeError1
-                ("msg.isnt.function", ScriptRuntime.toString(lhs), scope);
+            throw ScriptRuntime.typeError1("msg.isnt.function",
+                                           ScriptRuntime.toString(lhs));
 
         }
         pc += 4;                                                                         instructionCount = cx.instructionCount;
         break;
     }
-    case TokenStream.TYPEOF : {
+    case Token.TYPEOF : {
         Object lhs = stack[stackTop];
         if (lhs == DBL_MRK) lhs = doubleWrap(sDbl[stackTop]);
         stack[stackTop] = ScriptRuntime.typeof(lhs);
         break;
     }
-    case TokenStream.TYPEOFNAME : {
+    case Icode_TYPEOFNAME : {
         String name = strings[getIndex(iCode, pc + 1)];
         stack[++stackTop] = ScriptRuntime.typeofName(scope, name);
         pc += 2;
         break;
     }
-    case TokenStream.STRING :
+    case Icode_NAME_AND_THIS : {
+        String name = strings[getIndex(iCode, pc + 1)];
+        Scriptable base = ScriptRuntime.getBase(scope, name);
+        stack[++stackTop] = ScriptRuntime.getProp(base, name, scope);
+        stack[++stackTop] = ScriptRuntime.getThis(base);
+        pc += 2;
+        break;
+    }
+    case Token.STRING :
         stack[++stackTop] = strings[getIndex(iCode, pc + 1)];
         pc += 2;
         break;
-    case SHORTNUMBER_ICODE :
+    case Icode_SHORTNUMBER :
         ++stackTop;
         stack[stackTop] = DBL_MRK;
         sDbl[stackTop] = getShort(iCode, pc + 1);
         pc += 2;
         break;
-    case INTNUMBER_ICODE :
+    case Icode_INTNUMBER :
         ++stackTop;
         stack[stackTop] = DBL_MRK;
         sDbl[stackTop] = getInt(iCode, pc + 1);
         pc += 4;
         break;
-    case TokenStream.NUMBER :
+    case Token.NUMBER :
         ++stackTop;
         stack[stackTop] = DBL_MRK;
         sDbl[stackTop] = idata.itsDoubleTable[getIndex(iCode, pc + 1)];
         pc += 2;
         break;
-    case TokenStream.NAME : {
+    case Token.NAME : {
         String name = strings[getIndex(iCode, pc + 1)];
         stack[++stackTop] = ScriptRuntime.name(scope, name);
         pc += 2;
         break;
     }
-    case TokenStream.NAMEINC : {
+    case Icode_NAMEINC : {
         String name = strings[getIndex(iCode, pc + 1)];
         stack[++stackTop] = ScriptRuntime.postIncrement(scope, name);
         pc += 2;
         break;
     }
-    case TokenStream.NAMEDEC : {
+    case Icode_NAMEDEC : {
         String name = strings[getIndex(iCode, pc + 1)];
         stack[++stackTop] = ScriptRuntime.postDecrement(scope, name);
         pc += 2;
         break;
     }
-    case TokenStream.SETVAR : {
+    case Token.SETVAR : {
         int slot = (iCode[++pc] & 0xFF);
         if (!useActivationVars) {
             stack[VAR_SHFT + slot] = stack[stackTop];
@@ -2282,7 +2775,7 @@ public class Interpreter {
         }
         break;
     }
-    case TokenStream.GETVAR : {
+    case Token.GETVAR : {
         int slot = (iCode[++pc] & 0xFF);
         ++stackTop;
         if (!useActivationVars) {
@@ -2293,7 +2786,7 @@ public class Interpreter {
         }
         break;
     }
-    case TokenStream.VARINC : {
+    case Icode_VARINC : {
         int slot = (iCode[++pc] & 0xFF);
         ++stackTop;
         if (!useActivationVars) {
@@ -2309,7 +2802,7 @@ public class Interpreter {
         }
         break;
     }
-    case TokenStream.VARDEC : {
+    case Icode_VARDEC : {
         int slot = (iCode[++pc] & 0xFF);
         ++stackTop;
         if (!useActivationVars) {
@@ -2325,96 +2818,89 @@ public class Interpreter {
         }
         break;
     }
-    case TokenStream.ZERO :
+    case Token.ZERO :
         ++stackTop;
         stack[stackTop] = DBL_MRK;
         sDbl[stackTop] = 0;
         break;
-    case TokenStream.ONE :
+    case Token.ONE :
         ++stackTop;
         stack[stackTop] = DBL_MRK;
         sDbl[stackTop] = 1;
         break;
-    case TokenStream.NULL :
+    case Token.NULL :
         stack[++stackTop] = null;
         break;
-    case TokenStream.THIS :
+    case Token.THIS :
         stack[++stackTop] = thisObj;
         break;
-    case TokenStream.THISFN :
+    case Token.THISFN :
         stack[++stackTop] = fnOrScript;
         break;
-    case TokenStream.FALSE :
+    case Token.FALSE :
         stack[++stackTop] = Boolean.FALSE;
         break;
-    case TokenStream.TRUE :
+    case Token.TRUE :
         stack[++stackTop] = Boolean.TRUE;
         break;
-    case TokenStream.UNDEFINED :
+    case Token.UNDEFINED :
         stack[++stackTop] = Undefined.instance;
         break;
-    case TokenStream.THROW : {
-        Object exception = stack[stackTop];
-        if (exception == DBL_MRK) exception = doubleWrap(sDbl[stackTop]);
-        --stackTop;
-        throw new JavaScriptException(exception);
-    }
-    case TokenStream.JTHROW : {
-        Object exception = stack[stackTop];
-        // No need to check for DBL_MRK: exception must be Exception
-        --stackTop;
-        if (exception instanceof JavaScriptException)
-            throw (JavaScriptException)exception;
-        else
-            throw (RuntimeException)exception;
-    }
-    case TokenStream.ENTERWITH : {
+    case Token.ENTERWITH : {
         Object lhs = stack[stackTop];
         if (lhs == DBL_MRK) lhs = doubleWrap(sDbl[stackTop]);
         --stackTop;
         scope = ScriptRuntime.enterWith(lhs, scope);
+        ++withDepth;
         break;
     }
-    case TokenStream.LEAVEWITH :
+    case Token.LEAVEWITH :
         scope = ScriptRuntime.leaveWith(scope);
+        --withDepth;
         break;
-    case TokenStream.NEWSCOPE :
-        stack[++stackTop] = ScriptRuntime.newScope();
+    case Token.CATCH_SCOPE : {
+        String name = strings[getIndex(iCode, pc + 1)];
+        stack[stackTop] = ScriptRuntime.newCatchScope(name, stack[stackTop]);
+        pc += 2;
         break;
-    case TokenStream.ENUMINIT : {
+    }
+    case Token.ENUM_INIT : {
         int slot = (iCode[++pc] & 0xFF);
         Object lhs = stack[stackTop];
         if (lhs == DBL_MRK) lhs = doubleWrap(sDbl[stackTop]);
         --stackTop;
-        stack[LOCAL_SHFT + slot] = ScriptRuntime.initEnum(lhs, scope);
+        stack[LOCAL_SHFT + slot] = ScriptRuntime.enumInit(lhs, scope);
         break;
     }
-    case TokenStream.ENUMNEXT : {
+    case Token.ENUM_NEXT :
+    case Token.ENUM_ID : {
         int slot = (iCode[++pc] & 0xFF);
         Object val = stack[LOCAL_SHFT + slot];
         ++stackTop;
-        stack[stackTop] = ScriptRuntime.nextEnum(val);
+        stack[stackTop] = ((iCode[pc - 1] & 0xFF) == Token.ENUM_NEXT)
+                          ? (Object)ScriptRuntime.enumNext(val)
+                          : (Object)ScriptRuntime.enumId(val);
         break;
     }
-    case TokenStream.GETPROTO : {
+    case Icode_GETPROTO : {
         Object lhs = stack[stackTop];
         if (lhs == DBL_MRK) lhs = doubleWrap(sDbl[stackTop]);
         stack[stackTop] = ScriptRuntime.getProto(lhs, scope);
         break;
     }
-    case TokenStream.GETPARENT : {
+    case Icode_PUSH_PARENT : {
         Object lhs = stack[stackTop];
         if (lhs == DBL_MRK) lhs = doubleWrap(sDbl[stackTop]);
-        stack[stackTop] = ScriptRuntime.getParent(lhs);
+        stack[++stackTop] = ScriptRuntime.getParent(lhs);
         break;
     }
-    case TokenStream.GETSCOPEPARENT : {
+    case Icode_GETSCOPEPARENT : {
         Object lhs = stack[stackTop];
         if (lhs == DBL_MRK) lhs = doubleWrap(sDbl[stackTop]);
         stack[stackTop] = ScriptRuntime.getParent(lhs, scope);
         break;
     }
-    case TokenStream.SETPROTO : {
+    case Icode_SETPROTO : {
         Object rhs = stack[stackTop];
         if (rhs == DBL_MRK) rhs = doubleWrap(sDbl[stackTop]);
         --stackTop;
@@ -2423,7 +2909,7 @@ public class Interpreter {
         stack[stackTop] = ScriptRuntime.setProto(lhs, rhs, scope);
         break;
     }
-    case TokenStream.SETPARENT : {
+    case Icode_SETPARENT : {
         Object rhs = stack[stackTop];
         if (rhs == DBL_MRK) rhs = doubleWrap(sDbl[stackTop]);
         --stackTop;
@@ -2432,10 +2918,10 @@ public class Interpreter {
         stack[stackTop] = ScriptRuntime.setParent(lhs, rhs, scope);
         break;
     }
-    case TokenStream.SCOPE :
+    case Icode_SCOPE :
         stack[++stackTop] = scope;
         break;
-    case TokenStream.CLOSURE : {
+    case Icode_CLOSURE : {
         int i = getIndex(iCode, pc + 1);
         InterpreterData closureData = idata.itsNestedFunctions[i];
         stack[++stackTop] = createFunction(cx, scope, closureData,
@@ -2443,19 +2929,25 @@ public class Interpreter {
         pc += 2;
         break;
     }
-    case TokenStream.REGEXP : {
+    case Token.REGEXP : {
         int i = getIndex(iCode, pc + 1);
-        stack[++stackTop] = idata.itsRegExpLiterals[i];
+        Scriptable regexp;
+        if (idata.itsFunctionType != 0) {
+            regexp = ((InterpretedFunction)fnOrScript).itsRegExps[i];
+        } else {
+            if (scriptRegExps == null) {
+                scriptRegExps = wrapRegExps(cx, scope, idata);
+            }
+            regexp = scriptRegExps[i];
+        }
+        stack[++stackTop] = regexp;
         pc += 2;
         break;
     }
-    case SOURCEFILE_ICODE :
-        cx.interpreterSourceFile = idata.itsSourceFile;
-        break;
-    case LINE_ICODE : {
-        int line = getShort(iCode, pc + 1);
-        cx.interpreterLine = line;
+    case Icode_LINE : {
+        cx.interpreterLineIndex = pc + 1;
         if (debuggerFrame != null) {
+            int line = getShort(iCode, pc + 1);
             debuggerFrame.onLineChange(cx, line);
         }
         pc += 2;
@@ -2464,7 +2956,7 @@ public class Interpreter {
     default : {
         dumpICode(idata);
         throw new RuntimeException
-            ("Unknown icode : "+(iCode[pc] & 0xff)+" @ pc : "+pc);
+            ("Unknown icode : "+(iCode[pc] & 0xFF)+" @ pc : "+pc);
     }
     // end of interpreter switch
                 }
@@ -2482,108 +2974,23 @@ public class Interpreter {
                     }
                 }
 
-                final int SCRIPT_THROW = 0, ECMA = 1, RUNTIME = 2, OTHER = 3;
-                int exType;
-                Object catchObj = ex; // Object seen by script catch
-
-                for (;;) {
-                    if (catchObj instanceof JavaScriptException) {
-                        catchObj = ScriptRuntime.unwrapJavaScriptException
-                                    ((JavaScriptException)catchObj);
-                        exType = SCRIPT_THROW;
-                    } else if (catchObj instanceof EcmaError) {
-                        // an offical ECMA error object,
-                        catchObj = ((EcmaError)catchObj).getErrorObject();
-                        exType = ECMA;
-                    } else if (catchObj instanceof RuntimeException) {
-                        if (catchObj instanceof WrappedException) {
-                            Object w = ((WrappedException) catchObj).unwrap();
-                            if (w instanceof Throwable) {
-                                catchObj = ex = (Throwable) w;
-                                continue;
-                            }
-                        }
-                        catchObj = null; // script can not catch this
-                        exType = RUNTIME;
-                    } else {
-                        // Error instance
-                        catchObj = null; // script can not catch this
-                        exType = OTHER;
-                    }
-                    break;
-                }
-
-                if (exType != OTHER && debuggerFrame != null) {
-                    debuggerFrame.onExceptionThrown(cx, ex);
-                }
-
-                boolean rethrow = true;
-                if (exType != OTHER && tryStackTop > 0) {
-                    // Do not allow for JS to interfere with Error instances
-                    // (exType == OTHER), as they can be used to terminate
-                    // long running script
-                    --tryStackTop;
-                    int try_pc = (int)sDbl[TRY_STACK_SHFT + tryStackTop];
-                    if (exType == SCRIPT_THROW || exType == ECMA) {
-                        // Allow JS to catch only JavaScriptException and
-                        // EcmaError
-                        int catch_offset = getShort(iCode, try_pc + 1);
-                        if (catch_offset != 0) {
-                            // Has catch block
-                            rethrow = false;
-                            pc = try_pc + catch_offset;
-                            stackTop = STACK_SHFT;
-                            stack[stackTop] = catchObj;
-                        }
-                    }
-                    if (rethrow) {
-                        int finally_offset = getShort(iCode, try_pc + 3);
-                        if (finally_offset != 0) {
-                            // has finally block
-                            rethrow = false;
-                            pc = try_pc + finally_offset;
-                            stackTop = STACK_SHFT;
-                            stack[stackTop] = ex;
-                        }
-                    }
-                }
-
-                if (rethrow) {
-                    if (debuggerFrame != null) {
-                        debuggerFrame.onExit(cx, true, ex);
-                    }
-                    if (idata.itsNeedsActivation) {
-                        ScriptRuntime.popActivation(cx);
-                    }
-
-                    if (exType == SCRIPT_THROW)
-                        throw (JavaScriptException)ex;
-                    if (exType == ECMA || exType == RUNTIME)
-                        throw (RuntimeException)ex;
-                    throw (Error)ex;
-                }
-
-                // We caught an exception,
-
-                // Notify instruction observer if necessary
-                // and point pcPrevBranch to start of catch/finally block
-                if (instructionThreshold != 0) {
-                    if (instructionCount > instructionThreshold) {
-                        // Note: this can throw Error
-                        cx.observeInstructionCount(instructionCount);
-                        instructionCount = 0;
-                    }
-                }
-                pcPrevBranch = pc;
-
-                // restore scope at try point
-                scope = (Scriptable)stack[TRY_STACK_SHFT + tryStackTop];
+                javaException = ex;
+                exceptionPC = pc;
+                pc = getJavaCatchPC(iCode);
+                continue Loop;
             }
         }
+
+        cx.interpreterData = savedData;
+
         if (debuggerFrame != null) {
-            debuggerFrame.onExit(cx, false, result);
+            if (javaException != null) {
+                    debuggerFrame.onExit(cx, true, javaException);
+            } else {
+                    debuggerFrame.onExit(cx, false, result);
+            }
         }
-        if (idata.itsNeedsActivation) {
+        if (idata.itsNeedsActivation || debuggerFrame != null) {
             ScriptRuntime.popActivation(cx);
         }
 
@@ -2594,10 +3001,22 @@ public class Interpreter {
             }
             cx.instructionCount = instructionCount;
         }
+
+        if (javaException != null) {
+            if (javaException instanceof JavaScriptException) {
+                throw (JavaScriptException)javaException;
+            } else if (javaException instanceof RuntimeException) {
+                throw (RuntimeException)javaException;
+            } else {
+                // Must be instance of Error or code bug
+                throw (Error)javaException;
+            }
+        }
         return result;
     }
 
-    private static Object doubleWrap(double x) {
+    private static Object doubleWrap(double x)
+    {
         return new Double(x);
     }
 
@@ -2613,6 +3032,25 @@ public class Interpreter {
     {
         Object x = stack[i];
         return (x != DBL_MRK) ? ScriptRuntime.toNumber(x) : stackDbl[i];
+    }
+
+    private static boolean stack_boolean(Object[] stack, double[] stackDbl,
+                                         int i)
+    {
+        Object x = stack[i];
+        if (x == DBL_MRK) {
+            double d = stackDbl[i];
+            return d == d && d != 0.0;
+        } else if (x instanceof Boolean) {
+            return ((Boolean)x).booleanValue();
+        } else if (x == null || x == Undefined.instance) {
+            return false;
+        } else if (x instanceof Number) {
+            double d = ((Number)x).doubleValue();
+            return (d == d && d != 0.0);
+        } else {
+            return ScriptRuntime.toBoolean(x);
+        }
     }
 
     private static void do_add(Object[] stack, double[] stackDbl, int stackTop)
@@ -2633,9 +3071,14 @@ public class Interpreter {
                 lhs = ((Scriptable) lhs).getDefaultValue(null);
             if (rhs instanceof Scriptable)
                 rhs = ((Scriptable) rhs).getDefaultValue(null);
-            if (lhs instanceof String || rhs instanceof String) {
-                stack[stackTop] = ScriptRuntime.toString(lhs)
-                                   + ScriptRuntime.toString(rhs);
+            if (lhs instanceof String) {
+                String lstr = (String)lhs;
+                String rstr = ScriptRuntime.toString(rhs);
+                stack[stackTop] = lstr.concat(rstr);
+            } else if (rhs instanceof String) {
+                String lstr = ScriptRuntime.toString(lhs);
+                String rstr = (String)rhs;
+                stack[stackTop] = lstr.concat(rstr);
             } else {
                 double lDbl = (lhs instanceof Number)
                     ? ((Number)lhs).doubleValue() : ScriptRuntime.toNumber(lhs);
@@ -2647,7 +3090,7 @@ public class Interpreter {
         }
     }
 
-    // x + y when x is Number, see
+    // x + y when x is Number
     private static void do_add
         (Object lhs, double rDbl,
          Object[] stack, double[] stackDbl, int stackTop,
@@ -2661,10 +3104,12 @@ public class Interpreter {
             }
         }
         if (lhs instanceof String) {
+            String lstr = (String)lhs;
+            String rstr = ScriptRuntime.toString(rDbl);
             if (left_right_order) {
-                stack[stackTop] = (String)lhs + ScriptRuntime.toString(rDbl);
+                stack[stackTop] = lstr.concat(rstr);
             } else {
-                stack[stackTop] = ScriptRuntime.toString(rDbl) + (String)lhs;
+                stack[stackTop] = rstr.concat(lstr);
             }
         } else {
             double lDbl = (lhs instanceof Number)
@@ -2697,7 +3142,8 @@ public class Interpreter {
     }
 
 // Optimized version of ScriptRuntime.eq if x is a Number
-    private static boolean do_eq(double x, Object y) {
+    private static boolean do_eq(double x, Object y)
+    {
         for (;;) {
             if (y instanceof Number) {
                 return x == ((Number) y).doubleValue();
@@ -2763,8 +3209,8 @@ public class Interpreter {
         } else {
             double val = stackDbl[stackTop];
             if (lhs == null || lhs == Undefined.instance) {
-                throw NativeGlobal.undefReadError(
-                          lhs, ScriptRuntime.toString(val), scope);
+                throw ScriptRuntime.undefReadError(
+                          lhs, ScriptRuntime.toString(val));
             }
             Scriptable obj = (lhs instanceof Scriptable)
                              ? (Scriptable)lhs
@@ -2796,8 +3242,8 @@ public class Interpreter {
         } else {
             double val = stackDbl[stackTop - 1];
             if (lhs == null || lhs == Undefined.instance) {
-                throw NativeGlobal.undefWriteError(
-                          lhs, ScriptRuntime.toString(val), rhs, scope);
+                throw ScriptRuntime.undefWriteError(
+                          lhs, ScriptRuntime.toString(val), rhs);
             }
             Scriptable obj = (lhs instanceof Scriptable)
                              ? (Scriptable)lhs
@@ -2834,7 +3280,7 @@ public class Interpreter {
         String name = f.argNames[slot];
         Object val = activation.get(name, activation);
     // Activation parameter or var is permanent
-        if (val == Scriptable.NOT_FOUND) Context.codeBug();
+        if (val == Scriptable.NOT_FOUND) Kit.codeBug();
         return val;
     }
 
@@ -2846,57 +3292,44 @@ public class Interpreter {
         activation.put(name, activation, value);
     }
 
-    private static Object execWithNewDomain(Context cx, Scriptable scope,
-                                            final Scriptable thisObj,
-                                            final Object[] args,
-                                            final double[] argsDbl,
-                                            final int argShift,
-                                            final int argCount,
-                                            final NativeFunction fnOrScript,
-                                            final InterpreterData idata)
-        throws JavaScriptException
+    private static int getJavaCatchPC(byte[] iCode)
     {
-        if (cx.interpreterSecurityDomain == idata.securityDomain)
-            Context.codeBug();
-
-        Script code = new Script() {
-            public Object exec(Context cx, Scriptable scope)
-                throws JavaScriptException
-            {
-                return interpret(cx, scope, thisObj,
-                                 args, argsDbl, argShift, argCount,
-                                 fnOrScript, idata);
-            }
-        };
-
-        Object savedDomain = cx.interpreterSecurityDomain;
-        cx.interpreterSecurityDomain = idata.securityDomain;
-        try {
-            return cx.getSecurityController().
-                    execWithDomain(cx, scope, code, idata.securityDomain);
-        }finally {
-            cx.interpreterSecurityDomain = savedDomain;
-        }
+        int pc = iCode.length - 1;
+        if ((iCode[pc] & 0xFF) != Icode_CATCH) Kit.codeBug();
+        return pc;
     }
 
+    private CompilerEnvirons compilerEnv;
 
     private boolean itsInFunctionFlag;
 
     private InterpreterData itsData;
     private ScriptOrFnNode scriptOrFn;
-    private int itsTryDepth = 0;
     private int itsStackDepth = 0;
-    private String itsSourceFile;
+    private int itsWithDepth = 0;
     private int itsLineNumber = 0;
-    private LabelTable itsLabels = new LabelTable();
     private int itsDoubleTableTop;
     private ObjToIntMap itsStrings = new ObjToIntMap(20);
     private String lastAddString;
+    private int itsLocalTop;
 
+    private static final int MIN_LABEL_TABLE_SIZE = 32;
+    private static final int MIN_FIXUP_TABLE_SIZE = 40;
+    private int[] itsLabelTable;
+    private int itsLabelTableTop;
+// itsFixupTable[i] = (label_index << 32) | fixup_site
+    private long[] itsFixupTable;
+    private int itsFixupTableTop;
 
-    private int version;
-    private boolean inLineStepMode;
-    private String debugSource;
+    private int itsExceptionTableTop;
+    // 5 = space for try start/end, catch begin, finally begin and with depth
+    private static final int EXCEPTION_SLOT_SIZE       = 6;
+    private static final int EXCEPTION_TRY_START_SLOT  = 0;
+    private static final int EXCEPTION_TRY_END_SLOT    = 1;
+    private static final int EXCEPTION_CATCH_SLOT      = 2;
+    private static final int EXCEPTION_FINALLY_SLOT    = 3;
+    private static final int EXCEPTION_WITH_DEPTH_SLOT = 4;
+    private static final int EXCEPTION_LOCAL_SLOT      = 5;
 
     private static final Object DBL_MRK = new Object();
 }

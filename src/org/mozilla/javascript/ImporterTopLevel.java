@@ -38,6 +38,8 @@
 
 package org.mozilla.javascript;
 
+import java.io.Serializable;
+
 /**
  * Class ImporterTopLevel
  *
@@ -68,33 +70,28 @@ package org.mozilla.javascript;
  *
  * @author Norris Boyd
  */
-public class ImporterTopLevel extends ScriptableObject {
-
-    /**
-     * @deprecated
-     */
-    public ImporterTopLevel() {
-        init();
-    }
+public class ImporterTopLevel extends ScriptableObject
+{
+    public ImporterTopLevel() { }
 
     public ImporterTopLevel(Context cx) {
-        cx.initStandardObjects(this);
-        init();
+        this(cx, false);
     }
 
-    private void init() {
-        String[] names = { "importClass", "importPackage" };
-
-        try {
-            this.defineFunctionProperties(names, ImporterTopLevel.class,
-                                          ScriptableObject.DONTENUM);
-        } catch (PropertyException e) {
-            throw new Error();  // should never happen
-        }
+    public ImporterTopLevel(Context cx, boolean sealed)
+    {
+        initStandardObjects(cx, sealed);
     }
 
-    public String getClassName() {
+    public String getClassName()
+    {
         return "global";
+    }
+
+    public void initStandardObjects(Context cx, boolean sealed)
+    {
+        cx.initStandardObjects(this, sealed);
+        ImporterFunctions.setup(this);
     }
 
     public boolean has(String name, Scriptable start) {
@@ -111,18 +108,11 @@ public class ImporterTopLevel extends ScriptableObject {
     }
 
     private Object getPackageProperty(String name, Scriptable start) {
-        Object result= NOT_FOUND;
-        if (name.equals("_packages_"))
-            return result;
-        Object plist = ScriptableObject.getProperty(start,"_packages_");
-        if (plist == NOT_FOUND)
-            return result;
+        Object result = NOT_FOUND;
         Object[] elements;
-        Context cx = Context.enter();
-        try {
-            elements = cx.getElements((Scriptable)plist);
+        synchronized (importedPackages) {
+            elements = importedPackages.toArray();
         }
-        finally { Context.exit(); }
         for (int i=0; i < elements.length; i++) {
             NativeJavaPackage p = (NativeJavaPackage) elements[i];
             Object v = p.getPkgProperty(name, start, false);
@@ -138,8 +128,8 @@ public class ImporterTopLevel extends ScriptableObject {
         return result;
     }
 
-    public static void importClass(Context cx, Scriptable thisObj,
-                                   Object[] args, Function funObj) {
+    void importClass(Context cx, Scriptable thisObj, Object[] args)
+    {
         for (int i=0; i<args.length; i++) {
             Object cl = args[i];
             if (!(cl instanceof NativeJavaClass)) {
@@ -157,32 +147,76 @@ public class ImporterTopLevel extends ScriptableObject {
         }
     }
 
-    public static void importPackage(Context cx, Scriptable thisObj,
-                                   Object[] args, Function funObj) {
-        Scriptable importedPackages;
-        Object plist = thisObj.get("_packages_", thisObj);
-        if (plist == NOT_FOUND) {
-            importedPackages = cx.newArray(thisObj,0);
-            thisObj.put("_packages_", thisObj, importedPackages);
-        }
-        else {
-            importedPackages = (Scriptable)plist;
-        }
-        for (int i=0; i<args.length; i++) {
+
+    public void importPackage(Context cx, Scriptable thisObj, Object[] args,
+                              Function funObj)
+    {
+        importPackage(cx, thisObj, args);
+    }
+
+    void importPackage(Context cx, Scriptable thisObj, Object[] args)
+    {
+        for (int i = 0; i != args.length; i++) {
             Object pkg = args[i];
             if (!(pkg instanceof NativeJavaPackage)) {
                 throw Context.reportRuntimeError1(
                     "msg.not.pkg", Context.toString(pkg));
             }
-            Object[] elements = cx.getElements(importedPackages);
-            for (int j=0; j < elements.length; j++) {
-                if (pkg == elements[j]) {
-                    pkg = null;
-                    break;
+            synchronized (importedPackages) {
+                for (int j = 0; j != importedPackages.size(); j++) {
+                    if (pkg == importedPackages.get(j)) {
+                        pkg = null;
+                        break;
+                    }
+                }
+                if (pkg != null) {
+                    importedPackages.add(pkg);
                 }
             }
-            if (pkg != null)
-                importedPackages.put(elements.length,importedPackages,pkg);
         }
     }
+
+    private ObjArray importedPackages = new ObjArray();
+}
+
+final class ImporterFunctions extends JIFunction
+{
+    private ImporterFunctions(ImporterTopLevel importer, int id)
+    {
+        this.importer = importer;
+        this.id = id;
+        if (id == Id_importClass) {
+            initNameArity("importClass", 1);
+        } else {
+            if (id != Id_importPackage) Kit.codeBug();
+            initNameArity("importPackage", 1);
+        }
+        defineAsProperty(importer);
+    }
+
+    static void setup(ImporterTopLevel importer)
+    {
+        new ImporterFunctions(importer, Id_importClass);
+        new ImporterFunctions(importer, Id_importPackage);
+    }
+
+    public Object call(Context cx, Scriptable scope, Scriptable thisObj,
+                       Object[] args)
+        throws JavaScriptException
+    {
+        if (id == Id_importClass) {
+            importer.importClass(cx, thisObj, args);
+        } else {
+            if (id != Id_importPackage) Kit.codeBug();
+            importer.importPackage(cx, thisObj, args);
+        }
+        return Undefined.instance;
+    }
+
+    private static final int
+        Id_importClass    =  1,
+        Id_importPackage  =  2;
+
+    private ImporterTopLevel importer;
+    private int id;
 }

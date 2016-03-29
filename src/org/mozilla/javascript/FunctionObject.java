@@ -40,17 +40,11 @@
 
 package org.mozilla.javascript;
 
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Member;
-import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
-import java.lang.reflect.InvocationTargetException;
-import java.io.Serializable;
-import java.io.IOException;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
+import java.lang.reflect.*;
+import java.io.*;
 
-public class FunctionObject extends BaseFunction {
+public class FunctionObject extends BaseFunction
+{
 
     static final long serialVersionUID = -4074285335521944312L;
 
@@ -62,7 +56,7 @@ public class FunctionObject extends BaseFunction {
      *
      * The first form is a member with zero or more parameters
      * of the following types: Object, String, boolean, Scriptable,
-     * byte, short, int, float, or double. The Long type is not supported
+     * int, or double. The Long type is not supported
      * because the double representation of a long (which is the
      * EMCA-mandated storage type for Numbers) may lose precision.
      * If the member is a Method, the return value must be void or one
@@ -121,24 +115,23 @@ public class FunctionObject extends BaseFunction {
     public FunctionObject(String name, Member methodOrConstructor,
                           Scriptable scope)
     {
-        String methodName;
+        ClassCache cache = ClassCache.get(scope);
         if (methodOrConstructor instanceof Constructor) {
-            ctor = (Constructor) methodOrConstructor;
+            member = new MemberBox((Constructor) methodOrConstructor, cache);
             isStatic = true; // well, doesn't take a 'this'
-            types = ctor.getParameterTypes();
-            methodName = ctor.getName();
         } else {
-            method = (Method) methodOrConstructor;
-            isStatic = Modifier.isStatic(method.getModifiers());
-            types = method.getParameterTypes();
-            methodName = method.getName();
+            member = new MemberBox((Method) methodOrConstructor, cache);
+            isStatic = member.isStatic();
         }
+        String methodName = member.getName();
         this.functionName = name;
-        if (types.length == 4 && (types[1].isArray() || types[2].isArray())) {
+        Class[] types = member.argTypes;
+        int arity = types.length;
+        if (arity == 4 && (types[1].isArray() || types[2].isArray())) {
             // Either variable args or an error.
             if (types[1].isArray()) {
                 if (!isStatic ||
-                    types[0] != Context.class ||
+                    types[0] != ScriptRuntime.ContextClass ||
                     types[1].getComponentType() != ScriptRuntime.ObjectClass ||
                     types[2] != ScriptRuntime.FunctionClass ||
                     types[3] != Boolean.TYPE)
@@ -149,7 +142,7 @@ public class FunctionObject extends BaseFunction {
                 parmsLength = VARARGS_CTOR;
             } else {
                 if (!isStatic ||
-                    types[0] != Context.class ||
+                    types[0] != ScriptRuntime.ContextClass ||
                     types[1] != ScriptRuntime.ScriptableClass ||
                     types[2].getComponentType() != ScriptRuntime.ObjectClass ||
                     types[3] != ScriptRuntime.FunctionClass)
@@ -159,36 +152,104 @@ public class FunctionObject extends BaseFunction {
                 }
                 parmsLength = VARARGS_METHOD;
             }
-            // XXX check return type
         } else {
-            parmsLength = types.length;
-            for (int i=0; i < parmsLength; i++) {
-                Class type = types[i];
-                if (type != ScriptRuntime.ObjectClass &&
-                    type != ScriptRuntime.StringClass &&
-                    type != ScriptRuntime.BooleanClass &&
-                    !ScriptRuntime.NumberClass.isAssignableFrom(type) &&
-                    !Scriptable.class.isAssignableFrom(type) &&
-                    type != Boolean.TYPE &&
-                    type != Byte.TYPE &&
-                    type != Short.TYPE &&
-                    type != Integer.TYPE &&
-                    type != Float.TYPE &&
-                    type != Double.TYPE)
-                {
-                    // Note that long is not supported.
-                    throw Context.reportRuntimeError1("msg.bad.parms",
-                                                      methodName);
+            parmsLength = arity;
+            if (arity > 0) {
+                typeTags = new byte[arity];
+                for (int i = 0; i != arity; ++i) {
+                    int tag = getTypeTag(types[i]);
+                    if (tag == JAVA_UNSUPPORTED_TYPE) {
+                        throw Context.reportRuntimeError2(
+                            "msg.bad.parms", types[i].getName(), methodName);
+                    }
+                    typeTags[i] = (byte)tag;
                 }
             }
         }
 
-        hasVoidReturn = method != null && method.getReturnType() == Void.TYPE;
+        if (member.isMethod()) {
+            Method method = member.method();
+            Class returnType = method.getReturnType();
+            if (returnType == Void.TYPE) {
+                hasVoidReturn = true;
+            } else {
+                int returnTypeTag = getTypeTag(returnType);
+                if (returnTypeTag == JAVA_UNSUPPORTED_TYPE) {
+                    throw Context.reportRuntimeError2(
+                        "msg.bad.method.return",
+                        returnType.getName(), methodName);
+                }
+            }
+            member.prepareInvokerOptimization();
+        } else {
+            Class ctorType = member.getDeclaringClass();
+            if (!ScriptRuntime.ScriptableClass.isAssignableFrom(ctorType)) {
+                throw Context.reportRuntimeError1(
+                    "msg.bad.ctor.return", ctorType.getName());
+            }
+        }
 
         ScriptRuntime.setFunctionProtoAndParent(scope, this);
-        Context cx = Context.getCurrentContext();
-        useDynamicScope = cx != null &&
-                          cx.hasCompileFunctionsWithDynamicScope();
+    }
+
+    /**
+     * @return One of <tt>JAVA_*_TYPE</tt> constants to indicate desired type
+     *         or {@link #JAVA_UNSUPPORTED_TYPE} if the convertion is not
+     *         possible
+     */
+    public static int getTypeTag(Class type)
+    {
+        if (type == ScriptRuntime.StringClass)
+            return JAVA_STRING_TYPE;
+        if (type == ScriptRuntime.IntegerClass || type == Integer.TYPE)
+            return JAVA_INT_TYPE;
+        if (type == ScriptRuntime.BooleanClass || type == Boolean.TYPE)
+            return JAVA_BOOLEAN_TYPE;
+        if (type == ScriptRuntime.DoubleClass || type == Double.TYPE)
+            return JAVA_DOUBLE_TYPE;
+        if (ScriptRuntime.ScriptableClass.isAssignableFrom(type))
+            return JAVA_SCRIPTABLE_TYPE;
+        if (type == ScriptRuntime.ObjectClass)
+            return JAVA_OBJECT_TYPE;
+
+        // Note that the long type is not supported; see the javadoc for
+        // the constructor for this class
+
+        return JAVA_UNSUPPORTED_TYPE;
+    }
+
+    public static Object convertArg(Context cx, Scriptable scope,
+                                    Object arg, int typeTag)
+    {
+        switch (typeTag) {
+          case JAVA_STRING_TYPE:
+              if (arg instanceof String)
+                return arg;
+            return ScriptRuntime.toString(arg);
+          case JAVA_INT_TYPE:
+              if (arg instanceof Integer)
+                return arg;
+            return new Integer(ScriptRuntime.toInt32(arg));
+          case JAVA_BOOLEAN_TYPE:
+              if (arg instanceof Boolean)
+                return arg;
+            return ScriptRuntime.toBoolean(arg) ? Boolean.TRUE
+                                                : Boolean.FALSE;
+          case JAVA_DOUBLE_TYPE:
+            if (arg instanceof Double)
+                return arg;
+            if (arg instanceof Number)
+                return new Double(((Number)arg).doubleValue());
+            return new Double(ScriptRuntime.toNumber(arg));
+          case JAVA_SCRIPTABLE_TYPE:
+            if (arg instanceof Scriptable)
+                return arg;
+            return ScriptRuntime.toObject(cx, scope, arg);
+          case JAVA_OBJECT_TYPE:
+            return arg;
+          default:
+            throw new IllegalArgumentException();
+        }
     }
 
     /**
@@ -207,59 +268,36 @@ public class FunctionObject extends BaseFunction {
         return getArity();
     }
 
-    // TODO: Make not public
     /**
-     * Finds methods of a given name in a given class.
-     *
-     * <p>Searches <code>clazz</code> for methods with name
-     * <code>name</code>. Maintains a cache so that multiple
-     * lookups on the same class are cheap.
-     *
-     * @param clazz the class to search
-     * @param name the name of the methods to find
-     * @return an array of the found methods, or null if no methods
-     *         by that name were found.
-     * @see java.lang.Class#getMethods
+     * Get Java method or constructor this function represent.
      */
-    public static Method[] findMethods(Class clazz, String name) {
-        return findMethods(getMethodList(clazz), name);
+    public Member getMethodOrConstructor()
+    {
+        if (member.isMethod()) {
+            return member.method();
+        } else {
+            return member.ctor();
+        }
     }
 
-    static Method[] findMethods(Method[] methods, String name) {
-        // Usually we're just looking for a single method, so optimize
-        // for that case.
-        ObjArray v = null;
-        Method first = null;
-        for (int i=0; i < methods.length; i++) {
-            if (methods[i] == null)
-                continue;
-            if (methods[i].getName().equals(name)) {
-                if (first == null) {
-                    first = methods[i];
-                } else {
-                    if (v == null) {
-                        v = new ObjArray(5);
-                        v.add(first);
-                    }
-                    v.add(methods[i]);
+    static Method findSingleMethod(Method[] methods, String name)
+    {
+        Method found = null;
+        for (int i = 0, N = methods.length; i != N; ++i) {
+            Method method = methods[i];
+            if (method != null && name.equals(method.getName())) {
+                if (found != null) {
+                    throw Context.reportRuntimeError2(
+                        "msg.no.overload", name,
+                        method.getDeclaringClass().getName());
                 }
+                found = method;
             }
         }
-        if (v == null) {
-            if (first == null)
-                return null;
-            Method[] single = { first };
-            return single;
-        }
-        Method[] result = new Method[v.size()];
-        v.toArray(result);
-        return result;
+        return found;
     }
 
     static Method[] getMethodList(Class clazz) {
-        Method[] cached = methodsCache; // get once to avoid synchronization
-        if (cached != null && cached[0].getDeclaringClass() == clazz)
-            return cached;
         Method[] methods = null;
         try {
             // getDeclaredMethods may be rejected by the security manager
@@ -290,8 +328,6 @@ public class FunctionObject extends BaseFunction {
             if (methods[i] != null)
                 result[j++] = methods[i];
         }
-        if (result.length > 0 && Context.isCachingEnabled)
-            methodsCache = result;
         return result;
     }
 
@@ -328,36 +364,20 @@ public class FunctionObject extends BaseFunction {
         setParentScope(scope);
     }
 
-    static public Object convertArg(Context cx, Scriptable scope,
+    /**
+     * @deprecated Use {@link #getTypeTag(Class)}
+     * and {@link #convertArg(Context, Scriptable, Object, int)}
+     * for type convertion.
+     */
+    public static Object convertArg(Context cx, Scriptable scope,
                                     Object arg, Class desired)
     {
-        if (desired == ScriptRuntime.StringClass)
-            return ScriptRuntime.toString(arg);
-        if (desired == ScriptRuntime.IntegerClass ||
-            desired == Integer.TYPE)
-        {
-            return new Integer(ScriptRuntime.toInt32(arg));
+        int tag = getTypeTag(desired);
+        if (tag == JAVA_UNSUPPORTED_TYPE) {
+            throw Context.reportRuntimeError1
+                ("msg.cant.convert", desired.getName());
         }
-        if (desired == ScriptRuntime.BooleanClass ||
-            desired == Boolean.TYPE)
-        {
-            return ScriptRuntime.toBoolean(arg) ? Boolean.TRUE
-                                                : Boolean.FALSE;
-        }
-        if (desired == ScriptRuntime.DoubleClass ||
-            desired == Double.TYPE)
-        {
-            return new Double(ScriptRuntime.toNumber(arg));
-        }
-        if (desired == ScriptRuntime.ScriptableClass)
-            return ScriptRuntime.toObject(cx, scope, arg);
-        if (desired == ScriptRuntime.ObjectClass)
-            return arg;
-
-        // Note that the long type is not supported; see the javadoc for
-        // the constructor for this class
-        throw Context.reportRuntimeError1
-            ("msg.cant.convert", desired.getName());
+        return convertArg(cx, scope, arg, tag);
     }
 
     /**
@@ -375,165 +395,103 @@ public class FunctionObject extends BaseFunction {
         throws JavaScriptException
     {
         if (parmsLength < 0) {
-            return callVarargs(cx, thisObj, args, false);
+            return callVarargs(cx, thisObj, args);
         }
         if (!isStatic) {
-            // OPT: cache "clazz"?
-            Class clazz = method != null ? method.getDeclaringClass()
-                                         : ctor.getDeclaringClass();
-            while (!clazz.isInstance(thisObj)) {
-                thisObj = thisObj.getPrototype();
-                if (thisObj == null || !useDynamicScope) {
+            Class clazz = member.getDeclaringClass();
+            if (!clazz.isInstance(thisObj)) {
+                boolean compatible = false;
+                if (thisObj == scope) {
+                    Scriptable parentScope = getParentScope();
+                    if (scope != parentScope) {
+                        // Call with dynamic scope for standalone function,
+                        // use parentScope as thisObj
+                        compatible = clazz.isInstance(parentScope);
+                        if (compatible) {
+                            thisObj = parentScope;
+                        }
+                    }
+                }
+                if (!compatible) {
                     // Couldn't find an object to call this on.
-                    throw NativeGlobal.typeError1
-                        ("msg.incompat.call", functionName, scope);
+                    throw ScriptRuntime.typeError1("msg.incompat.call",
+                                                   functionName);
                 }
             }
         }
+
         Object[] invokeArgs;
-        int i;
         if (parmsLength == args.length) {
+            // Do not allocate new argument array if java arguments are
+            // the same as the original js ones.
             invokeArgs = args;
-            // avoid copy loop if no conversions needed
-            i = (types == null) ? parmsLength : 0;
+            for (int i = 0; i != parmsLength; ++i) {
+                Object arg = args[i];
+                Object converted = convertArg(cx, scope, arg, typeTags[i]);
+                if (arg != converted) {
+                    if (invokeArgs == args) {
+                        invokeArgs = (Object[])args.clone();
+                    }
+                    invokeArgs[i] = converted;
+                }
+            }
+        } else if (parmsLength == 0) {
+            invokeArgs = ScriptRuntime.emptyArgs;
         } else {
             invokeArgs = new Object[parmsLength];
-            i = 0;
-        }
-        for (; i < parmsLength; i++) {
-            Object arg = (i < args.length)
-                         ? args[i]
-                         : Undefined.instance;
-            if (types != null) {
-                arg = convertArg(cx, this, arg, types[i]);
+            for (int i = 0; i != parmsLength; ++i) {
+                Object arg = (i < args.length)
+                             ? args[i]
+                             : Undefined.instance;
+                invokeArgs[i] = convertArg(cx, scope, arg, typeTags[i]);
             }
-            invokeArgs[i] = arg;
         }
-        try {
-            Object result = method == null ? ctor.newInstance(invokeArgs)
-                                           : doInvoke(cx, thisObj, invokeArgs);
-            return hasVoidReturn ? Undefined.instance : result;
+
+        Object result;
+        if (member.isMethod()) {
+            result = member.invoke(thisObj, invokeArgs);
+        } else {
+            result = member.newInstance(invokeArgs);
         }
-        catch (InvocationTargetException e) {
-            throw JavaScriptException.wrapException(cx, scope, e);
-        }
-        catch (IllegalAccessException e) {
-            throw WrappedException.wrapException(e);
-        }
-        catch (InstantiationException e) {
-            throw WrappedException.wrapException(e);
-        }
+
+        return hasVoidReturn ? Undefined.instance : result;
     }
 
     /**
-     * Performs conversions on argument types if needed and
-     * invokes the underlying Java method or constructor
-     * to create a new Scriptable object.
-     * <p>
-     * Implements Function.construct.
-     *
-     * @param cx the current Context for this thread
-     * @param scope the scope to execute the function relative to. This
-     *              set to the value returned by getParentScope() except
-     *              when the function is called from a closure.
-     * @param args arguments to the constructor
-     * @see org.mozilla.javascript.Function#construct
-     * @exception JavaScriptException if the underlying Java method or constructor
-     *            threw an exception
+     * Return new {@link Scriptable} instance using the default
+     * constructor for the class of the underlying Java method.
+     * Return null to indicate that the call method should be used to create
+     * new objects.
      */
-    public Scriptable construct(Context cx, Scriptable scope, Object[] args)
-        throws JavaScriptException
-    {
-        if (method == null || parmsLength == VARARGS_CTOR) {
-            Scriptable result;
-            if (method != null) {
-                result = (Scriptable) callVarargs(cx, null, args, true);
-            } else {
-                result = (Scriptable) call(cx, scope, null, args);
-            }
-
-            if (result.getPrototype() == null)
-                result.setPrototype(getClassPrototype());
-            if (result.getParentScope() == null) {
-                Scriptable parent = getParentScope();
-                if (result != parent)
-                    result.setParentScope(parent);
-            }
-
-            return result;
-        } else if (method != null && !isStatic) {
-            Scriptable result;
-            try {
-                result = (Scriptable) method.getDeclaringClass().newInstance();
-            } catch (IllegalAccessException e) {
-                throw WrappedException.wrapException(e);
-            } catch (InstantiationException e) {
-                throw WrappedException.wrapException(e);
-            }
-
-            result.setPrototype(getClassPrototype());
-            result.setParentScope(getParentScope());
-
-            Object val = call(cx, scope, result, args);
-            if (val != null && val != Undefined.instance &&
-                val instanceof Scriptable)
-            {
-                return (Scriptable) val;
-            }
-            return result;
+    public Scriptable createObject(Context cx, Scriptable scope) {
+        if (member.isCtor() || parmsLength == VARARGS_CTOR) {
+            return null;
         }
-
-        return super.construct(cx, scope, args);
-    }
-
-    private final Object doInvoke(Context cx, Object thisObj, Object[] args)
-        throws IllegalAccessException, InvocationTargetException
-    {
-        Invoker master = invokerMaster;
-        if (master != null) {
-            if (invoker == null) {
-                invoker = master.createInvoker(cx, method, types);
-            }
-            try {
-                return invoker.invoke(thisObj, args);
-            } catch (Exception e) {
-                throw new InvocationTargetException(e);
-            }
-        }
-        return method.invoke(thisObj, args);
-    }
-
-    private Object callVarargs(Context cx, Scriptable thisObj, Object[] args,
-                               boolean inNewExpr)
-        throws JavaScriptException
-    {
+        Scriptable result;
         try {
-            if (parmsLength == VARARGS_METHOD) {
-                Object[] invokeArgs = { cx, thisObj, args, this };
-                Object result = doInvoke(cx, null, invokeArgs);
-                return hasVoidReturn ? Undefined.instance : result;
-            } else {
-                Boolean b = inNewExpr ? Boolean.TRUE : Boolean.FALSE;
-                Object[] invokeArgs = { cx, args, this, b };
-                return (method == null)
-                       ? ctor.newInstance(invokeArgs)
-                       : doInvoke(cx, null, invokeArgs);
-            }
+            result = (Scriptable) member.getDeclaringClass().newInstance();
+        } catch (Exception ex) {
+            throw Context.throwAsScriptRuntimeEx(ex);
         }
-        catch (InvocationTargetException e) {
-            Throwable target = e.getTargetException();
-            if (target instanceof EvaluatorException)
-                throw (EvaluatorException) target;
-            if (target instanceof EcmaError)
-                throw (EcmaError) target;
-            Scriptable scope = thisObj == null ? this : thisObj;
-            throw JavaScriptException.wrapException(cx, scope, target);
-        }
-        catch (IllegalAccessException e) {
-            throw WrappedException.wrapException(e);
-        }
-        catch (InstantiationException e) {
-            throw WrappedException.wrapException(e);
+
+        result.setPrototype(getClassPrototype());
+        result.setParentScope(getParentScope());
+        return result;
+    }
+
+    private Object callVarargs(Context cx, Scriptable thisObj, Object[] args)
+    {
+        if (parmsLength == VARARGS_METHOD) {
+            Object[] invokeArgs = { cx, thisObj, args, this };
+            Object result = member.invoke(null, invokeArgs);
+            return hasVoidReturn ? Undefined.instance : result;
+        } else {
+            boolean inNewExpr = (thisObj == null);
+            Boolean b = inNewExpr ? Boolean.TRUE : Boolean.FALSE;
+            Object[] invokeArgs = { cx, args, this, b };
+            return (member.isCtor())
+                   ? member.newInstance(invokeArgs)
+                   : member.invoke(null, invokeArgs);
         }
     }
 
@@ -545,177 +503,35 @@ public class FunctionObject extends BaseFunction {
         return parmsLength == VARARGS_CTOR;
     }
 
-    static void setCachingEnabled(boolean enabled) {
-        if (!enabled) {
-            methodsCache = null;
-            invokerMaster = null;
-        } else if (invokerMaster == null) {
-            invokerMaster = newInvokerMaster();
-        }
-    }
-
-    private void writeObject(ObjectOutputStream out)
-        throws IOException
-    {
-        out.defaultWriteObject();
-        boolean hasConstructor = ctor != null;
-        Member member = hasConstructor ? (Member)ctor : (Member)method;
-        writeMember(out, member);
-    }
-
     private void readObject(ObjectInputStream in)
         throws IOException, ClassNotFoundException
     {
         in.defaultReadObject();
-        Member member = readMember(in);
-        if (member instanceof Method) {
-            method = (Method) member;
-            types = method.getParameterTypes();
-        } else {
-            ctor = (Constructor) member;
-            types = ctor.getParameterTypes();
-        }
-    }
-
-    /**
-     * Writes a Constructor or Method object.
-     *
-     * Methods and Constructors are not serializable, so we must serialize
-     * information about the class, the name, and the parameters and
-     * recreate upon deserialization.
-     */
-    static void writeMember(ObjectOutputStream out, Member member)
-        throws IOException
-    {
-        if (member == null) {
-            out.writeBoolean(false);
-            return;
-        }
-        out.writeBoolean(true);
-        if (!(member instanceof Method || member instanceof Constructor))
-            throw new IllegalArgumentException("not Method or Constructor");
-        out.writeBoolean(member instanceof Method);
-        out.writeObject(member.getName());
-        out.writeObject(member.getDeclaringClass());
-        if (member instanceof Method) {
-            writeParameters(out, ((Method) member).getParameterTypes());
-        } else {
-            writeParameters(out, ((Constructor) member).getParameterTypes());
-        }
-    }
-
-    /**
-     * Reads a Method or a Constructor from the stream.
-     */
-    static Member readMember(ObjectInputStream in)
-        throws IOException, ClassNotFoundException
-    {
-        if (!in.readBoolean())
-            return null;
-        boolean isMethod = in.readBoolean();
-        String name = (String) in.readObject();
-        Class declaring = (Class) in.readObject();
-        Class[] parms = readParameters(in);
-        try {
-            if (isMethod) {
-                return declaring.getMethod(name, parms);
-            } else {
-                return declaring.getConstructor(parms);
+        if (parmsLength > 0) {
+            Class[] types = member.argTypes;
+            typeTags = new byte[parmsLength];
+            for (int i = 0; i != parmsLength; ++i) {
+                typeTags[i] = (byte)getTypeTag(types[i]);
             }
-        } catch (NoSuchMethodException e) {
-            throw new IOException("Cannot find member: " + e);
         }
     }
-
-    private static final Class[] primitives = {
-        Boolean.TYPE,
-        Byte.TYPE,
-        Character.TYPE,
-        Double.TYPE,
-        Float.TYPE,
-        Integer.TYPE,
-        Long.TYPE,
-        Short.TYPE,
-        Void.TYPE
-    };
-
-    /**
-     * Writes an array of parameter types to the stream.
-     *
-     * Requires special handling because primitive types cannot be
-     * found upon deserialization by the default Java implementation.
-     */
-    static void writeParameters(ObjectOutputStream out, Class[] parms)
-        throws IOException
-    {
-        out.writeShort(parms.length);
-    outer:
-        for (int i=0; i < parms.length; i++) {
-            Class parm = parms[i];
-            out.writeBoolean(parm.isPrimitive());
-            if (!parm.isPrimitive()) {
-                out.writeObject(parm);
-                continue;
-            }
-            for (int j=0; j < primitives.length; j++) {
-                if (parm.equals(primitives[j])) {
-                    out.writeByte(j);
-                    continue outer;
-                }
-            }
-            throw new IllegalArgumentException("Primitive " + parm +
-                                               " not found");
-        }
-    }
-
-    /**
-     * Reads an array of parameter types from the stream.
-     */
-    static Class[] readParameters(ObjectInputStream in)
-        throws IOException, ClassNotFoundException
-    {
-        Class[] result = new Class[in.readShort()];
-        for (int i=0; i < result.length; i++) {
-            if (!in.readBoolean()) {
-                result[i] = (Class) in.readObject();
-                continue;
-            }
-            result[i] = primitives[in.readByte()];
-        }
-        return result;
-    }
-
-    /** Get default master implementation or null if not available */
-    private static Invoker newInvokerMaster() {
-        try {
-            Class cl = Class.forName(INVOKER_MASTER_CLASS);
-            return (Invoker)cl.newInstance();
-        }
-        catch (ClassNotFoundException ex) {}
-        catch (IllegalAccessException ex) {}
-        catch (InstantiationException ex) {}
-        catch (SecurityException ex) {}
-        return null;
-    }
-
-    private static final String
-        INVOKER_MASTER_CLASS = "org.mozilla.javascript.optimizer.InvokerImpl";
-
-    static Invoker invokerMaster = newInvokerMaster();
 
     private static final short VARARGS_METHOD = -1;
     private static final short VARARGS_CTOR =   -2;
 
     private static boolean sawSecurityException;
 
-    static Method[] methodsCache;
+    public static final int JAVA_UNSUPPORTED_TYPE = 0;
+    public static final int JAVA_STRING_TYPE      = 1;
+    public static final int JAVA_INT_TYPE         = 2;
+    public static final int JAVA_BOOLEAN_TYPE     = 3;
+    public static final int JAVA_DOUBLE_TYPE      = 4;
+    public static final int JAVA_SCRIPTABLE_TYPE  = 5;
+    public static final int JAVA_OBJECT_TYPE      = 6;
 
-    transient Method method;
-    transient Constructor ctor;
-    transient Invoker invoker;
-    transient private Class[] types;
+    MemberBox member;
+    transient private byte[] typeTags;
     private int parmsLength;
     private boolean hasVoidReturn;
     private boolean isStatic;
-    private boolean useDynamicScope;
 }

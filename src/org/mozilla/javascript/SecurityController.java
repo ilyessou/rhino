@@ -62,8 +62,8 @@ package org.mozilla.javascript;
  * @see java.lang.ClassLoader
  * @since 1.5 Release 4
  */
-public abstract class SecurityController {
-
+public abstract class SecurityController
+{
     /**
      * Get class loader-like object that can be used
      * to define classes with the given security context.
@@ -72,8 +72,40 @@ public abstract class SecurityController {
      * @param securityDomain some object specifying the security
      *        context of the code that is defined by the returned class loader.
      */
-    public abstract GeneratedClassLoader
-    createClassLoader(ClassLoader parentLoader, Object securityDomain);
+    public abstract GeneratedClassLoader createClassLoader(
+        ClassLoader parentLoader, Object securityDomain);
+
+    /**
+     * Create {@link GeneratedClassLoader} with restrictions imposed by
+     * staticDomain and all current stack frames.
+     * The method uses the SecurityController instance associated with the
+     * current {@link Context} to construct proper dynamic domain and create
+     * corresponding class loader.
+     * <par>
+     * If no SecurityController is associated with the current {@link Context} ,
+     * the method calls {@link Context#createClassLoader(ClassLoader parent)}.
+     *
+     * @param parent parent class loader. If null,
+     *        {@link Context#getApplicationClassLoader()} will be used.
+     * @param staticDomain static security domain.
+     */
+    public static GeneratedClassLoader createLoader(
+        ClassLoader parent, Object staticDomain)
+    {
+        Context cx = Context.getContext();
+        if (parent == null) {
+            parent = cx.getApplicationClassLoader();
+        }
+        SecurityController sc = cx.getSecurityController();
+        GeneratedClassLoader loader;
+        if (sc == null) {
+            loader = cx.createClassLoader(parent);
+        } else {
+            Object dynamicDomain = sc.getDynamicSecurityDomain(staticDomain);
+            loader = sc.createClassLoader(parent, dynamicDomain);
+        }
+        return loader;
+    }
 
     /**
      * Get dynamic security domain that allows an action only if it is allowed
@@ -84,16 +116,48 @@ public abstract class SecurityController {
     public abstract Object getDynamicSecurityDomain(Object securityDomain);
 
     /**
-     * Call {@link Script#exec(Context cx, Scriptable scope)} of
-     * <i>script</i> under restricted security domain where an action is
+     * Call {@link
+     * Callable#call(Context cx, Scriptable scope, Scriptable thisObj,
+     *               Object[] args)}
+     * of <i>callable</i> under restricted security domain where an action is
      * allowed only if it is allowed according to the Java stack on the
      * moment of the <i>execWithDomain</i> call and <i>securityDomain</i>.
      * Any call to {@link #getDynamicSecurityDomain(Object)} during
-     * execution of {@link Script#exec(Context cx, Scriptable scope)}
+     * execution of <tt>callable.call(cx, scope, thisObj, args)</tt>
      * should return a domain incorporate restrictions imposed by
-     * <i>securityDomain</i>.
+     * <i>securityDomain</i> and Java stack on the moment of callWithDomain
+     * invocation.
+     * <p>
+     * The method should always be overridden, it is not declared abstract
+     * for compatibility reasons.
      */
-    public abstract Object execWithDomain(Context cx, Scriptable scope,
-                                          Script script, Object securityDomain)
-        throws JavaScriptException;
+    public Object callWithDomain(Object securityDomain, Context cx,
+                                 final Callable callable, Scriptable scope,
+                                 final Scriptable thisObj, final Object[] args)
+        throws JavaScriptException
+    {
+        return execWithDomain(cx, scope, new Script()
+        {
+            public Object exec(Context cx, Scriptable scope)
+                throws JavaScriptException
+            {
+                return callable.call(cx, scope, thisObj, args);
+            }
+
+        }, securityDomain);
+    }
+
+    /**
+     * @deprecated The application should not override this method and instead
+     * override
+     * {@link #callWithDomain(Object securityDomain, Context cx, Callable callable, Scriptable scope, Scriptable thisObj, Object[] args)}.
+     */
+    public Object execWithDomain(Context cx, Scriptable scope,
+                                 Script script, Object securityDomain)
+        throws JavaScriptException
+    {
+        throw new IllegalStateException("callWithDomain should be overridden");
+    }
+
+
 }

@@ -39,8 +39,6 @@
 package org.mozilla.javascript.optimizer;
 
 import org.mozilla.javascript.*;
-import java.io.*;
-import java.util.Hashtable;
 
 public class OptClassNameHelper extends ClassNameHelper {
 
@@ -48,8 +46,7 @@ public class OptClassNameHelper extends ClassNameHelper {
         setClassName(null);
     }
 
-    synchronized String getScriptClassName(String functionName,
-                                           boolean primary)
+    synchronized String getScriptClassName(boolean primary)
     {
         StringBuffer s = new StringBuffer();
         if (packageName != null && packageName.length() > 0) {
@@ -57,15 +54,8 @@ public class OptClassNameHelper extends ClassNameHelper {
             s.append('.');
         }
         s.append(initialName);
-        if (appendFunctionName) {
-            if (functionName != null) {
-                s.append('$');
-                if (functionName.length() > 0) {
-                    s.append(functionName);
-                } else {
-                    s.append(++fserial);
-                }
-            } else if (!primary) {
+        if (explicitInitialName) {
+            if (!primary) {
                 s.append(++serial);
             }
         } else {
@@ -73,6 +63,16 @@ public class OptClassNameHelper extends ClassNameHelper {
         }
 
         return s.toString();
+    }
+
+    public String getTargetClassFileName() {
+        throw new IllegalArgumentException(
+            "The method depends on removed deprecated future.");
+    }
+
+    public void setTargetClassFileName(String classFileName) {
+        throw new IllegalArgumentException(
+            "The method depends on removed deprecated future.");
     }
 
     public String getTargetPackage() {
@@ -106,14 +106,14 @@ public class OptClassNameHelper extends ClassNameHelper {
     public void setClassName(String initialName) {
         if (initialName != null) {
             this.initialName = initialName;
-            appendFunctionName = true;
+            explicitInitialName = true;
         } else {
             packageName = "org.mozilla.javascript.gen";
             this.initialName = "c";
             classRepository = null;
-            appendFunctionName = false;
+            explicitInitialName = false;
         }
-        serial = fserial = 0;
+        serial = 0;
     }
 
     public ClassRepository getClassRepository() {
@@ -124,12 +124,13 @@ public class OptClassNameHelper extends ClassNameHelper {
         this.classRepository = classRepository;
     }
 
-    private boolean appendFunctionName;
+    private boolean explicitInitialName;
     private String packageName;
     private String initialName;
     private int globalSerial=1;
-    private int serial, fserial;
+    private int serial;
     private Class targetExtends;
     private Class[] targetImplements;
     private ClassRepository classRepository;
 }
+

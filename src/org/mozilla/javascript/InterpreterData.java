@@ -40,7 +40,8 @@ import java.io.Serializable;
 
 import org.mozilla.javascript.debug.DebuggableScript;
 
-final class InterpreterData implements Serializable, DebuggableScript {
+final class InterpreterData implements Serializable, DebuggableScript
+{
 
     static final long serialVersionUID = 4815333329084415557L;
 
@@ -48,17 +49,43 @@ final class InterpreterData implements Serializable, DebuggableScript {
     static final int INITIAL_STRINGTABLE_SIZE = 64;
     static final int INITIAL_NUMBERTABLE_SIZE = 64;
 
-    InterpreterData(Object securityDomain) {
-        itsICodeTop = INITIAL_MAX_ICODE_LENGTH;
-        itsICode = new byte[itsICodeTop];
-
-        itsStringTable = new String[INITIAL_STRINGTABLE_SIZE];
-
+    InterpreterData(SecurityController securityController,
+                    Object securityDomain,
+                    int languageVersion,
+                    String sourceFile, String encodedSource)
+    {
+        this.securityController = securityController;
         this.securityDomain = securityDomain;
+        this.languageVersion = languageVersion;
+        this.itsSourceFile = sourceFile;
+        this.encodedSource = encodedSource;
+
+        init();
     }
 
+    InterpreterData(InterpreterData parent)
+    {
+        this.parentData = parent;
+        this.securityController = parent.securityController;
+        this.securityDomain = parent.securityDomain;
+        this.languageVersion = parent.languageVersion;
+        this.itsSourceFile = parent.itsSourceFile;
+        this.encodedSource = parent.encodedSource;
+
+        init();
+    }
+
+    private void init()
+    {
+        itsICodeTop = INITIAL_MAX_ICODE_LENGTH;
+        itsICode = new byte[itsICodeTop];
+        itsStringTable = new String[INITIAL_STRINGTABLE_SIZE];
+    }
+
+    SecurityController securityController;
+    Object securityDomain;
+
     String itsName;
-    String itsSource;
     String itsSourceFile;
     boolean itsNeedsActivation;
     boolean itsFromEvalCode;
@@ -73,9 +100,10 @@ final class InterpreterData implements Serializable, DebuggableScript {
     byte[] itsICode;
     int itsICodeTop;
 
+    int[] itsExceptionTable;
+
     int itsMaxVars;
     int itsMaxLocals;
-    int itsMaxTryDepth;
     int itsMaxStack;
     int itsMaxFrameArray;
 
@@ -85,26 +113,61 @@ final class InterpreterData implements Serializable, DebuggableScript {
 
     int itsMaxCalleeArgs;
 
-    Object securityDomain;
+    String encodedSource;
+    int encodedSourceStart;
+    int encodedSourceEnd;
 
-    public boolean isFunction() {
+    int languageVersion;
+
+    boolean useDynamicScope;
+
+    boolean topLevel;
+
+    InterpreterData parentData;
+
+    public boolean isTopLevel()
+    {
+        return topLevel;
+    }
+
+    public boolean isFunction()
+    {
         return itsFunctionType != 0;
     }
 
-    public String getFunctionName() {
+    public String getFunctionName()
+    {
         return itsName;
     }
 
-    public String getSourceName() {
+    public String getSourceName()
+    {
         return itsSourceFile;
     }
 
-    public boolean isGeneratedScript() {
+    public boolean isGeneratedScript()
+    {
         return ScriptRuntime.isGeneratedScript(itsSourceFile);
     }
 
-    public int[] getLineNumbers() {
+    public int[] getLineNumbers()
+    {
         return Interpreter.getLineNumbers(this);
+    }
+
+    public int getFunctionCount()
+    {
+        return (itsNestedFunctions == null) ? 0 : itsNestedFunctions.length;
+    }
+
+    public DebuggableScript getFunction(int index)
+    {
+        return itsNestedFunctions[index];
+    }
+
+    public DebuggableScript getParent()
+    {
+         return parentData;
     }
 
 }

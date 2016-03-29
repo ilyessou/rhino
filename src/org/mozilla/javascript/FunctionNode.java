@@ -41,7 +41,7 @@ import java.util.*;
 public class FunctionNode extends ScriptOrFnNode {
 
     public FunctionNode(String name) {
-        super(TokenStream.FUNCTION);
+        super(Token.FUNCTION);
         functionName = name;
     }
 
@@ -53,7 +53,7 @@ public class FunctionNode extends ScriptOrFnNode {
         return itsNeedsActivation;
     }
 
-    public boolean setRequiresActivation(boolean b) {
+    boolean setRequiresActivation(boolean b) {
         return itsNeedsActivation = b;
     }
 
@@ -61,8 +61,16 @@ public class FunctionNode extends ScriptOrFnNode {
         return itsCheckThis;
     }
 
-    public void setCheckThis(boolean b) {
-        itsCheckThis = b;
+    void setCheckThis() {
+        itsCheckThis = true;
+    }
+
+    public boolean getIgnoreDynamicScope() {
+        return itsIgnoreDynamicScope;
+    }
+
+    void setIgnoreDynamicScope() {
+        itsIgnoreDynamicScope = true;
     }
 
     /**
@@ -88,63 +96,13 @@ public class FunctionNode extends ScriptOrFnNode {
         return itsFunctionType;
     }
 
-    public void setFunctionType(int functionType) {
+    void setFunctionType(int functionType) {
         itsFunctionType = functionType;
     }
 
-    protected void finishParsing(IRFactory irFactory) {
-        super.finishParsing(irFactory);
-        int functionCount = getFunctionCount();
-        if (functionCount != 0) {
-            for (int i = 0; i != functionCount; ++i) {
-                FunctionNode fn = getFunctionNode(i);
-
-                // Nested functions must check their 'this' value to insure
-                // it is not an activation object: see 10.1.6 Activation Object
-                fn.setCheckThis(true);
-
-                // nested function expression statements overrides var
-                if (fn.getFunctionType() == FUNCTION_EXPRESSION_STATEMENT) {
-                    String name = fn.getFunctionName();
-                    if (name != null && name.length() != 0) {
-                        removeParamOrVar(name);
-                    }
-                }
-            }
-
-            // Functions containing other functions require activation objects
-            setRequiresActivation(true);
-        }
-
-        Node stmts = getLastChild();
-        if (getFunctionType() == FUNCTION_EXPRESSION) {
-            String name = getFunctionName();
-            if (name != null && name.length() != 0 && !hasParamOrVar(name))
-            {
-                // A function expression needs to have its name as a
-                // variable (if it isn't already allocated as a variable).
-                // See ECMA Ch. 13.  We add code to the beginning of the
-                // function to initialize a local variable of the
-                // function's name to the function value.
-                addVar(name);
-                Node setFn = new Node(TokenStream.POP,
-                                new Node(TokenStream.SETVAR,
-                                    Node.newString(name),
-                                    new Node(TokenStream.PRIMARY,
-                                             TokenStream.THISFN)));
-                stmts.addChildrenToFront(setFn);
-            }
-        }
-
-        // Add return to end if needed.
-        Node lastStmt = stmts.getLastChild();
-        if (lastStmt == null || lastStmt.getType() != TokenStream.RETURN) {
-            stmts.addChildToBack(new Node(TokenStream.RETURN));
-        }
-    }
-
-    protected boolean itsNeedsActivation;
-    protected boolean itsCheckThis;
-    protected int itsFunctionType;
     private String functionName;
+    private boolean itsNeedsActivation;
+    private boolean itsCheckThis;
+    private int itsFunctionType;
+    private boolean itsIgnoreDynamicScope;
 }

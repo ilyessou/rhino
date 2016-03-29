@@ -43,6 +43,7 @@ import java.io.*;
 import java.lang.reflect.*;
 import java.util.Hashtable;
 import java.util.Enumeration;
+import java.util.Date;
 
 /**
  * This class reflects non-Array Java objects into the JavaScript environment.  It
@@ -55,7 +56,7 @@ import java.util.Enumeration;
  * @see NativeJavaClass
  */
 
-public class NativeJavaObject implements Scriptable, Wrapper, Externalizable {
+public class NativeJavaObject implements Scriptable, Wrapper, Serializable {
 
     public NativeJavaObject() { }
 
@@ -228,7 +229,7 @@ WrapFactory#wrap(Context cx, Scriptable scope, Object obj, Class)}
      * function, but for now I'll hide behind precedent.
      */
     public static boolean canConvert(Object fromObj, Class to) {
-        int weight = NativeJavaObject.getConversionWeight(fromObj, to);
+        int weight = getConversionWeight(fromObj, to);
 
         return (weight < CONVERSION_NONE);
     }
@@ -257,107 +258,99 @@ WrapFactory#wrap(Context cx, Scriptable scope, Object obj, Class)}
      * "preferred method conversions" from Live Connect 3</a>
      */
     public static int getConversionWeight(Object fromObj, Class to) {
-        int fromCode = NativeJavaObject.getJSTypeCode(fromObj);
-
-        int result = CONVERSION_NONE;
+        int fromCode = getJSTypeCode(fromObj);
 
         switch (fromCode) {
 
         case JSTYPE_UNDEFINED:
             if (to == ScriptRuntime.StringClass ||
                 to == ScriptRuntime.ObjectClass) {
-                result = 1;
+                return 1;
             }
             break;
 
         case JSTYPE_NULL:
             if (!to.isPrimitive()) {
-                result = 1;
+                return 1;
             }
             break;
 
         case JSTYPE_BOOLEAN:
             // "boolean" is #1
             if (to == Boolean.TYPE) {
-                result = 1;
+                return 1;
             }
             else if (to == ScriptRuntime.BooleanClass) {
-                result = 2;
+                return 2;
             }
             else if (to == ScriptRuntime.ObjectClass) {
-                result = 3;
+                return 3;
             }
             else if (to == ScriptRuntime.StringClass) {
-                result = 4;
+                return 4;
             }
             break;
 
         case JSTYPE_NUMBER:
             if (to.isPrimitive()) {
                 if (to == Double.TYPE) {
-                    result = 1;
+                    return 1;
                 }
                 else if (to != Boolean.TYPE) {
-                    result = 1 + NativeJavaObject.getSizeRank(to);
+                    return 1 + getSizeRank(to);
                 }
             }
             else {
                 if (to == ScriptRuntime.StringClass) {
                     // native numbers are #1-8
-                    result = 9;
+                    return 9;
                 }
                 else if (to == ScriptRuntime.ObjectClass) {
-                    result = 10;
+                    return 10;
                 }
                 else if (ScriptRuntime.NumberClass.isAssignableFrom(to)) {
                     // "double" is #1
-                    result = 2;
+                    return 2;
                 }
             }
             break;
 
         case JSTYPE_STRING:
             if (to == ScriptRuntime.StringClass) {
-                result = 1;
+                return 1;
             }
-            else if (to == ScriptRuntime.ObjectClass ||
-                     to == ScriptRuntime.SerializableClass ||
-                     to == ScriptRuntime.ComparableClass)
-            {
-                result = 2;
+            else if (to.isInstance(fromObj)) {
+                return 2;
             }
-            else if (to.isPrimitive() && to != Boolean.TYPE) {
+            else if (to.isPrimitive()) {
                 if (to == Character.TYPE) {
-                    result = 3;
-                }
-                else {
-                    result = 4;
+                    return 3;
+                } else if (to != Boolean.TYPE) {
+                    return 4;
                 }
             }
             break;
 
         case JSTYPE_JAVA_CLASS:
             if (to == ScriptRuntime.ClassClass) {
-                result = 1;
+                return 1;
             }
             else if (to == ScriptRuntime.ObjectClass) {
-                result = 3;
+                return 3;
             }
             else if (to == ScriptRuntime.StringClass) {
-                result = 4;
+                return 4;
             }
             break;
 
         case JSTYPE_JAVA_OBJECT:
         case JSTYPE_JAVA_ARRAY:
             if (to == ScriptRuntime.StringClass) {
-                result = 2;
+                return 2;
             }
             else if (to.isPrimitive() && to != Boolean.TYPE) {
-                result =
-                    (fromCode == JSTYPE_JAVA_ARRAY) ?
-                    CONVERSION_NONTRIVIAL :
-                    2 + NativeJavaObject.getSizeRank(to);
+                return (fromCode == JSTYPE_JAVA_ARRAY)
+                       ? CONVERSION_NONTRIVIAL : 2 + getSizeRank(to);
             }
             else {
                 Object javaObj = fromObj;
@@ -365,32 +358,49 @@ WrapFactory#wrap(Context cx, Scriptable scope, Object obj, Class)}
                     javaObj = ((Wrapper)javaObj).unwrap();
                 }
                 if (to.isInstance(javaObj)) {
-                    result = CONVERSION_NONTRIVIAL;
+                    return CONVERSION_NONTRIVIAL;
                 }
             }
             break;
 
         case JSTYPE_OBJECT:
             // Other objects takes #1-#3 spots
-            if (fromObj instanceof NativeArray && to.isArray()) {
-                // This is a native array conversion to a java array
-                // Array conversions are all equal, and preferable to object
-                // and string conversion, per LC3.
-                result = 1;
+            if (to.isArray()) {
+                if (fromObj instanceof NativeArray) {
+                    // This is a native array conversion to a java array
+                    // Array conversions are all equal, and preferable to object
+                    // and string conversion, per LC3.
+                    return 1;
+                }
             }
             else if (to == ScriptRuntime.ObjectClass) {
-                result = 2;
+                return 2;
             }
             else if (to == ScriptRuntime.StringClass) {
-                result = 3;
+                return 3;
+            }
+            else if (to == ScriptRuntime.DateClass) {
+                if (fromObj instanceof NativeDate) {
+                    // This is a native date to java date conversion
+                    return 1;
+                }
+            }
+            else if (to.isInterface()) {
+                if (fromObj instanceof Function) {
+                    // See comments in coerceType
+                    if (to.getMethods().length == 1) {
+                        return 1;
+                    }
+                }
+                return 11;
             }
             else if (to.isPrimitive() || to != Boolean.TYPE) {
-                result = 3 + NativeJavaObject.getSizeRank(to);
+                return 3 + getSizeRank(to);
             }
             break;
         }
 
-        return result;
+        return CONVERSION_NONE;
 
     }
 
@@ -447,7 +457,7 @@ WrapFactory#wrap(Context cx, Scriptable scope, Object obj, Class)}
             else if (value instanceof NativeJavaArray) {
                 return JSTYPE_JAVA_ARRAY;
             }
-            else if (value instanceof NativeJavaObject) {
+            else if (value instanceof Wrapper) {
                 return JSTYPE_JAVA_OBJECT;
             }
             else {
@@ -489,7 +499,7 @@ WrapFactory#wrap(Context cx, Scriptable scope, Object obj, Class)}
             return value;
         }
 
-        switch (NativeJavaObject.getJSTypeCode(value)) {
+        switch (getJSTypeCode(value)) {
 
         case JSTYPE_NULL:
             // raise error if type.isPrimitive()
@@ -540,14 +550,12 @@ WrapFactory#wrap(Context cx, Scriptable scope, Object obj, Class)}
             break;
 
         case JSTYPE_STRING:
-            if (type == ScriptRuntime.StringClass ||
-                type == ScriptRuntime.ObjectClass ||
-                type == ScriptRuntime.SerializableClass ||
-                type == ScriptRuntime.ComparableClass) {
+            if (type == ScriptRuntime.StringClass || type.isInstance(value)) {
                 return value;
             }
-            else if (type == Character.TYPE ||
-                     type == ScriptRuntime.CharacterClass) {
+            else if (type == Character.TYPE
+                     || type == ScriptRuntime.CharacterClass)
+            {
                 // Special case for converting a single char string to a
                 // character
                 // Placed here because it applies *only* to JS strings,
@@ -559,8 +567,9 @@ WrapFactory#wrap(Context cx, Scriptable scope, Object obj, Class)}
                     return coerceToNumber(type, value, useErrorHandler);
                 }
             }
-            else if ((type.isPrimitive() && type != Boolean.TYPE) ||
-                     ScriptRuntime.NumberClass.isAssignableFrom(type)) {
+            else if ((type.isPrimitive() && type != Boolean.TYPE)
+                     || ScriptRuntime.NumberClass.isAssignableFrom(type))
+            {
                 return coerceToNumber(type, value, useErrorHandler);
             }
             else {
@@ -624,6 +633,13 @@ WrapFactory#wrap(Context cx, Scriptable scope, Object obj, Class)}
             else if (type.isInstance(value)) {
                 return value;
             }
+            else if (type == ScriptRuntime.DateClass
+                     && value instanceof NativeDate)
+            {
+                double time = ((NativeDate)value).getJSTimeValue();
+                // XXX: This will replace NaN by 0
+                return new Date((long)time);
+            }
             else if (type.isArray() && value instanceof NativeArray) {
                 // Make a new java array, and coerce the JS array components
                 // to the target (component) type.
@@ -648,6 +664,42 @@ WrapFactory#wrap(Context cx, Scriptable scope, Object obj, Class)}
                 value = ((Wrapper)value).unwrap();
                 if (type.isInstance(value))
                     return value;
+                reportConversionError(value, type, !useErrorHandler);
+            }
+            else if (type.isInterface()) {
+                if (value instanceof Function && adapter_makeIFGlue != null) {
+                    // Try to wrap function into interface with single method.
+                    Function f = (Function)value;
+
+                    // Can not wrap generic Function since the resulting object
+                    // should be reused next time conversion is made
+                    // and generic Function has no storage for it.
+                    // WeakMap from JDK 1.2 can address it, but for now
+                    // restrict the conversion only to classes extending from
+                    // ScriptableObject to use associateValue for storage
+                    if (f instanceof ScriptableObject) {
+                        ScriptableObject so = (ScriptableObject)f;
+                        Object key = Kit.makeHashKeyFromPair(
+                                         COERCED_INTERFACE_KEY, type);
+                        Object old = so.getAssociatedValue(key);
+                        if (old != null) {
+                            // Function was already wrapped
+                            return old;
+                        }
+                        Object glue;
+                        Object[] args = { type, f };
+                        try {
+                            glue = adapter_makeIFGlue.invoke(null, args);
+                        } catch (Exception ex) {
+                            throw Context.throwAsScriptRuntimeEx(ex);
+                        }
+                        if (glue != null) {
+                            // Store for later retrival
+                            glue = so.associateValue(key, glue);
+                            return glue;
+                        }
+                    }
+                }
                 reportConversionError(value, type, !useErrorHandler);
             }
             else {
@@ -854,39 +906,26 @@ WrapFactory#wrap(Context cx, Scriptable scope, Object obj, Class)}
         }
         throw Context.reportRuntimeError2
             ("msg.conversion.not.allowed",
-             value.toString(), NativeJavaMethod.javaSignature(type));
+             value.toString(), JavaMembers.javaSignature(type));
     }
 
-    public void writeExternal(ObjectOutput out)
+    private void writeObject(ObjectOutputStream out)
         throws IOException
     {
-        out.writeObject(prototype);
-        out.writeObject(parent);
+        out.defaultWriteObject();
 
         if (javaObject != null) {
             Class joClass = javaObject.getClass();
             if (joClass.getName().startsWith("adapter")) {
-
                 out.writeBoolean(true);
-                out.writeObject(joClass.getSuperclass().getName());
-
-                Class[] interfaces = joClass.getInterfaces();
-                String[] interfaceNames = new String[interfaces.length];
-
-                for (int i=0; i < interfaces.length; i++)
-                    interfaceNames[i] = interfaces[i].getName();
-
-                out.writeObject(interfaceNames);
-
+                if (adapter_writeAdapterObject == null) {
+                    throw new IOException();
+                }
+                Object[] args = { javaObject, out };
                 try {
-                    Object delegee
-                        = joClass.getField("delegee").get(javaObject);
-                    Object self
-                        = joClass.getField("self").get(javaObject);
-                    out.writeObject(delegee);
-                    out.writeObject(self);
-                } catch (IllegalAccessException e) {
-                } catch (NoSuchFieldException e) {
+                    adapter_writeAdapterObject.invoke(null, args);
+                } catch (Exception ex) {
+                    throw new IOException();
                 }
             } else {
                 out.writeBoolean(false);
@@ -904,23 +943,20 @@ WrapFactory#wrap(Context cx, Scriptable scope, Object obj, Class)}
         }
     }
 
-    public void readExternal(ObjectInput in)
+    private void readObject(ObjectInputStream in)
         throws IOException, ClassNotFoundException
     {
-        prototype = (Scriptable)in.readObject();
-        parent = (Scriptable)in.readObject();
+        in.defaultReadObject();
 
         if (in.readBoolean()) {
-            Class superclass = Class.forName((String)in.readObject());
-
-            String[] interfaceNames = (String[])in.readObject();
-            Class[] interfaces = new Class[interfaceNames.length];
-
-            for (int i=0; i < interfaceNames.length; i++)
-                interfaces[i] = Class.forName(interfaceNames[i]);
-
-            javaObject = JavaAdapter.createAdapterClass(superclass, interfaces,
-                (Scriptable)in.readObject(), (Scriptable)in.readObject());
+            if (adapter_readAdapterObject == null)
+                throw new ClassNotFoundException();
+            Object[] args = { this, in };
+            try {
+                javaObject = adapter_readAdapterObject.invoke(null, args);
+            } catch (Exception ex) {
+                throw new IOException();
+            }
         } else {
             javaObject = in.readObject();
         }
@@ -945,10 +981,43 @@ WrapFactory#wrap(Context cx, Scriptable scope, Object obj, Class)}
      */
     protected Scriptable parent;
 
-    protected Object javaObject;
+    protected transient Object javaObject;
 
-    protected Class staticType;
-    protected JavaMembers members;
-    private Hashtable fieldAndMethods;
+    protected transient Class staticType;
+    protected transient JavaMembers members;
+    private transient Hashtable fieldAndMethods;
+
+    private static final Object COERCED_INTERFACE_KEY = new Object();
+    private static Method adapter_makeIFGlue;
+    private static Method adapter_writeAdapterObject;
+    private static Method adapter_readAdapterObject;
+
+    static {
+        // Reflection in java is verbose
+        Class cl = Kit.classOrNull("org.mozilla.javascript.JavaAdapter");
+        if (cl != null) {
+            Class[] sig2 = new Class[2];
+            try {
+                sig2[0] = ScriptRuntime.ClassClass;
+                sig2[1] = ScriptRuntime.FunctionClass;
+                adapter_makeIFGlue = cl.getMethod("makeIFGlue", sig2);
+
+                sig2[0] = ScriptRuntime.ObjectClass;
+                sig2[1] = Kit.classOrNull("java.io.ObjectOutputStream");
+                adapter_writeAdapterObject = cl.getMethod("writeAdapterObject",
+                                                          sig2);
+
+                sig2[0] = ScriptRuntime.ScriptableClass;
+                sig2[1] = Kit.classOrNull("java.io.ObjectInputStream");
+                adapter_readAdapterObject = cl.getMethod("readAdapterObject",
+                                                         sig2);
+
+            } catch (Exception ex) {
+                adapter_makeIFGlue = null;
+                adapter_writeAdapterObject = null;
+                adapter_readAdapterObject = null;
+            }
+        }
+    }
 
 }

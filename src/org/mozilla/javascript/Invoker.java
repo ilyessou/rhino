@@ -20,6 +20,7 @@
  *
  * Contributor(s):
  * Norris Boyd
+ * Igor Bukanov
  * David C. Navas
  *
  * Alternatively, the contents of this file may be used under the
@@ -47,8 +48,33 @@ public abstract class Invoker {
     public abstract Object invoke(Object that, Object [] args);
 
     /** Factory method to get invoker for given method */
-    public Invoker createInvoker(Context cx, Method method, Class[] types) {
-        return null;
+    public Invoker createInvoker(ClassCache cache,
+                                 Method method, Class[] types)
+    {
+        // should not be called unless master
+        throw new IllegalStateException();
     }
+
+    /** Factory method to clear internal cache if any */
+    public void clearMasterCaches()
+    {
+        // should not be called unless master
+        throw new IllegalStateException();
+    }
+
+    public static Invoker makeMaster()
+    {
+        if (implClass == null)
+            return null;
+
+        Invoker master = (Invoker)Kit.newInstanceOrNull(implClass);
+        if (master == null)
+            implClass = null;
+
+        return master;
+    }
+
+    private static Class implClass = Kit.classOrNull(
+        "org.mozilla.javascript.optimizer.InvokerImpl");
 
 }

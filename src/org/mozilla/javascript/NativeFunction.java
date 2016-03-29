@@ -38,85 +38,82 @@
 
 package org.mozilla.javascript;
 
-import java.lang.reflect.Method;
-
 /**
  * This class implements the Function native object.
  * See ECMA 15.3.
  * @author Norris Boyd
  */
-public class NativeFunction extends BaseFunction {
+public class NativeFunction extends BaseFunction
+{
+
+    public final void initScriptFunction(int version, String functionName,
+                                         String[] argNames, int argCount)
+    {
+        if (!(argNames != null
+              && 0 <= argCount && argCount <= argNames.length))
+        {
+            throw new IllegalArgumentException();
+        }
+
+        if (!(this.argNames == null)) {
+            // Initialization can only be done once
+            throw new IllegalStateException();
+        }
+
+        this.functionName = functionName;
+        this.argNames = argNames;
+        this.argCount = argCount;
+        this.version = version;
+    }
 
     /**
-     * @param cx Current context
-     *
      * @param indent How much to indent the decompiled result
      *
-     * @param justbody Whether the decompilation should omit the
-     * function header and trailing brace.
+     * @param flags Flags specifying format of decompilation output
      */
-
-    public String decompile(Context cx, int indent, boolean justbody) {
-        Object sourcesTree = getSourcesTree();
-        if (sourcesTree == null) {
-            return super.decompile(cx, indent, justbody);
+    final String decompile(int indent, int flags)
+    {
+        String encodedSource = getEncodedSource();
+        if (encodedSource == null) {
+            return super.decompile(indent, flags);
         } else {
-            return Parser.decompile(sourcesTree, fromFunctionConstructor,
-                                    version, indent, justbody);
+            UintMap properties = new UintMap(1);
+            properties.put(Decompiler.INITIAL_INDENT_PROP, indent);
+            return Decompiler.decompile(encodedSource, flags, properties);
         }
     }
 
-    public int getLength() {
-        Context cx = Context.getContext();
-        if (cx != null && cx.getLanguageVersion() != Context.VERSION_1_2)
+    public int getLength()
+    {
+        if (version != Context.VERSION_1_2)
             return argCount;
-        NativeCall activation = getActivation(cx);
+        NativeCall activation = getActivation(Context.getContext());
         if (activation == null)
             return argCount;
         return activation.getOriginalArguments().length;
     }
 
-    public int getArity() {
+    public int getArity()
+    {
         return argCount;
     }
 
-    public String getFunctionName() {
-        if (fromFunctionConstructor) {
-            return (version == Context.VERSION_1_2) ? "" : "anonymous";
-        }
-        return super.getFunctionName();
-    }
-
     /**
-     * @deprecated Use {@link #getFunctionName()} instead.
+     * @deprecated Use {@link BaseFunction#getFunctionName()} instead.
      * For backwards compatibility keep an old method name used by
      * Batik and possibly others.
      */
-    public String jsGet_name() {
+    public String jsGet_name()
+    {
         return getFunctionName();
     }
 
     /**
-     * Get encoded source as tree where node data encodes source of single
-     * function as String. If node is String, it is leaf and its data is node
-     * itself. Otherwise node is Object[] array, where array[0] holds node data
-     * and array[1..array.length) holds child nodes.
+     * Get encoded source string.
      */
-    protected Object getSourcesTree() {
-        // The following is used only by optimizer, but is here to avoid
-        // introduction of 2 additional classes there
-        Class cl = getClass();
-        try {
-            Method m = cl.getDeclaredMethod("getSourcesTreeImpl",
-                                            new Class[0]);
-            return m.invoke(null, ScriptRuntime.emptyArgs);
-        } catch (NoSuchMethodException ex) {
-            // No source implementation
-            return null;
-        } catch (Exception ex) {
-            // Wrap the rest of exceptions including possible SecurityException
-            throw WrappedException.wrapException(ex);
-        }
+    public String getEncodedSource()
+    {
+        return null;
     }
 
     /**
@@ -125,14 +122,9 @@ public class NativeFunction extends BaseFunction {
      * argNames[argCount] through argNames[args.length-1]: the names of the
      * variables declared in var statements
      */
-    protected String[] argNames;
-    protected short argCount;
-    protected short version;
+    String[] argNames;
+    int argCount;
 
-    /**
-     * True if this represents function constructed via Function()
-     * constructor
-     */
-    boolean fromFunctionConstructor;
+    int version;
 }
 
