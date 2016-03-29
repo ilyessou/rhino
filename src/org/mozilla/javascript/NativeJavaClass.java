@@ -41,7 +41,6 @@ package org.mozilla.javascript;
 
 import java.lang.reflect.*;
 import java.util.Hashtable;
-import java.io.*;
 
 /**
  * This class reflects Java classes into the JavaScript environment, mainly
@@ -59,7 +58,9 @@ import java.io.*;
  * @see NativeJavaPackage
  */
 
-public class NativeJavaClass extends NativeJavaObject implements Function {
+public class NativeJavaClass extends NativeJavaObject implements Function
+{
+    static final long serialVersionUID = -6460763940409461664L;
 
     public NativeJavaClass() {
     }
@@ -191,8 +192,7 @@ public class NativeJavaClass extends NativeJavaObject implements Function {
                 if (v != NOT_FOUND) {
                     Function f = (Function) v;
                     Object[] adapterArgs = { this, args[0] };
-                    return (Scriptable) f.construct(cx, topLevel,
-                                                    adapterArgs);
+                    return f.construct(cx, topLevel,adapterArgs);
                 }
             } catch (Exception ex) {
                 // fall through to error
@@ -209,13 +209,12 @@ public class NativeJavaClass extends NativeJavaObject implements Function {
                                         Object[] args, MemberBox ctor)
     {
         Scriptable topLevel = ScriptableObject.getTopLevelScope(scope);
-        Class classObject = ctor.getDeclaringClass();
         Class[] argTypes = ctor.argTypes;
 
         Object[] origArgs = args;
         for (int i = 0; i < args.length; i++) {
             Object arg = args[i];
-            Object x = NativeJavaObject.coerceType(argTypes[i], arg, true);
+            Object x = Context.jsToJava(arg, argTypes[i]);
             if (x != arg) {
                 if (args == origArgs) {
                     args = (Object[])origArgs.clone();

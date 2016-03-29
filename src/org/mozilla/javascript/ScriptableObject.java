@@ -579,8 +579,7 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
                 if (!(v instanceof Scriptable)) {
                     return v;
                 }
-                if (v == Undefined.instance
-                    || typeHint == ScriptRuntime.ScriptableClass
+                if (typeHint == ScriptRuntime.ScriptableClass
                     || typeHint == ScriptRuntime.FunctionClass)
                 {
                     return v;
@@ -711,9 +710,9 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
      * argument will be passed, along with the newly created constructor and
      * the newly created prototype.<p>
      *
-     * @param scope The scope in which to define the constructor
+     * @param scope The scope in which to define the constructor.
      * @param clazz The Java class to use to define the JavaScript objects
-     *              and properties
+     *              and properties.
      * @exception IllegalAccessException if access is not available
      *            to a reflected class member
      * @exception InstantiationException if unable to instantiate
@@ -729,7 +728,7 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
         throws IllegalAccessException, InstantiationException,
                InvocationTargetException
     {
-        defineClass(scope, clazz, false);
+        defineClass(scope, clazz, false, false);
     }
 
     /**
@@ -742,10 +741,10 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
      * the current ECMA/ISO language specification, but is likely for
      * the next version.
      *
-     * @param scope The scope in which to define the constructor
+     * @param scope The scope in which to define the constructor.
      * @param clazz The Java class to use to define the JavaScript objects
      *              and properties. The class must implement Scriptable.
-     * @param sealed whether or not to create sealed standard objects that
+     * @param sealed Whether or not to create sealed standard objects that
      *               cannot be modified.
      * @exception IllegalAccessException if access is not available
      *            to a reflected class member
@@ -757,6 +756,41 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
      */
     public static void defineClass(Scriptable scope, Class clazz,
                                    boolean sealed)
+        throws IllegalAccessException, InstantiationException,
+               InvocationTargetException
+    {
+        defineClass(scope, clazz, sealed, false);
+    }
+
+    /**
+     * Defines JavaScript objects from a Java class, optionally
+     * allowing sealing and mapping of Java inheritance to JavaScript
+     * prototype-based inheritance.
+     *
+     * Similar to <code>defineClass(Scriptable scope, Class clazz)</code>
+     * except that sealing and inheritance mapping are allowed. An object
+     * that is sealed cannot have properties added or removed. Note that
+     * sealing is not allowed in the current ECMA/ISO language specification,
+     * but is likely for the next version.
+     *
+     * @param scope The scope in which to define the constructor.
+     * @param clazz The Java class to use to define the JavaScript objects
+     *              and properties. The class must implement Scriptable.
+     * @param sealed Whether or not to create sealed standard objects that
+     *               cannot be modified.
+     * @param mapInheritance Whether or not to map Java inheritance to
+     *                       JavaScript prototype-based inheritance.
+     * @return the class name for the prototype of the specified class
+     * @exception IllegalAccessException if access is not available
+     *            to a reflected class member
+     * @exception InstantiationException if unable to instantiate
+     *            the named class
+     * @exception InvocationTargetException if an exception is thrown
+     *            during execution of methods of the named class
+     * @since 1.6R2
+     */
+    public static String defineClass(Scriptable scope, Class clazz,
+                                   boolean sealed, boolean mapInheritance)
         throws IllegalAccessException, InstantiationException,
                InvocationTargetException
     {
@@ -775,7 +809,7 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
                 Object args[] = { Context.getContext(), scope,
                                   sealed ? Boolean.TRUE : Boolean.FALSE };
                 method.invoke(null, args);
-                return;
+                return null;
             }
             if (parmTypes.length == 1 &&
                 parmTypes[0] == ScriptRuntime.ScriptableClass &&
@@ -783,7 +817,7 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
             {
                 Object args[] = { scope };
                 method.invoke(null, args);
-                return;
+                return null;
             }
 
         }
@@ -804,10 +838,25 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
                       "msg.zero.arg.ctor", clazz.getName());
         }
 
-        Scriptable proto = (Scriptable)
-                        protoCtor.newInstance(ScriptRuntime.emptyArgs);
-        proto.setPrototype(getObjectPrototype(scope));
+        Scriptable proto = (Scriptable) protoCtor.newInstance(ScriptRuntime.emptyArgs);
         String className = proto.getClassName();
+
+        // Set the prototype's prototype, trying to map Java inheritance to JS
+        // prototype-based inheritance if requested to do so.
+        Scriptable superProto = null;
+        if (mapInheritance) {
+            Class superClass = clazz.getSuperclass();
+            if (ScriptRuntime.ScriptableClass.isAssignableFrom(superClass)) {
+                String name = ScriptableObject.defineClass(scope, superClass, sealed, mapInheritance);
+                if (name != null) {
+                    superProto = ScriptableObject.getClassPrototype(scope, name);
+                }
+            }
+        }
+        if (superProto == null) {
+            superProto = ScriptableObject.getObjectPrototype(scope);
+        }
+        proto.setPrototype(superProto);
 
         // Find out whether there are any methods that begin with
         // "js". If so, then only methods that begin with special
@@ -918,18 +967,21 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
             }
         }
 
+        // Call user code to complete initialization if necessary.
         if (finishInit != null) {
-            // call user code to complete the initialization
             Object[] finishArgs = { scope, ctor, proto };
             finishInit.invoke(null, finishArgs);
         }
 
+        // Seal the object if necessary.
         if (sealed) {
             ctor.sealObject();
             if (proto instanceof ScriptableObject) {
                 ((ScriptableObject) proto).sealObject();
             }
         }
+
+        return className;
     }
 
     /**
@@ -1099,14 +1151,11 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
             }
         }
 
-        ClassCache cache = ClassCache.get(this);
         GetterSlot gslot = new GetterSlot();
         gslot.delegateTo = delegateTo;
-        gslot.getter = new MemberBox(getter, cache);
-        gslot.getter.prepareInvokerOptimization();
+        gslot.getter = new MemberBox(getter);
         if (setter != null) {
-            gslot.setter = new MemberBox(setter, cache);
-            gslot.setter.prepareInvokerOptimization();
+            gslot.setter = new MemberBox(setter);
         }
         gslot.attributes = (short) attributes;
         Slot inserted = addSlot(propertyName, propertyName.hashCode(), gslot);
@@ -1332,8 +1381,12 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
      * Puts a named property in an object or in an object in its prototype chain.
      * <p>
      * Seaches for the named property in the prototype chain. If it is found,
-     * the value of the property is changed. If it is not found, a new
-     * property is added in <code>obj</code>.
+     * the value of the property in <code>obj</code> is changed through a call
+     * to {@link Scriptable#put(String, Scriptable, Object)} on the prototype
+     * passing <code>obj</code> as the <code>start</code> argument. This allows
+     * the prototype to veto the property setting in case the prototype defines
+     * the property with [[ReadOnly]] attribute. If the property is not found, 
+     * it is added in <code>obj</code>.
      * @param obj a JavaScript object
      * @param name a property name
      * @param value any JavaScript value accepted by Scriptable.put
@@ -1351,8 +1404,12 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
      * Puts an indexed property in an object or in an object in its prototype chain.
      * <p>
      * Seaches for the indexed property in the prototype chain. If it is found,
-     * the value of the property is changed. If it is not found, a new
-     * property is added in <code>obj</code>.
+     * the value of the property in <code>obj</code> is changed through a call
+     * to {@link Scriptable#put(int, Scriptable, Object)} on the prototype
+     * passing <code>obj</code> as the <code>start</code> argument. This allows
+     * the prototype to veto the property setting in case the prototype defines
+     * the property with [[ReadOnly]] attribute. If the property is not found, 
+     * it is added in <code>obj</code>.
      * @param obj a JavaScript object
      * @param index a property index
      * @param value any JavaScript value accepted by Scriptable.put
@@ -1941,6 +1998,8 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
 
     private static class Slot implements Serializable
     {
+        static final long serialVersionUID = -3539051633409902634L;
+
         private void readObject(ObjectInputStream in)
             throws IOException, ClassNotFoundException
         {
@@ -1959,6 +2018,8 @@ public abstract class ScriptableObject implements Scriptable, Serializable,
 
     private static final class GetterSlot extends Slot
     {
+        static final long serialVersionUID = -4900574849788797588L;
+
         Object delegateTo;
         MemberBox getter;
         MemberBox setter;

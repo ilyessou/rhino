@@ -40,6 +40,8 @@ import org.mozilla.javascript.debug.DebuggableScript;
 
 final class InterpretedFunction extends NativeFunction implements Script
 {
+    static final long serialVersionUID = 541475680333911468L;
+
     InterpreterData idata;
     SecurityController securityController;
     Object securityDomain;
@@ -84,7 +86,6 @@ final class InterpretedFunction extends NativeFunction implements Script
     {
         InterpretedFunction f;
         f = new InterpretedFunction(idata, staticSecurityDomain);
-        f.initScriptObject();
         return f;
     }
 
@@ -128,15 +129,32 @@ final class InterpretedFunction extends NativeFunction implements Script
 
     private void initInterpretedFunction(Context cx, Scriptable scope)
     {
-        initScriptFunction(cx, scope, idata.itsName);
+        initScriptFunction(cx, scope);
         if (idata.itsRegExpLiterals != null) {
             functionRegExps = createRegExpWraps(cx, scope);
         }
     }
 
+    public String getFunctionName()
+    {
+        return (idata.itsName == null) ? "" : idata.itsName;
+    }
+
+    /**
+     * Calls the function.
+     * @param cx the current context 
+     * @param scope the scope used for the call
+     * @param the value of "this"
+     * @param function arguments. Must not be null. You can use 
+     * {@link ScriptRuntime#emptyArgs} to pass empty arguments.
+     * @return the result of the function call.
+     */
     public Object call(Context cx, Scriptable scope, Scriptable thisObj,
                        Object[] args)
     {
+        if (!ScriptRuntime.hasTopCall(cx)) {
+            return ScriptRuntime.doTopCall(this, cx, scope, thisObj, args);
+        }
         return Interpreter.interpret(this, cx, scope, thisObj, args);
     }
 
@@ -146,7 +164,13 @@ final class InterpretedFunction extends NativeFunction implements Script
             // Can only be applied to scripts
             throw new IllegalStateException();
         }
-        return call(cx, scope, scope, ScriptRuntime.emptyArgs);
+        if (!ScriptRuntime.hasTopCall(cx)) {
+            // It will go through "call" path. but they are equivalent
+            return ScriptRuntime.doTopCall(
+                this, cx, scope, scope, ScriptRuntime.emptyArgs);
+        }
+        return Interpreter.interpret(
+            this, cx, scope, scope, ScriptRuntime.emptyArgs);
     }
 
     public String getEncodedSource()

@@ -574,6 +574,12 @@ class TokenStream
                             }
                             break;
 
+                        case '\n':
+                            // Remove line terminator after escape to follow
+                            // SpiderMonkey and C/C++
+                            c = getChar();
+                            continue strLoop;
+
                         default:
                             if ('0' <= c && c < '8') {
                                 int val = c - '0';
@@ -1351,9 +1357,6 @@ class TokenStream
     private boolean dirtyLine;
 
     String regExpFlags;
-
-    private String line;
-    private boolean fromEval;
 
     // Set this to an inital non-null value so that the Parser has
     // something to retrieve even if an error has occured and no

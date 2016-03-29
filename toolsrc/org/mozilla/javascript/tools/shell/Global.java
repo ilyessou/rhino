@@ -55,6 +55,15 @@ import org.mozilla.javascript.serialize.*;
  */
 public class Global extends ImporterTopLevel
 {
+    static final long serialVersionUID = 4029130780977538005L;
+
+    NativeArray history;
+    private InputStream inStream;
+    private PrintStream outStream;
+    private PrintStream errStream;
+    private boolean sealedStdLib = false;
+    boolean initialized;
+    private QuitAction quitAction;
 
     public Global()
     {
@@ -65,15 +74,53 @@ public class Global extends ImporterTopLevel
         init(cx);
     }
 
+    /**
+     * Set the action to call from quit().
+     */
+    public void initQuitAction(QuitAction quitAction)
+    {
+        if (quitAction == null)
+            throw new IllegalArgumentException("quitAction is null");
+        if (this.quitAction != null)
+            throw new IllegalArgumentException("The method is once-call.");
+
+        this.quitAction = quitAction;
+    }
+
+    public void init(ContextFactory factory)
+    {
+        factory.call(new ContextAction() {
+                public Object run(Context cx)
+                {
+                    init(cx);
+                    return null;
+                }
+            });
+    }
+
     public void init(Context cx)
     {
         // Define some global functions particular to the shell. Note
         // that these functions are not part of ECMA.
-        initStandardObjects(cx, Main.sealedStdLib);
-        String[] names = { "print", "quit", "version", "load", "help",
-                           "loadClass", "defineClass", "spawn", "sync",
-                           "serialize", "deserialize", "runCommand",
-                           "seal", "readFile", "readUrl" };
+        initStandardObjects(cx, sealedStdLib);
+        String[] names = {
+            "defineClass",
+            "deserialize",
+            "help",
+            "load",
+            "loadClass",
+            "print",
+            "quit",
+            "readFile",
+            "readUrl",
+            "runCommand",
+            "seal",
+            "serialize",
+            "spawn",
+            "sync",
+            "toint32",
+            "version",
+        };
         defineFunctionProperties(names, Global.class,
                                  ScriptableObject.DONTENUM);
 
@@ -97,7 +144,7 @@ public class Global extends ImporterTopLevel
     public static void help(Context cx, Scriptable thisObj,
                             Object[] args, Function funObj)
     {
-        PrintStream out = getInstance(thisObj).getOut();
+        PrintStream out = getInstance(funObj).getOut();
         out.println(ToolErrorReporter.getMessage("msg.help"));
     }
 
@@ -113,7 +160,7 @@ public class Global extends ImporterTopLevel
     public static Object print(Context cx, Scriptable thisObj,
                                Object[] args, Function funObj)
     {
-        PrintStream out = getInstance(thisObj).getOut();
+        PrintStream out = getInstance(funObj).getOut();
         for (int i=0; i < args.length; i++) {
             if (i > 0)
                 out.print(" ");
@@ -128,18 +175,20 @@ public class Global extends ImporterTopLevel
     }
 
     /**
-     * Quit the shell.
-     *
-     * This only affects the interactive mode.
+     * Call embedding-specific quit action passing its argument as
+     * int32 exit code.
      *
      * This method is defined as a JavaScript function.
      */
     public static void quit(Context cx, Scriptable thisObj,
                             Object[] args, Function funObj)
     {
-
-        System.exit((args.length > 0) ?
-                    ((int) Context.toNumber(args[0])) : 0);
+        Global global = getInstance(funObj);
+        if (global.quitAction != null) {
+            int exitCode = (args.length == 0 ? 0
+                            : ScriptRuntime.toInt32(args[0]));
+            global.quitAction.quit(cx, exitCode);
+        }
     }
 
     /**
@@ -152,7 +201,7 @@ public class Global extends ImporterTopLevel
     {
         double result = (double) cx.getLanguageVersion();
         if (args.length > 0) {
-            double d = cx.toNumber(args[0]);
+            double d = Context.toNumber(args[0]);
             cx.setLanguageVersion((int) d);
         }
         return result;
@@ -167,8 +216,8 @@ public class Global extends ImporterTopLevel
     public static void load(Context cx, Scriptable thisObj,
                             Object[] args, Function funObj)
     {
-        for (int i=0; i < args.length; i++) {
-            Main.processFile(cx, thisObj, cx.toString(args[i]));
+        for (int i = 0; i < args.length; i++) {
+            Main.processFile(cx, thisObj, Context.toString(args[i]));
         }
     }
 
@@ -258,7 +307,7 @@ public class Global extends ImporterTopLevel
                 "the serialization to");
         }
         Object obj = args[0];
-        String filename = cx.toString(args[1]);
+        String filename = Context.toString(args[1]);
         FileOutputStream fos = new FileOutputStream(filename);
         Scriptable scope = ScriptableObject.getTopLevelScope(thisObj);
         ScriptableOutputStream out = new ScriptableOutputStream(fos, scope);
@@ -274,13 +323,13 @@ public class Global extends ImporterTopLevel
             throw Context.reportRuntimeError(
                 "Expected a filename to read the serialization from");
         }
-        String filename = cx.toString(args[0]);
+        String filename = Context.toString(args[0]);
         FileInputStream fis = new FileInputStream(filename);
         Scriptable scope = ScriptableObject.getTopLevelScope(thisObj);
         ObjectInputStream in = new ScriptableInputStream(fis, scope);
         Object deserialized = in.readObject();
         in.close();
-        return cx.toObject(deserialized, scope);
+        return Context.toObject(deserialized, scope);
     }
 
     /**
@@ -312,6 +361,7 @@ public class Global extends ImporterTopLevel
         } else {
             throw reportRuntimeError("msg.spawn.args");
         }
+        runner.factory = cx.getFactory();
         Thread thread = new Thread(runner);
         thread.start();
         return thread;
@@ -371,10 +421,11 @@ public class Global extends ImporterTopLevel
      * <li><tt>input</tt> - the process input. If it is not
      *   java.io.InputStream, it is converted to string and sent to the process
      *   as its input. If not specified, no input is provided to the process.
-     * <li><tt>output</tt> - the process output instead of java.lang.System.out.
-     *   If it is not instance of java.io.OutputStream, the process output is
-     *   read, converted to a string, appended to the output property value
-     *   converted to string and put as the new value of the output property.
+     * <li><tt>output</tt> - the process output instead of
+     *   java.lang.System.out. If it is not instance of java.io.OutputStream,
+     *   the process output is read, converted to a string, appended to the
+     *   output property value converted to string and put as the new value of
+     *   the output property.
      * <li><tt>err</tt> - the process error output instead of
      *   java.lang.System.err. If it is not instance of java.io.OutputStream,
      *   the process error output is read, converted to a string, appended to
@@ -452,12 +503,12 @@ public class Global extends ImporterTopLevel
             }
             Object addArgsObj = ScriptableObject.getProperty(params, "args");
             if (addArgsObj != Scriptable.NOT_FOUND) {
-                Scriptable s = cx.toObject(addArgsObj,
-                                           getTopLevelScope(thisObj));
+                Scriptable s = Context.toObject(addArgsObj,
+                                                getTopLevelScope(thisObj));
                 addArgs = cx.getElements(s);
             }
         }
-        Global global = getInstance(thisObj);
+        Global global = getInstance(funObj);
         if (out == null) {
             out = (global != null) ? global.getOut() : System.out;
         }
@@ -576,6 +627,18 @@ public class Global extends ImporterTopLevel
         return readUrl(url, charCoding, false);
     }
 
+    /**
+     * Convert the argumnet to int32 number.
+     */
+    public static Object toint32(Context cx, Scriptable thisObj, Object[] args,
+                                 Function funObj)
+    {
+        Object arg = (args.length != 0 ? args[0] : Undefined.instance);
+        if (arg instanceof Integer)
+            return arg;
+        return ScriptRuntime.wrapInt(ScriptRuntime.toInt32(arg));
+    }
+
     public InputStream getIn() {
         return inStream == null ? System.in : inStream;
     }
@@ -600,17 +663,18 @@ public class Global extends ImporterTopLevel
         errStream = err;
     }
 
-    public static Global getInstance(Scriptable scope)
+    public void setSealedStdLib(boolean value)
     {
-        scope = ScriptableObject.getTopLevelScope(scope);
-        do {
-            if (scope instanceof Global) {
-                return (Global)scope;
-            }
-            scope = scope.getPrototype();
-        } while (scope != null);
+        sealedStdLib = value;
+    }
 
-        return null;
+    private static Global getInstance(Function function)
+    {
+        Scriptable scope = function.getParentScope();
+        if (!(scope instanceof Global))
+            throw reportRuntimeError("msg.bad.shell.function.scope",
+                                     String.valueOf(scope));
+        return (Global)scope;
     }
 
     /**
@@ -757,10 +821,15 @@ public class Global extends ImporterTopLevel
                 }
             }
         } finally {
-            if (fromProcess) {
-                from.close();
-            } else {
-                to.close();
+            try {
+                if (fromProcess) {
+                    from.close();
+                } else {
+                    to.close();
+                }
+            } catch (IOException ex) {
+                // Ignore errors on close. On Windows JVM may throw invalid
+                // refrence exception if process terminates too fast.
             }
         }
     }
@@ -916,12 +985,6 @@ public class Global extends ImporterTopLevel
         String message = ToolErrorReporter.getMessage(msgId, msgArg);
         return Context.reportRuntimeError(message);
     }
-
-    NativeArray history;
-    public InputStream inStream;
-    public PrintStream outStream;
-    public PrintStream errStream;
-    boolean initialized;
 }
 
 
@@ -940,7 +1003,7 @@ class Runner implements Runnable, ContextAction {
 
     public void run()
     {
-        Main.shellContextFactory.call(this);
+        factory.call(this);
     }
 
     public Object run(Context cx)
@@ -951,6 +1014,7 @@ class Runner implements Runnable, ContextAction {
             return s.exec(cx, scope);
     }
 
+    ContextFactory factory;
     private Scriptable scope;
     private Function f;
     private Script s;
@@ -970,8 +1034,7 @@ class PipeThread extends Thread {
         try {
             Global.pipe(fromProcess, from, to);
         } catch (IOException ex) {
-            throw Global.reportRuntimeError(
-                "msg.uncaughtIOException", ex.getMessage());
+            throw Context.throwAsScriptRuntimeEx(ex);
         }
     }
 

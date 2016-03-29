@@ -21,6 +21,7 @@
  * Contributor(s):
  * Mike Ang
  * Igor Bukanov
+ * Yuh-Ruey Chen
  * Ethan Hugg
  * Terry Lucas
  * Mike McCabe
@@ -68,6 +69,7 @@ public class Parser
     CompilerEnvirons compilerEnv;
     private ErrorReporter errorReporter;
     private String sourceURI;
+    boolean calledByCompileFunction;
 
     private TokenStream ts;
     private int currentFlaggedToken;
@@ -93,6 +95,7 @@ public class Parser
     // Exception to unwind
     private static class ParserException extends RuntimeException
     {
+        static final long serialVersionUID = 5882582646773765630L;
     }
 
     public Parser(CompilerEnvirons compilerEnv, ErrorReporter errorReporter)
@@ -255,7 +258,7 @@ public class Parser
         loopAndSwitchSet.pop();
     }
 
-    private Node enterSwitch(Node switchSelector, int lineno, Node switchLabel)
+    private Node enterSwitch(Node switchSelector, int lineno)
     {
         Node switchNode = nf.createSwitch(switchSelector, lineno);
         if (loopAndSwitchSet == null) {
@@ -339,7 +342,9 @@ public class Parser
                 if (tt == Token.FUNCTION) {
                     consumeToken();
                     try {
-                        n = function(FunctionNode.FUNCTION_STATEMENT);
+                        n = function(calledByCompileFunction
+                                     ? FunctionNode.FUNCTION_EXPRESSION
+                                     : FunctionNode.FUNCTION_STATEMENT);
                     } catch (ParserException e) {
                         break;
                     }
@@ -488,7 +493,6 @@ public class Parser
         loopAndSwitchSet = null;
 
         Node body;
-        String source;
         try {
             decompiler.addToken(Token.LP);
             if (!matchToken(Token.RP)) {
@@ -549,7 +553,6 @@ public class Parser
 
         Node pn = nf.initFunction(fnNode, functionIndex, body, syntheticType);
         if (memberExprNode != null) {
-            pn = nf.initFunction(fnNode, functionIndex, body, syntheticType);
             pn = nf.createAssignment(Token.ASSIGN, memberExprNode, pn);
             if (functionType != FunctionNode.FUNCTION_EXPRESSION) {
                 // XXX check JScript behavior: should it be createExprStatement?
@@ -677,7 +680,7 @@ public class Parser
             int lineno = ts.getLineno();
             mustMatchToken(Token.LP, "msg.no.paren.switch");
             decompiler.addToken(Token.LP);
-            pn = enterSwitch(expr(false), lineno, statementLabel);
+            pn = enterSwitch(expr(false), lineno);
             try {
                 mustMatchToken(Token.RP, "msg.no.paren.after.switch");
                 decompiler.addToken(Token.RP);
@@ -1522,13 +1525,10 @@ public class Parser
 
         /* Make a NEW node to append to. */
         Node pnXML = nf.createLeaf(Token.NEW);
-        decompiler.addToken(Token.NEW);
-        decompiler.addToken(Token.DOT);
 
         String xml = ts.getString();
         boolean fAnonymous = xml.trim().startsWith("<>");
 
-        decompiler.addName(fAnonymous ? "XMLList" : "XML");
         Node pn = nf.createName(fAnonymous ? "XMLList" : "XML");
         nf.addChildToBack(pnXML, pn);
 
@@ -1538,7 +1538,7 @@ public class Parser
             switch (tt) {
             case Token.XML:
                 xml = ts.getString();
-                decompiler.addString(xml);
+                decompiler.addName(xml);
                 mustMatchToken(Token.LC, "msg.syntax");
                 decompiler.addToken(Token.LC);
                 expr = (peekToken() == Token.RC)
@@ -1562,7 +1562,7 @@ public class Parser
                 break;
             case Token.XMLEND:
                 xml = ts.getString();
-                decompiler.addString(xml);
+                decompiler.addName(xml);
                 if (pn == null) {
                     pn = nf.createString(xml);
                 } else {
@@ -1703,6 +1703,7 @@ public class Parser
                 decompiler.addToken(Token.DOTQUERY);
                 pn = nf.createDotQuery(pn, expr(false), ts.getLineno());
                 mustMatchToken(Token.RP, "msg.no.paren");
+                decompiler.addToken(Token.RP);
                 break;
 
               case Token.LB:

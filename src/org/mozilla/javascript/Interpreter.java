@@ -41,10 +41,11 @@
 
 package org.mozilla.javascript;
 
-import java.io.*;
+import java.io.PrintStream;
+import java.io.Serializable;
 
-import org.mozilla.javascript.debug.*;
 import org.mozilla.javascript.continuations.Continuation;
+import org.mozilla.javascript.debug.DebugFrame;
 
 public class Interpreter
 {
@@ -78,90 +79,87 @@ public class Interpreter
         Icode_ELEM_INC_DEC              = -10,
         Icode_REF_INC_DEC               = -11,
 
-    // helper codes to deal with activation
-        Icode_SCOPE                     = -12,
-
     // load/save scope from/to local
-        Icode_SCOPE_LOAD                = -13,
-        Icode_SCOPE_SAVE                = -14,
+        Icode_SCOPE_LOAD                = -12,
+        Icode_SCOPE_SAVE                = -13,
 
-        Icode_TYPEOFNAME                = -15,
+        Icode_TYPEOFNAME                = -14,
 
     // helper for function calls
-        Icode_NAME_AND_THIS             = -16,
-        Icode_PROP_AND_THIS             = -17,
-        Icode_ELEM_AND_THIS             = -18,
-        Icode_VALUE_AND_THIS            = -19,
+        Icode_NAME_AND_THIS             = -15,
+        Icode_PROP_AND_THIS             = -16,
+        Icode_ELEM_AND_THIS             = -17,
+        Icode_VALUE_AND_THIS            = -18,
 
     // Create closure object for nested functions
-        Icode_CLOSURE_EXPR              = -20,
-        Icode_CLOSURE_STMT              = -21,
+        Icode_CLOSURE_EXPR              = -19,
+        Icode_CLOSURE_STMT              = -20,
 
     // Special calls
-        Icode_CALLSPECIAL               = -22,
+        Icode_CALLSPECIAL               = -21,
 
     // To return undefined value
-        Icode_RETUNDEF                  = -23,
+        Icode_RETUNDEF                  = -22,
 
     // Exception handling implementation
-        Icode_GOSUB                     = -24,
-        Icode_STARTSUB                  = -25,
-        Icode_RETSUB                    = -26,
+        Icode_GOSUB                     = -23,
+        Icode_STARTSUB                  = -24,
+        Icode_RETSUB                    = -25,
 
     // To indicating a line number change in icodes.
-        Icode_LINE                      = -27,
+        Icode_LINE                      = -26,
 
     // To store shorts and ints inline
-        Icode_SHORTNUMBER               = -28,
-        Icode_INTNUMBER                 = -29,
+        Icode_SHORTNUMBER               = -27,
+        Icode_INTNUMBER                 = -28,
 
     // To create and populate array to hold values for [] and {} literals
-        Icode_LITERAL_NEW               = -30,
-        Icode_LITERAL_SET               = -31,
+        Icode_LITERAL_NEW               = -29,
+        Icode_LITERAL_SET               = -30,
 
     // Array literal with skipped index like [1,,2]
-        Icode_SPARE_ARRAYLIT            = -32,
+        Icode_SPARE_ARRAYLIT            = -31,
 
     // Load index register to prepare for the following index operation
-        Icode_REG_IND_C0                = -33,
-        Icode_REG_IND_C1                = -34,
-        Icode_REG_IND_C2                = -35,
-        Icode_REG_IND_C3                = -36,
-        Icode_REG_IND_C4                = -37,
-        Icode_REG_IND_C5                = -38,
-        Icode_REG_IND1                  = -39,
-        Icode_REG_IND2                  = -40,
-        Icode_REG_IND4                  = -41,
+        Icode_REG_IND_C0                = -32,
+        Icode_REG_IND_C1                = -33,
+        Icode_REG_IND_C2                = -34,
+        Icode_REG_IND_C3                = -35,
+        Icode_REG_IND_C4                = -36,
+        Icode_REG_IND_C5                = -37,
+        Icode_REG_IND1                  = -38,
+        Icode_REG_IND2                  = -39,
+        Icode_REG_IND4                  = -40,
 
     // Load string register to prepare for the following string operation
-        Icode_REG_STR_C0                = -42,
-        Icode_REG_STR_C1                = -43,
-        Icode_REG_STR_C2                = -44,
-        Icode_REG_STR_C3                = -45,
-        Icode_REG_STR1                  = -46,
-        Icode_REG_STR2                  = -47,
-        Icode_REG_STR4                  = -48,
+        Icode_REG_STR_C0                = -41,
+        Icode_REG_STR_C1                = -42,
+        Icode_REG_STR_C2                = -43,
+        Icode_REG_STR_C3                = -44,
+        Icode_REG_STR1                  = -45,
+        Icode_REG_STR2                  = -46,
+        Icode_REG_STR4                  = -47,
 
     // Version of getvar/setvar that read var index directly from bytecode
-        Icode_GETVAR1                   = -49,
-        Icode_SETVAR1                   = -50,
+        Icode_GETVAR1                   = -48,
+        Icode_SETVAR1                   = -49,
 
     // Load unefined
-        Icode_UNDEF                     = -51,
-        Icode_ZERO                      = -52,
-        Icode_ONE                       = -53,
+        Icode_UNDEF                     = -50,
+        Icode_ZERO                      = -51,
+        Icode_ONE                       = -52,
 
     // entrance and exit from .()
-       Icode_ENTERDQ                    = -54,
-       Icode_LEAVEDQ                    = -55,
+       Icode_ENTERDQ                    = -53,
+       Icode_LEAVEDQ                    = -54,
 
-       Icode_TAIL_CALL                  = -56,
+       Icode_TAIL_CALL                  = -55,
 
        // Clear local to allow GC its context
-       Icode_LOCAL_CLEAR                = -57,
+       Icode_LOCAL_CLEAR                = -56,
 
     // Last icode
-        MIN_ICODE                       = -57;
+        MIN_ICODE                       = -56;
 
     // data for parsing
 
@@ -206,6 +204,8 @@ public class Interpreter
      */
     private static class CallFrame implements Cloneable, Serializable
     {
+        static final long serialVersionUID = -2843792508994958978L;
+
         CallFrame parentFrame;
         // amount of stack frames before this one on the interpretation stack
         int frameIndex;
@@ -269,6 +269,8 @@ public class Interpreter
 
     private static final class ContinuationJump implements Serializable
     {
+        static final long serialVersionUID = 7687739156004308247L;
+
         CallFrame capturedFrame;
         CallFrame branchFrame;
         Object result;
@@ -361,7 +363,6 @@ public class Interpreter
           case Icode_PROP_INC_DEC:     return "PROP_INC_DEC";
           case Icode_ELEM_INC_DEC:     return "ELEM_INC_DEC";
           case Icode_REF_INC_DEC:      return "REF_INC_DEC";
-          case Icode_SCOPE:            return "SCOPE";
           case Icode_SCOPE_LOAD:       return "SCOPE_LOAD";
           case Icode_SCOPE_SAVE:       return "SCOPE_SAVE";
           case Icode_TYPEOFNAME:       return "TYPEOFNAME";
@@ -460,19 +461,23 @@ public class Interpreter
         return itsData;
     }
 
-    public Script createScriptObject(Object bytecode,
-                                     Object staticSecurityDomain)
+    public Script createScriptObject(Object bytecode, Object staticSecurityDomain)
     {
-        InterpreterData idata = (InterpreterData)bytecode;
+        if(bytecode != itsData)
+        {
+            Kit.codeBug();
+        }
         return InterpretedFunction.createScript(itsData,
                                                 staticSecurityDomain);
     }
 
-    public Function createFunctionObject(Context cx, Scriptable scope,
-                                         Object bytecode,
-                                         Object staticSecurityDomain)
+    public Function createFunctionObject(Context cx, Scriptable scope, 
+            Object bytecode, Object staticSecurityDomain)
     {
-        InterpreterData idata = (InterpreterData)bytecode;
+        if(bytecode != itsData)
+        {
+            Kit.codeBug();
+        }
         return InterpretedFunction.createFunction(cx, scope, itsData,
                                                   staticSecurityDomain);
     }
@@ -685,7 +690,6 @@ public class Interpreter
             // See comments in IRFactory.createSwitch() for description
             // of SWITCH node
             {
-                Node switchNode = (Node.Jump)node;
                 visitExpression(child, 0);
                 for (Node.Jump caseNode = (Node.Jump)child.getNext();
                      caseNode != null;
@@ -861,7 +865,6 @@ public class Interpreter
         int type = node.getType();
         Node child = node.getFirstChild();
         int savedStackDepth = itsStackDepth;
-        int expectedStackDelta = 1;
         switch (type) {
 
           case Token.FUNCTION:
@@ -906,9 +909,6 @@ public class Interpreter
             break;
 
           case Token.REF_CALL:
-            // account for the reference represented as pair (ref, target)
-            expectedStackDelta = 2;
-            // fallthrough
           case Token.CALL:
           case Token.NEW:
             {
@@ -939,12 +939,12 @@ public class Interpreter
                     addIndexOp(type, argCount);
                 }
                 // adjust stack
-                if (type == Token.NEW || type == Token.REF_CALL) {
+                if (type == Token.NEW) {
                     // new: f, args -> result
-                    // ref_call: f, thisObj, args -> ref ref_target
                     stackChange(-argCount);
                 } else {
-                    // f, thisObj, args -> result
+                    // call: f, thisObj, args -> result
+                    // ref_call: f, thisObj, args -> ref
                     stackChange(-1 - argCount);
                 }
                 if (argCount > itsData.itsMaxCalleeArgs) {
@@ -961,7 +961,7 @@ public class Interpreter
                 stackChange(1);
                 int afterSecondJumpStart = itsICodeTop;
                 int jump = (type == Token.AND) ? Token.IFNE : Token.IFEQ;
-                addForwardGoto(jump);
+                addGotoOp(jump);
                 stackChange(-1);
                 addIcode(Icode_POP);
                 stackChange(-1);
@@ -978,12 +978,12 @@ public class Interpreter
                 Node ifElse = ifThen.getNext();
                 visitExpression(child, 0);
                 int elseJumpStart = itsICodeTop;
-                addForwardGoto(Token.IFNE);
+                addGotoOp(Token.IFNE);
                 stackChange(-1);
                 // Preserve tail context flag if any
                 visitExpression(ifThen, contextFlags & ECF_TAIL);
                 int afterElseJumpStart = itsICodeTop;
-                addForwardGoto(Token.GOTO);
+                addGotoOp(Token.GOTO);
                 resolveForwardGoto(elseJumpStart);
                 itsStackDepth = savedStackDepth;
                 // Preserve tail context flag if any
@@ -1047,7 +1047,6 @@ public class Interpreter
           case Token.DEL_REF:
             visitExpression(child, 0);
             addToken(type);
-            stackChange(-1);
             break;
 
           case Token.SETPROP:
@@ -1094,16 +1093,15 @@ public class Interpreter
             visitExpression(child, 0);
             child = child.getNext();
             if (type == Token.SET_REF_OP) {
-                addIcode(Icode_DUP2);
-                stackChange(2);
+                addIcode(Icode_DUP);
+                stackChange(1);
                 addToken(Token.GET_REF);
-                stackChange(-1);
                 // Compensate for the following USE_STACK
                 stackChange(-1);
             }
             visitExpression(child, 0);
             addToken(Token.SET_REF);
-            stackChange(-2);
+            stackChange(-1);
             break;
 
           case Token.SETNAME:
@@ -1179,36 +1177,22 @@ public class Interpreter
 
           case Token.GETVAR:
             {
+                if (itsData.itsNeedsActivation) Kit.codeBug();
                 String name = node.getString();
-                if (itsData.itsNeedsActivation) {
-                    // SETVAR handled this by turning into a SETPROP, but
-                    // we can't do that to a GETVAR without manufacturing
-                    // bogus children. Instead we use a special op to
-                    // push the current scope.
-                    addIcode(Icode_SCOPE);
-                    stackChange(1);
-                    addStringOp(Token.GETPROP, name);
-                } else {
-                    int index = scriptOrFn.getParamOrVarIndex(name);
-                    addVarOp(Token.GETVAR, index);
-                    stackChange(1);
-                }
+                int index = scriptOrFn.getParamOrVarIndex(name);
+                addVarOp(Token.GETVAR, index);
+                stackChange(1);
             }
             break;
 
           case Token.SETVAR:
             {
-                if (itsData.itsNeedsActivation) {
-                    child.setType(Token.BINDNAME);
-                    node.setType(Token.SETNAME);
-                    visitExpression(node, 0);
-                } else {
-                    String name = child.getString();
-                    child = child.getNext();
-                    visitExpression(child, 0);
-                    int index = scriptOrFn.getParamOrVarIndex(name);
-                    addVarOp(Token.SETVAR, index);
-                }
+                if (itsData.itsNeedsActivation) Kit.codeBug();
+                String name = child.getString();
+                child = child.getNext();
+                visitExpression(child, 0);
+                int index = scriptOrFn.getParamOrVarIndex(name);
+                addVarOp(Token.SETVAR, index);
             }
             break;
 
@@ -1243,8 +1227,6 @@ public class Interpreter
           case Token.REF_SPECIAL:
             visitExpression(child, 0);
             addStringOp(type, (String)node.getProp(Node.NAME_PROP));
-            stackChange(1);
-            expectedStackDelta = 2;
             break;
 
           case Token.REF_MEMBER:
@@ -1261,8 +1243,7 @@ public class Interpreter
                     child = child.getNext();
                 } while (child != null);
                 addIndexOp(type, memberTypeFlags);
-                stackChange(2 - childCount);
-                expectedStackDelta = 2;
+                stackChange(1 - childCount);
             }
             break;
 
@@ -1289,7 +1270,7 @@ public class Interpreter
           default:
             throw badTree(node);
         }
-        if (savedStackDepth + expectedStackDelta != itsStackDepth) {
+        if (savedStackDepth + 1 != itsStackDepth) {
             Kit.codeBug();
         }
     }
@@ -1339,18 +1320,12 @@ public class Interpreter
         int childType = child.getType();
         switch (childType) {
           case Token.GETVAR : {
+            if (itsData.itsNeedsActivation) Kit.codeBug();
             String name = child.getString();
-            if (itsData.itsNeedsActivation) {
-                addIcode(Icode_SCOPE);
-                stackChange(1);
-                addStringOp(Icode_PROP_INC_DEC, name);
-                addUint8(incrDecrMask);
-            } else {
-                int i = scriptOrFn.getParamOrVarIndex(name);
-                addVarOp(Icode_VAR_INC_DEC, i);
-                addUint8(incrDecrMask);
-                stackChange(1);
-            }
+            int i = scriptOrFn.getParamOrVarIndex(name);
+            addVarOp(Icode_VAR_INC_DEC, i);
+            addUint8(incrDecrMask);
+            stackChange(1);
             break;
           }
           case Token.NAME : {
@@ -1383,7 +1358,6 @@ public class Interpreter
             visitExpression(ref, 0);
             addIcode(Icode_REF_INC_DEC);
             addUint8(incrDecrMask);
-            stackChange(-1);
             break;
           }
           default : {
@@ -1477,18 +1451,11 @@ public class Interpreter
         if (!(label < itsLabelTableTop)) Kit.codeBug();
         int targetPC = itsLabelTable[label];
 
-        int gotoPC = itsICodeTop;
-        if (validIcode(gotoOp)) {
-            addIcode(gotoOp);
-        } else {
-            addToken(gotoOp);
-        }
-
         if (targetPC != -1) {
-            recordJump(gotoPC, targetPC);
-            itsICodeTop += 2;
+            addBackwardGoto(gotoOp, targetPC);
         } else {
-            addUint16(0);
+            int gotoPC = itsICodeTop;
+            addGotoOp(gotoOp);
             int top = itsFixupTableTop;
             if (itsFixupTable == null || top == itsFixupTable.length) {
                 if (itsFixupTable == null) {
@@ -1515,46 +1482,43 @@ public class Interpreter
                 // Unlocated label
                 throw Kit.codeBug();
             }
-            recordJump(jumpSource, pc);
+            resolveGoto(jumpSource, pc);
         }
         itsFixupTableTop = 0;
     }
 
     private void addBackwardGoto(int gotoOp, int jumpPC)
     {
-        if (jumpPC >= itsICodeTop) throw Kit.codeBug();
         int fromPC = itsICodeTop;
-        addIcode(gotoOp);
-        recordJump(fromPC, jumpPC);
-        itsICodeTop += 2;
-    }
-
-    private void addForwardGoto(int gotoOp)
-    {
-        addToken(gotoOp);
-        addUint16(0);
+        // Ensure that this is a jump backward
+        if (fromPC <= jumpPC) throw Kit.codeBug();
+        addGotoOp(gotoOp);
+        resolveGoto(fromPC, jumpPC);
     }
 
     private void resolveForwardGoto(int fromPC)
     {
-        if (fromPC + 3 > itsICodeTop) throw Kit.codeBug();
-        recordJump(fromPC, itsICodeTop);
+        // Ensure that forward jump skips at least self bytecode
+        if (itsICodeTop < fromPC + 3) throw Kit.codeBug();
+        resolveGoto(fromPC, itsICodeTop);
     }
 
-    private void recordJump(int jumpSource, int jumpDestination)
+    private void resolveGoto(int fromPC, int jumpPC)
     {
-        if (jumpSource == jumpDestination) throw Kit.codeBug();
-        int offsetSite = jumpSource + 1;
-        int offset = jumpDestination - jumpSource;
+        int offset = jumpPC - fromPC;
+        // Ensure that jumps do not overlap
+        if (0 <= offset && offset <= 2) throw Kit.codeBug();
+        int offsetSite = fromPC + 1;
         if (offset != (short)offset) {
             if (itsData.longJumps == null) {
                 itsData.longJumps = new UintMap();
             }
-            itsData.longJumps.put(offsetSite, jumpDestination);
+            itsData.longJumps.put(offsetSite, jumpPC);
             offset = 0;
         }
-        itsData.itsICode[offsetSite] = (byte)(offset >> 8);
-        itsData.itsICode[offsetSite + 1] = (byte)offset;
+        byte[] array = itsData.itsICode;
+        array[offsetSite] = (byte)(offset >> 8);
+        array[offsetSite + 1] = (byte)offset;
     }
 
     private void addToken(int token)
@@ -1622,6 +1586,18 @@ public class Interpreter
         itsData.itsDoubleTable[index] = num;
         itsDoubleTableTop = index + 1;
         return index;
+    }
+
+    private void addGotoOp(int gotoOp)
+    {
+        byte[] array = itsData.itsICode;
+        int top = itsICodeTop;
+        if (top + 3 > array.length) {
+            array = increaseICodeCapasity(3);
+        }
+        array[top] = (byte)gotoOp;
+        // Offset would written later
+        itsICodeTop = top + 1 + 2;
     }
 
     private void addVarOp(int op, int varIndex)
@@ -2107,9 +2083,64 @@ public class Interpreter
         return presentLines.getKeys();
     }
 
+    static void captureInterpreterStackInfo(RhinoException ex)
+    {
+        Context cx = Context.getCurrentContext();
+        if (cx == null || cx.lastInterpreterFrame == null) {
+            // No interpreter invocations
+            ex.interpreterStackInfo = null;
+            ex.interpreterLineData = null;
+            return;
+        }
+        // has interpreter frame on the stack
+        CallFrame[] array;
+        if (cx.previousInterpreterInvocations == null
+            || cx.previousInterpreterInvocations.size() == 0)
+        {
+            array = new CallFrame[1];
+        } else {
+            int previousCount = cx.previousInterpreterInvocations.size();
+            if (cx.previousInterpreterInvocations.peek()
+                == cx.lastInterpreterFrame)
+            {
+                // It can happen if exception was generated after
+                // frame was pushed to cx.previousInterpreterInvocations
+                // but before assignment to cx.lastInterpreterFrame.
+                // In this case frames has to be ignored.
+                --previousCount;
+            }
+            array = new CallFrame[previousCount + 1];
+            cx.previousInterpreterInvocations.toArray(array);
+        }
+        array[array.length - 1]  = (CallFrame)cx.lastInterpreterFrame;
+
+        int interpreterFrameCount = 0;
+        for (int i = 0; i != array.length; ++i) {
+            interpreterFrameCount += 1 + array[i].frameIndex;
+        }
+
+        int[] linePC = new int[interpreterFrameCount];
+        // Fill linePC with pc positions from all interpreter frames.
+        // Start from the most nested frame
+        int linePCIndex = interpreterFrameCount;
+        for (int i = array.length; i != 0;) {
+            --i;
+            CallFrame frame = array[i];
+            while (frame != null) {
+                --linePCIndex;
+                linePC[linePCIndex] = frame.pcSourceLineStart;
+                frame = frame.parentFrame;
+            }
+        }
+        if (linePCIndex != 0) Kit.codeBug();
+
+        ex.interpreterStackInfo = array;
+        ex.interpreterLineData = linePC;
+    }
+
     static String getSourcePositionFromStack(Context cx, int[] linep)
     {
-        CallFrame frame = (CallFrame)cx.interpreterLineCounting;
+        CallFrame frame = (CallFrame)cx.lastInterpreterFrame;
         InterpreterData idata = frame.idata;
         if (frame.pcSourceLineStart >= 0) {
             linep[0] = getIndex(idata.itsICode, frame.pcSourceLineStart);
@@ -2117,6 +2148,65 @@ public class Interpreter
             linep[0] = 0;
         }
         return idata.itsSourceFile;
+    }
+
+    static String getPatchedStack(RhinoException ex,
+                                  String nativeStackTrace)
+    {
+        String tag = "org.mozilla.javascript.Interpreter.interpretLoop";
+        StringBuffer sb = new StringBuffer(nativeStackTrace.length() + 1000);
+        String lineSeparator = System.getProperty("line.separator");
+
+        CallFrame[] array = (CallFrame[])ex.interpreterStackInfo;
+        int[] linePC = ex.interpreterLineData;
+        int arrayIndex = array.length;
+        int linePCIndex = linePC.length;
+        int offset = 0;
+        while (arrayIndex != 0) {
+            --arrayIndex;
+            int pos = nativeStackTrace.indexOf(tag, offset);
+            if (pos < 0) {
+                break;
+            }
+
+            // Skip tag length
+            pos += tag.length();
+            // Skip until the end of line
+            for (; pos != nativeStackTrace.length(); ++pos) {
+                char c = nativeStackTrace.charAt(pos);
+                if (c == '\n' || c == '\r') {
+                    break;
+                }
+            }
+            sb.append(nativeStackTrace.substring(offset, pos));
+            offset = pos;
+
+            CallFrame frame = array[arrayIndex];
+            while (frame != null) {
+                if (linePCIndex == 0) Kit.codeBug();
+                --linePCIndex;
+                InterpreterData idata = frame.idata;
+                sb.append(lineSeparator);
+                sb.append("\tat script");
+                if (idata.itsName != null && idata.itsName.length() != 0) {
+                    sb.append('.');
+                    sb.append(idata.itsName);
+                }
+                sb.append('(');
+                sb.append(idata.itsSourceFile);
+                int pc = linePC[linePCIndex];
+                if (pc >= 0) {
+                    // Include line info only if available
+                    sb.append(':');
+                    sb.append(getIndex(idata.itsICode, pc));
+                }
+                sb.append(')');
+                frame = frame.parentFrame;
+            }
+        }
+        sb.append(nativeStackTrace.substring(offset));
+
+        return sb.toString();
     }
 
     static String getEncodedSource(InterpreterData idata)
@@ -2141,9 +2231,8 @@ public class Interpreter
                             Context cx, Scriptable scope,
                             Scriptable thisObj, Object[] args)
     {
-        if (!ScriptRuntime.hasTopCall(cx)) {
-            return ScriptRuntime.doTopCall(ifun, cx, scope, thisObj, args);
-        }
+        if (!ScriptRuntime.hasTopCall(cx)) Kit.codeBug();
+
         if (cx.interpreterSecurityDomain != ifun.securityDomain) {
             Object savedDomain = cx.interpreterSecurityDomain;
             cx.interpreterSecurityDomain = ifun.securityDomain;
@@ -2159,15 +2248,7 @@ public class Interpreter
         initFrame(cx, scope, thisObj, args, null, 0, args.length,
                   ifun, null, frame);
 
-        Object result;
-        try {
-            result = interpret(cx, frame, null);
-        } finally {
-            // Always clenup interpreterLineCounting to avoid memory leaks
-            // throgh stored in Context frame
-            cx.interpreterLineCounting = null;
-        }
-        return result;
+        return interpretLoop(cx, frame, null);
     }
 
     public static Object restartContinuation(Continuation c, Context cx,
@@ -2193,18 +2274,18 @@ public class Interpreter
         ContinuationJump cjump = new ContinuationJump(c, null);
 
         cjump.result = arg;
-        return interpret(cx, null, cjump);
+        return interpretLoop(cx, null, cjump);
     }
 
-    private static Object interpret(Context cx, CallFrame frame,
-                                    Object throwable)
+    private static Object interpretLoop(Context cx, CallFrame frame,
+                                        Object throwable)
     {
         // throwable holds exception object to rethrow or catch
         // It is also used for continuation restart in which case
         // it holds ContinuationJump
 
         final Object DBL_MRK = UniqueTag.DOUBLE_MARK;
-        final Scriptable undefined = Undefined.instance;
+        final Object undefined = Undefined.instance;
 
         final boolean instructionCounting = (cx.instructionThreshold != 0);
         // arbitrary number to add to instructionCount when calling
@@ -2215,6 +2296,15 @@ public class Interpreter
 
         String stringReg = null;
         int indexReg = -1;
+
+        if (cx.lastInterpreterFrame != null) {
+            // save the top frame from the previous interpreterLoop
+            // invocation on the stack
+            if (cx.previousInterpreterInvocations == null) {
+                cx.previousInterpreterInvocations = new ObjArray();
+            }
+            cx.previousInterpreterInvocations.push(cx.lastInterpreterFrame);
+        }
 
         // When restarting continuation throwable is not null and to jump
         // to the code that rewind continuation state indexReg should be set
@@ -2230,6 +2320,9 @@ public class Interpreter
                 Kit.codeBug();
             }
         }
+
+        Object interpreterResult = null;
+        double interpreterResultDbl = 0.0;
 
         StateLoop: for (;;) {
             withoutExceptions: try {
@@ -2323,6 +2416,7 @@ public class Interpreter
                         setCallResult(frame, cjump.result, cjump.resultDbl);
                         // restart the execution
                     }
+
                 } else {
                     if (frame.frozen) Kit.codeBug();
                 }
@@ -2342,8 +2436,8 @@ public class Interpreter
                 // function calls and normal returns.
                 int stackTop = frame.savedStackTop;
 
-                // Point line counting to the new frame
-                cx.interpreterLineCounting = frame;
+                // Store new frame in cx which is used for error reporting etc.
+                cx.lastInterpreterFrame = frame;
 
                 Loop: for (;;) {
 
@@ -2430,23 +2524,19 @@ switch (op) {
         stack[stackTop] = ScriptRuntime.wrapBoolean(valBln);
         continue Loop;
     }
-    case Token.IN : {
-        Object rhs = stack[stackTop];
-        if (rhs == DBL_MRK) rhs = ScriptRuntime.wrapNumber(sDbl[stackTop]);
-        --stackTop;
-        Object lhs = stack[stackTop];
-        if (lhs == DBL_MRK) lhs = ScriptRuntime.wrapNumber(sDbl[stackTop]);
-        boolean valBln = ScriptRuntime.in(lhs, rhs, cx, frame.scope);
-        stack[stackTop] = ScriptRuntime.wrapBoolean(valBln);
-        continue Loop;
-    }
+    case Token.IN :
     case Token.INSTANCEOF : {
         Object rhs = stack[stackTop];
         if (rhs == DBL_MRK) rhs = ScriptRuntime.wrapNumber(sDbl[stackTop]);
         --stackTop;
         Object lhs = stack[stackTop];
         if (lhs == DBL_MRK) lhs = ScriptRuntime.wrapNumber(sDbl[stackTop]);
-        boolean valBln = ScriptRuntime.instanceOf(lhs, rhs, cx, frame.scope);
+        boolean valBln;
+        if (op == Token.IN) {
+            valBln = ScriptRuntime.in(lhs, rhs, cx);
+        } else {
+            valBln = ScriptRuntime.instanceOf(lhs, rhs, cx);
+        }
         stack[stackTop] = ScriptRuntime.wrapBoolean(valBln);
         continue Loop;
     }
@@ -2616,44 +2706,33 @@ switch (op) {
         sDbl[stackTop] = ~rIntValue;
         continue Loop;
     }
-    case Token.BITAND : {
-        int rIntValue = stack_int32(frame, stackTop);
-        --stackTop;
-        int lIntValue = stack_int32(frame, stackTop);
-        stack[stackTop] = DBL_MRK;
-        sDbl[stackTop] = lIntValue & rIntValue;
-        continue Loop;
-    }
-    case Token.BITOR : {
-        int rIntValue = stack_int32(frame, stackTop);
-        --stackTop;
-        int lIntValue = stack_int32(frame, stackTop);
-        stack[stackTop] = DBL_MRK;
-        sDbl[stackTop] = lIntValue | rIntValue;
-        continue Loop;
-    }
-    case Token.BITXOR : {
-        int rIntValue = stack_int32(frame, stackTop);
-        --stackTop;
-        int lIntValue = stack_int32(frame, stackTop);
-        stack[stackTop] = DBL_MRK;
-        sDbl[stackTop] = lIntValue ^ rIntValue;
-        continue Loop;
-    }
-    case Token.LSH : {
-        int rIntValue = stack_int32(frame, stackTop);
-        --stackTop;
-        int lIntValue = stack_int32(frame, stackTop);
-        stack[stackTop] = DBL_MRK;
-        sDbl[stackTop] = lIntValue << rIntValue;
-        continue Loop;
-    }
+    case Token.BITAND :
+    case Token.BITOR :
+    case Token.BITXOR :
+    case Token.LSH :
     case Token.RSH : {
         int rIntValue = stack_int32(frame, stackTop);
         --stackTop;
         int lIntValue = stack_int32(frame, stackTop);
         stack[stackTop] = DBL_MRK;
-        sDbl[stackTop] = lIntValue >> rIntValue;
+        switch (op) {
+          case Token.BITAND:
+            lIntValue &= rIntValue;
+            break;
+          case Token.BITOR:
+            lIntValue |= rIntValue;
+            break;
+          case Token.BITXOR:
+            lIntValue ^= rIntValue;
+            break;
+          case Token.LSH:
+            lIntValue <<= rIntValue;
+            break;
+          case Token.RSH:
+            lIntValue >>= rIntValue;
+            break;
+        }
+        sDbl[stackTop] = lIntValue;
         continue Loop;
     }
     case Token.URSH : {
@@ -2664,15 +2743,13 @@ switch (op) {
         sDbl[stackTop] = ScriptRuntime.toUint32(lDbl) >>> rIntValue;
         continue Loop;
     }
-    case Token.NEG : {
-        double rDbl = stack_double(frame, stackTop);
-        stack[stackTop] = DBL_MRK;
-        sDbl[stackTop] = -rDbl;
-        continue Loop;
-    }
+    case Token.NEG :
     case Token.POS : {
         double rDbl = stack_double(frame, stackTop);
         stack[stackTop] = DBL_MRK;
+        if (op == Token.NEG) {
+            rDbl = -rDbl;
+        }
         sDbl[stackTop] = rDbl;
         continue Loop;
     }
@@ -2680,37 +2757,29 @@ switch (op) {
         --stackTop;
         do_add(stack, sDbl, stackTop, cx);
         continue Loop;
-    case Token.SUB : {
-        double rDbl = stack_double(frame, stackTop);
-        --stackTop;
-        double lDbl = stack_double(frame, stackTop);
-        stack[stackTop] = DBL_MRK;
-        sDbl[stackTop] = lDbl - rDbl;
-        continue Loop;
-    }
-    case Token.MUL : {
-        double rDbl = stack_double(frame, stackTop);
-        --stackTop;
-        double lDbl = stack_double(frame, stackTop);
-        stack[stackTop] = DBL_MRK;
-        sDbl[stackTop] = lDbl * rDbl;
-        continue Loop;
-    }
-    case Token.DIV : {
-        double rDbl = stack_double(frame, stackTop);
-        --stackTop;
-        double lDbl = stack_double(frame, stackTop);
-        stack[stackTop] = DBL_MRK;
-        // Detect the divide by zero or let Java do it ?
-        sDbl[stackTop] = lDbl / rDbl;
-        continue Loop;
-    }
+    case Token.SUB :
+    case Token.MUL :
+    case Token.DIV :
     case Token.MOD : {
         double rDbl = stack_double(frame, stackTop);
         --stackTop;
         double lDbl = stack_double(frame, stackTop);
         stack[stackTop] = DBL_MRK;
-        sDbl[stackTop] = lDbl % rDbl;
+        switch (op) {
+          case Token.SUB:
+            lDbl -= rDbl;
+            break;
+          case Token.MUL:
+            lDbl *= rDbl;
+            break;
+          case Token.DIV:
+            lDbl /= rDbl;
+            break;
+          case Token.MOD:
+            lDbl %= rDbl;
+            break;
+        }
+        sDbl[stackTop] = lDbl;
         continue Loop;
     }
     case Token.NOT :
@@ -2812,35 +2881,26 @@ switch (op) {
         continue Loop;
     }
     case Token.GET_REF : {
-        Scriptable target = (Scriptable)stack[stackTop];
-        --stackTop;
         Ref ref = (Ref)stack[stackTop];
-        stack[stackTop] = ScriptRuntime.refGet(ref, target, cx);
+        stack[stackTop] = ScriptRuntime.refGet(ref, cx);
         continue Loop;
     }
     case Token.SET_REF : {
         Object value = stack[stackTop];
         if (value == DBL_MRK) value = ScriptRuntime.wrapNumber(sDbl[stackTop]);
         --stackTop;
-        Scriptable target = (Scriptable)stack[stackTop];
-        --stackTop;
         Ref ref = (Ref)stack[stackTop];
-        stack[stackTop] = ScriptRuntime.refSet(ref, target, value, cx);
+        stack[stackTop] = ScriptRuntime.refSet(ref, value, cx);
         continue Loop;
     }
     case Token.DEL_REF : {
-        Scriptable target = (Scriptable)stack[stackTop];
-        --stackTop;
         Ref ref = (Ref)stack[stackTop];
-        stack[stackTop] = ScriptRuntime.refDel(ref, target, cx);
+        stack[stackTop] = ScriptRuntime.refDel(ref, cx);
         continue Loop;
     }
     case Icode_REF_INC_DEC : {
-        Scriptable target = (Scriptable)stack[stackTop];
-        --stackTop;
         Ref ref = (Ref)stack[stackTop];
-        stack[stackTop] = ScriptRuntime.refIncrDecr(ref, target, cx,
-                                                    iCode[frame.pc]);
+        stack[stackTop] = ScriptRuntime.refIncrDecr(ref, cx, iCode[frame.pc]);
         ++frame.pc;
         continue Loop;
     }
@@ -2914,9 +2974,9 @@ switch (op) {
             stackTop -= 1 + indexReg;
 
             // Call code generation ensure that stack here
-            // is ... Function Scriptable
+            // is ... Callable Scriptable
             Scriptable functionThis = (Scriptable)stack[stackTop + 1];
-            Function function = (Function)stack[stackTop];
+            Callable function = (Callable)stack[stackTop];
             Object[] outArgs = getArgsArray(
                                    stack, sDbl, stackTop + 2, indexReg);
             stack[stackTop] = ScriptRuntime.callSpecial(
@@ -2938,24 +2998,20 @@ switch (op) {
         stackTop -= 1 + indexReg;
 
         // CALL generation ensures that fun and funThisObj
-        // are already Scriptable and Function objects respectively
-        Function fun = (Function)stack[stackTop];
+        // are already Scriptable and Callable objects respectively
+        Callable fun = (Callable)stack[stackTop];
         Scriptable funThisObj = (Scriptable)stack[stackTop + 1];
+        if (op == Token.REF_CALL) {
+            Object[] outArgs = getArgsArray(stack, sDbl, stackTop + 2,
+                                            indexReg);
+            stack[stackTop] = ScriptRuntime.callRef(fun, funThisObj,
+                                                    outArgs, cx);
+            continue Loop;
+        }
         Scriptable calleeScope = frame.scope;
         if (frame.useActivation) {
             calleeScope = ScriptableObject.getTopLevelScope(frame.scope);
         }
-
-        if (op == Token.REF_CALL) {
-            Object[] outArgs = getArgsArray(stack, sDbl, stackTop + 2,
-                                            indexReg);
-            stack[stackTop] = ScriptRuntime.callRef(fun, funThisObj, outArgs,
-                                                    cx, calleeScope);
-            ++stackTop;
-            stack[stackTop] = Ref.popTarget(cx);
-            continue Loop;
-        }
-
         if (fun instanceof InterpretedFunction) {
             InterpretedFunction ifun = (InterpretedFunction)fun;
             if (frame.fnOrScript.securityDomain == ifun.securityDomain) {
@@ -3244,8 +3300,6 @@ switch (op) {
         Object obj = stack[stackTop];
         if (obj == DBL_MRK) obj = ScriptRuntime.wrapNumber(sDbl[stackTop]);
         stack[stackTop] = ScriptRuntime.specialRef(obj, stringReg, cx);
-        ++stackTop;
-        stack[stackTop] = Ref.popTarget(cx);
         continue Loop;
     }
     case Token.REF_MEMBER: {
@@ -3256,8 +3310,6 @@ switch (op) {
         Object obj = stack[stackTop];
         if (obj == DBL_MRK) obj = ScriptRuntime.wrapNumber(sDbl[stackTop]);
         stack[stackTop] = ScriptRuntime.memberRef(obj, elem, cx, indexReg);
-        ++stackTop;
-        stack[stackTop] = Ref.popTarget(cx);
         continue Loop;
     }
     case Token.REF_NS_MEMBER: {
@@ -3271,8 +3323,6 @@ switch (op) {
         Object obj = stack[stackTop];
         if (obj == DBL_MRK) obj = ScriptRuntime.wrapNumber(sDbl[stackTop]);
         stack[stackTop] = ScriptRuntime.memberRef(obj, ns, elem, cx, indexReg);
-        ++stackTop;
-        stack[stackTop] = Ref.popTarget(cx);
         continue Loop;
     }
     case Token.REF_NAME: {
@@ -3281,8 +3331,6 @@ switch (op) {
         if (name == DBL_MRK) name = ScriptRuntime.wrapNumber(sDbl[stackTop]);
         stack[stackTop] = ScriptRuntime.nameRef(name, cx, frame.scope,
                                                 indexReg);
-        ++stackTop;
-        stack[stackTop] = Ref.popTarget(cx);
         continue Loop;
     }
     case Token.REF_NS_NAME: {
@@ -3294,13 +3342,8 @@ switch (op) {
         if (ns == DBL_MRK) ns = ScriptRuntime.wrapNumber(sDbl[stackTop]);
         stack[stackTop] = ScriptRuntime.nameRef(ns, name, cx, frame.scope,
                                                 indexReg);
-        ++stackTop;
-        stack[stackTop] = Ref.popTarget(cx);
         continue Loop;
     }
-    case Icode_SCOPE :
-        stack[++stackTop] = frame.scope;
-        continue Loop;
     case Icode_SCOPE_LOAD :
         indexReg += frame.localShift;
         frame.scope = (Scriptable)stack[indexReg];
@@ -3485,19 +3528,19 @@ switch (op) {
                 } // end of Loop: for
 
                 exitFrame(cx, frame, null);
-                Object callResult = frame.result;
-                double callResultDbl = frame.resultDbl;
+                interpreterResult = frame.result;
+                interpreterResultDbl = frame.resultDbl;
                 if (frame.parentFrame != null) {
                     frame = frame.parentFrame;
                     if (frame.frozen) {
                         frame = frame.cloneFrozen();
                     }
-                    setCallResult(frame, callResult, callResultDbl);
+                    setCallResult(
+                        frame, interpreterResult, interpreterResultDbl);
+                    interpreterResult = null; // Help GC
                     continue StateLoop;
                 }
-
-                return (callResult != DBL_MRK)
-                    ? callResult : ScriptRuntime.wrapNumber(callResultDbl);
+                break StateLoop;
 
             }  // end of interpreter withoutExceptions: try
             catch (Throwable ex) {
@@ -3607,17 +3650,40 @@ switch (op) {
                     continue StateLoop;
                 }
                 // Return continuation result to the caller
-                return (cjump.result != DBL_MRK)
-                    ? cjump.result : ScriptRuntime.wrapNumber(cjump.resultDbl);
+                interpreterResult = cjump.result;
+                interpreterResultDbl = cjump.resultDbl;
+                throwable = null;
             }
+            break StateLoop;
+
+        } // end of StateLoop: for(;;)
+
+        // Do cleanups/restorations before the final return or throw
+
+        if (cx.previousInterpreterInvocations != null
+            && cx.previousInterpreterInvocations.size() != 0)
+        {
+            cx.lastInterpreterFrame
+                = cx.previousInterpreterInvocations.pop();
+        } else {
+            // It was the last interpreter frame on the stack
+            cx.lastInterpreterFrame = null;
+            // Force GC of the value cx.previousInterpreterInvocations
+            cx.previousInterpreterInvocations = null;
+        }
+
+        if (throwable != null) {
             if (throwable instanceof RuntimeException) {
                 throw (RuntimeException)throwable;
             } else {
                 // Must be instance of Error or code bug
                 throw (Error)throwable;
             }
+        }
 
-        } // end of StateLoop: for(;;)
+        return (interpreterResult != DBL_MRK)
+               ? interpreterResult
+               : ScriptRuntime.wrapNumber(interpreterResultDbl);
     }
 
     private static void initFrame(Context cx, Scriptable callerScope,
@@ -3719,6 +3785,10 @@ switch (op) {
         frame.parentFrame = parentFrame;
         frame.frameIndex = (parentFrame == null)
                            ? 0 : parentFrame.frameIndex + 1;
+        if(frame.frameIndex > cx.getMaximumInterpreterStackDepth())
+        {
+            throw Context.reportRuntimeError("Exceeded maximum stack depth");
+        }
         frame.frozen = false;
 
         frame.fnOrScript = fnOrScript;
@@ -3793,7 +3863,7 @@ switch (op) {
         if (frame.debuggerFrame != null) {
             try {
                 if (throwable instanceof Throwable) {
-                    frame.debuggerFrame.onExit(cx, true, (Throwable)throwable);
+                    frame.debuggerFrame.onExit(cx, true, throwable);
                 } else {
                     Object result;
                     ContinuationJump cjump = (ContinuationJump)throwable;
@@ -3832,9 +3902,7 @@ switch (op) {
             // If construct returns scriptable,
             // then it replaces on stack top saved original instance
             // of the object.
-            if (callResult instanceof Scriptable
-                && callResult != Undefined.instance)
-            {
+            if (callResult instanceof Scriptable) {
                 frame.stack[frame.savedStackTop] = callResult;
             }
         } else {

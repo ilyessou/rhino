@@ -23,13 +23,14 @@
  * Kemal Bayram
  * Patrick Beard
  * Norris Boyd
- * Igor Bukanov
+ * Igor Bukanov, igor@mir2.org
  * Brendan Eich
  * Ethan Hugg
  * Roger Lawrence
  * Terry Lucas
  * Mike McCabe
  * Milen Nankov
+ * Attila Szegedi, szegedia@freemail.hu
  * Ian D. Stewart
  * Andi Vajda
  * Andrew Wason
@@ -68,10 +69,6 @@ import org.mozilla.javascript.xml.XMLLib;
  * of the script such as the call stack. Contexts are associated with
  * the current thread  using the {@link #call(ContextAction)}
  * or {@link #enter()} methods.<p>
- *
- * The behavior of the execution engine may be altered through methods
- * such as <a href="#setLanguageVersion>setLanguageVersion</a> and
- * <a href="#setErrorReporter>setErrorReporter</a>.<p>
  *
  * Different forms of script execution are supported. Scripts may be
  * evaluated from the source directly, or first compiled and then later
@@ -275,6 +272,25 @@ public class Context
     {
         setLanguageVersion(VERSION_DEFAULT);
         optimizationLevel = codegenClass != null ? 0 : -1;
+        maximumInterpreterStackDepth = Integer.MAX_VALUE;
+    }
+
+    /**
+     * Get the current Context.
+     *
+     * The current Context is per-thread; this method looks up
+     * the Context associated with the current thread. <p>
+     *
+     * @return the Context associated with the current thread, or
+     *         null if no context is associated with the current
+     *         thread.
+     * @see org.mozilla.javascript.Context#enter()
+     * @see org.mozilla.javascript.Context#exit()
+     */
+    public static Context getCurrentContext()
+    {
+        Object helper = VMBridge.instance.getThreadContextHelper();
+        return VMBridge.instance.getContext(helper);
     }
 
     /**
@@ -342,14 +358,13 @@ public class Context
      */
     public static Context enter(Context cx)
     {
-        Context[] storage = getThreadContextStorage();
-        Context old;
-        if (storage != null) {
-            old = storage[0];
-        } else {
-            old = getCurrentContext_jdk11();
-        }
-
+        return enter(cx, ContextFactory.getGlobal());
+    }
+    
+    static final Context enter(Context cx, ContextFactory factory)
+    {
+        Object helper = VMBridge.instance.getThreadContextHelper();
+        Context old = VMBridge.instance.getContext(helper);
         if (old != null) {
             if (cx != null && cx != old && cx.enterCount != 0) {
                 // The suplied context must be the context for
@@ -366,7 +381,7 @@ public class Context
             cx = old;
         } else {
             if (cx == null) {
-                cx = ContextFactory.getGlobal().makeContext();
+                cx = factory.makeContext();
             } else {
                 if (cx.sealed) onSealedMutation();
             }
@@ -376,16 +391,12 @@ public class Context
 
             if (!cx.creationEventWasSent) {
                 cx.creationEventWasSent = true;
-                ContextFactory.getGlobal().onContextCreated(cx);
+                factory.onContextCreated(cx);
             }
         }
 
         if (old == null) {
-            if (storage != null) {
-                storage[0] = cx;
-            } else {
-                setThreadContext_jdk11(cx);
-            }
+            VMBridge.instance.setContext(helper, cx);
         }
         ++cx.enterCount;
 
@@ -409,13 +420,13 @@ public class Context
      */
     public static void exit()
     {
-        Context[] storage = getThreadContextStorage();
-        Context cx;
-        if (storage != null) {
-            cx = storage[0];
-        } else {
-            cx = getCurrentContext_jdk11();
-        }
+        exit(ContextFactory.getGlobal());
+    }
+    
+    static void exit(ContextFactory factory)
+    {
+        Object helper = VMBridge.instance.getThreadContextHelper();
+        Context cx = VMBridge.instance.getContext(helper);
         if (cx == null) {
             throw new IllegalStateException(
                 "Calling Context.exit without previous Context.enter");
@@ -429,18 +440,12 @@ public class Context
         if (cx.sealed) onSealedMutation();
         --cx.enterCount;
         if (cx.enterCount == 0) {
-            if (storage != null) {
-                storage[0] = null;
-            } else {
-                setThreadContext_jdk11(null);
-            }
-        }
-
-        if (cx.enterCount == 0) {
-            ContextFactory.getGlobal().onContextReleased(cx);
+            VMBridge.instance.setContext(helper, null);
+            factory.onContextReleased(cx);
         }
     }
 
+    
     /**
      * Call {@link ContextAction#run(Context cx)}
      * using the Context instance associated with the current thread.
@@ -478,34 +483,34 @@ public class Context
                               Object[] args)
     {
         if (factory == null) {
-            factory = ScriptRuntime.getContextFactory(scope);
-        }
-        Context[] storage = getThreadContextStorage();
-        Context cx;
-        if (storage != null) {
-            cx = storage[0];
-        } else {
-            cx = getCurrentContext_jdk11();
+            factory = ContextFactory.getGlobal();
         }
 
+        Object helper = VMBridge.instance.getThreadContextHelper();
+        Context cx = VMBridge.instance.getContext(helper);
         if (cx != null) {
+            Object result;
             if (cx.factory != null) {
-                return callable.call(cx, scope, thisObj, args);
+                result = callable.call(cx, scope, thisObj, args);
             } else {
+                // Context was associated with the thread via Context.enter,
+                // set factory to make Context.enter/exit to be no-op
+                // during call
                 cx.factory = factory;
                 try {
-                    return callable.call(cx, scope, thisObj, args);
+                    result = callable.call(cx, scope, thisObj, args);
                 } finally {
                     cx.factory = null;
                 }
             }
+            return result;
         }
 
-        cx = prepareNewContext(factory, storage);
+        cx = prepareNewContext(factory, helper);
         try {
             return callable.call(cx, scope, thisObj, args);
         } finally {
-            releaseContext(storage, cx);
+            releaseContext(helper, cx);
         }
     }
 
@@ -514,13 +519,8 @@ public class Context
      */
     static Object call(ContextFactory factory, ContextAction action)
     {
-        Context[] storage = getThreadContextStorage();
-        Context cx;
-        if (storage != null) {
-            cx = storage[0];
-        } else {
-            cx = getCurrentContext_jdk11();
-        }
+        Object helper = VMBridge.instance.getThreadContextHelper();
+        Context cx = VMBridge.instance.getContext(helper);
 
         if (cx != null) {
             if (cx.factory != null) {
@@ -535,16 +535,16 @@ public class Context
             }
         }
 
-        cx = prepareNewContext(factory, storage);
+        cx = prepareNewContext(factory, helper);
         try {
             return action.run(cx);
         } finally {
-            releaseContext(storage, cx);
+            releaseContext(helper, cx);
         }
     }
 
     private static Context prepareNewContext(ContextFactory factory,
-                                             Context[] storage)
+                                             Object contextHelper)
     {
         Context cx = factory.makeContext();
         if (cx.factory != null || cx.enterCount != 0) {
@@ -555,22 +555,13 @@ public class Context
         if (factory.isSealed() && !cx.isSealed()) {
             cx.seal(null);
         }
-        if (storage != null) {
-            storage[0] = cx;
-        } else {
-            setThreadContext_jdk11(cx);
-        }
-
+        VMBridge.instance.setContext(contextHelper, cx);
         return cx;
     }
 
-    private static void releaseContext(Context[] storage, Context cx)
+    private static void releaseContext(Object contextHelper, Context cx)
     {
-        if (storage != null) {
-            storage[0] = null;
-        } else {
-            setThreadContext_jdk11(null);
-        }
+        VMBridge.instance.setContext(contextHelper, null);
         try {
             cx.factory.onContextReleased(cx);
         } finally {
@@ -579,11 +570,9 @@ public class Context
     }
 
     /**
-     * @deprecated Use
-     * {@link ContextFactory#addListener(ContextFactory.Listener)}.
-     * A simple way to upgrate the current code to new API is to replace
-     * <tt>Context.addContextListener(listener)</tt> with
-     * <tt>ContextFactory.getGlobal().addListener(listener)</tt>.
+     * @deprecated
+     * @see ContextFactory#addListener(ContextFactory.Listener)
+     * @see ContextFactory#getGlobal()
      */
     public static void addContextListener(ContextListener listener)
     {
@@ -610,78 +599,13 @@ public class Context
     }
 
     /**
-     * @deprecated Use
-     * {@link ContextFactory#removeListener(ContextFactory.Listener)}.
-     * A simple way to upgrate the current code to new API is to replace
-     * <tt>Context.removeContextListener(listener)</tt> with
-     * <tt>ContextFactory.getGlobal().removeListener(listener)</tt>.
+     * @deprecated
+     * @see ContextFactory#removeListener(ContextFactory.Listener)
+     * @see ContextFactory#getGlobal()
      */
     public static void removeContextListener(ContextListener listener)
     {
         ContextFactory.getGlobal().addListener(listener);
-    }
-
-    /**
-     * @deprecated Use {@link ContextFactory#seal()} to seal
-     * appropriate <tt>ContextFactory()</tt>.
-     */
-    public static void disableStaticContextListening()
-    {
-        ContextFactory.getGlobal().disableContextListening();
-    }
-
-    /**
-     * Get the current Context.
-     *
-     * The current Context is per-thread; this method looks up
-     * the Context associated with the current thread. <p>
-     *
-     * @return the Context associated with the current thread, or
-     *         null if no context is associated with the current
-     *         thread.
-     * @see org.mozilla.javascript.Context#enter
-     * @see org.mozilla.javascript.Context#exit
-     */
-    public static Context getCurrentContext()
-    {
-        Context[] storage = getThreadContextStorage();
-        if (storage != null) {
-            return storage[0];
-        }
-        return getCurrentContext_jdk11();
-    }
-
-    private static Context[] getThreadContextStorage()
-    {
-        if (threadLocalCx != null) {
-            try {
-                Context[] storage
-                    = (Context[])threadLocalGet.invoke(threadLocalCx, null);
-                if (storage == null) {
-                    storage = new Context[1];
-                    threadLocalSet.invoke(threadLocalCx,
-                                          new Object[] { storage });
-                }
-                return storage;
-            } catch (Exception ex) { }
-        }
-        return null;
-    }
-
-    private static Context getCurrentContext_jdk11()
-    {
-        Thread t = Thread.currentThread();
-        return (Context) threadContexts.get(t);
-    }
-
-    private static void setThreadContext_jdk11(Context cx)
-    {
-        Thread t = Thread.currentThread();
-        if (cx != null) {
-            threadContexts.put(t, cx);
-        } else {
-            threadContexts.remove(t);
-        }
     }
 
     /**
@@ -1294,9 +1218,9 @@ public class Context
     }
 
     /**
-     * @deprecated Use
-     * {@link #compileReader(Reader in, String sourceName, int lineno,
-     *                       Object securityDomain)}.
+     * @deprecated
+     * @see #compileReader(Reader in, String sourceName, int lineno,
+     *                     Object securityDomain)
      */
     public final Script compileReader(Scriptable scope, Reader in,
                                       String sourceName, int lineno,
@@ -1419,19 +1343,6 @@ public class Context
             // from a String
             throw new RuntimeException();
         }
-    }
-
-    /**
-     * @deprecated Use {@link #decompileScript(Script script, int indent)}
-     *             instead.
-     * <p>
-     * The implementation simply calls <tt>decompileScript(script, indent)</tt>
-     * ignoring the scope argument.
-     */
-    public final String decompileScript(Script script, Scriptable scope,
-                                        int indent)
-    {
-        return decompileScript(script, indent);
     }
 
     /**
@@ -1674,7 +1585,8 @@ public class Context
     }
 
     /**
-     * @deprecated Use {@link #toObject(Object, Scriptable)}.
+     * @deprecated
+     * @see #toObject(Object, Scriptable)
      */
     public static Scriptable toObject(Object value, Scriptable scope,
                                       Class staticType)
@@ -1733,12 +1645,32 @@ public class Context
      *        types are represented using the TYPE fields in the corresponding
      *        wrapper class in java.lang.
      * @return the converted value
-     * @throws IllegalArgumentException if the conversion cannot be performed
+     * @throws EvaluatorException if the conversion cannot be performed
+     */
+    public static Object jsToJava(Object value, Class desiredType)
+        throws EvaluatorException
+    {
+        return NativeJavaObject.coerceTypeImpl(desiredType, value);
+    }
+
+    /**
+     * @deprecated
+     * @see #jsToJava(Object, Class)
+     * @throws IllegalArgumentException if the conversion cannot be performed.
+     *         Note that {@link #jsToJava(Object, Class)} throws
+     *         {@link EvaluatorException} instead.
      */
     public static Object toType(Object value, Class desiredType)
         throws IllegalArgumentException
     {
-        return NativeJavaObject.coerceType(desiredType, value, false);
+        try {
+            return jsToJava(value, desiredType);
+        } catch (EvaluatorException ex) {
+            IllegalArgumentException
+                ex2 = new IllegalArgumentException(ex.getMessage());
+            Kit.initCause(ex2, ex);
+            throw ex2;
+        }
     }
 
     /**
@@ -1767,11 +1699,8 @@ public class Context
         if (e instanceof Error) {
             throw (Error)e;
         }
-        if (e instanceof EvaluatorException) {
-            throw (EvaluatorException)e;
-        }
-        if (e instanceof EcmaError) {
-            throw (EcmaError)e;
+        if (e instanceof RhinoException) {
+            throw (RhinoException)e;
         }
         throw new WrappedException(e);
     }
@@ -1838,7 +1767,7 @@ public class Context
     {
         return optimizationLevel;
     }
-
+    
     /**
      * Set the current optimization level.
      * <p>
@@ -1883,6 +1812,54 @@ public class Context
             "Optimization level outside [-1..9]: "+optimizationLevel);
     }
 
+    /**
+     * Returns the maximum stack depth (in terms of number of call frames) 
+     * allowed in a single invocation of interpreter. If the set depth would be
+     * exceeded, the interpreter will throw an EvaluatorException in the script.
+     * Defaults to Integer.MAX_VALUE. The setting only has effect for 
+     * interpreted functions (those compiled with optimization level set to -1).
+     * As the interpreter doesn't use the Java stack but rather manages its own
+     * stack in the heap memory, a runaway recursion in interpreted code would 
+     * eventually consume all available memory and cause OutOfMemoryError 
+     * instead of a StackOverflowError limited to only a single thread. This
+     * setting helps prevent such situations.
+     *  
+     * @return The current maximum interpreter stack depth.
+     */
+    public final int getMaximumInterpreterStackDepth()
+    {
+        return maximumInterpreterStackDepth;
+    }
+
+    /**
+     * Sets the maximum stack depth (in terms of number of call frames) 
+     * allowed in a single invocation of interpreter. If the set depth would be
+     * exceeded, the interpreter will throw an EvaluatorException in the script.
+     * Defaults to Integer.MAX_VALUE. The setting only has effect for 
+     * interpreted functions (those compiled with optimization level set to -1).
+     * As the interpreter doesn't use the Java stack but rather manages its own
+     * stack in the heap memory, a runaway recursion in interpreted code would 
+     * eventually consume all available memory and cause OutOfMemoryError 
+     * instead of a StackOverflowError limited to only a single thread. This
+     * setting helps prevent such situations.
+     * 
+     * @param max the new maximum interpreter stack depth
+     * @throws IllegalStateException if this context's optimization level is not
+     * -1
+     * @throws IllegalArgumentException if the new depth is not at least 1 
+     */
+    public final void setMaximumInterpreterStackDepth(int max)
+    {
+        if(sealed) onSealedMutation();
+        if(optimizationLevel != -1) {
+            throw new IllegalStateException("Cannot set maximumInterpreterStackDepth when optimizationLevel != -1");
+        }
+        if(max < 1) {
+            throw new IllegalArgumentException("Cannot set maximumInterpreterStackDepth to less than 1");
+        }
+        maximumInterpreterStackDepth = max;
+    }
+    
     /**
      * Set the security controller for this context.
      * <p> SecurityController may only be set if it is currently null
@@ -1981,9 +1958,9 @@ public class Context
     }
 
     /**
-     * @deprecated Use {@link #hasFeature(int)} and
-     * {@link #FEATURE_DYNAMIC_SCOPE} to control dynamic scoping that also works
-     * with nested functions defined by functions in the shared scope.
+     * @deprecated
+     * @see #FEATURE_DYNAMIC_SCOPE
+     * @see #hasFeature(int)
      */
     public final boolean hasCompileFunctionsWithDynamicScope()
     {
@@ -1991,9 +1968,9 @@ public class Context
     }
 
     /**
-     * @deprecated Use {@link #hasFeature(int)} and
-     * {@link #FEATURE_DYNAMIC_SCOPE} to control dynamic scoping that also works
-     * with nested functions defined by functions in the shared scope.
+     * @deprecated
+     * @see #FEATURE_DYNAMIC_SCOPE
+     * @see #hasFeature(int)
      */
     public final void setCompileFunctionsWithDynamicScope(boolean flag)
     {
@@ -2002,78 +1979,12 @@ public class Context
     }
 
     /**
-     * @deprecated Use {@link ClassCache#get(Scriptable)} and
-     * {@link ClassCache#setCachingEnabled(boolean)}.
+     * @deprecated
+     * @see ClassCache#get(Scriptable)
+     * @see ClassCache#setCachingEnabled(boolean)
      */
     public static void setCachingEnabled(boolean cachingEnabled)
     {
-    }
-
-    /**
-     * @deprecated Proxy to allow to use deprecated WrapHandler in place
-     * of WrapFactory.
-     */
-    private static class WrapHandlerProxy extends WrapFactory
-    {
-        WrapHandler _handler;
-
-        /**
-         * @deprecated
-         */
-        WrapHandlerProxy(WrapHandler handler)
-        {
-            _handler = handler;
-        }
-
-        public Object wrap(Context cx, Scriptable scope,
-                           Object obj, Class staticType)
-        {
-            if (obj == null) { return obj; }
-            Object result = _handler.wrap(scope, obj, staticType);
-            if (result == null) {
-                result = super.wrap(cx, scope, obj, staticType);
-            }
-            return result;
-        }
-
-        public Scriptable wrapNewObject(Context cx, Scriptable scope,
-                                        Object obj)
-        {
-            Object wrap = _handler.wrap(scope, obj, obj.getClass());
-            if (wrap instanceof Scriptable) {
-                return (Scriptable)wrap;
-            }
-            if (wrap == null) {
-                return super.wrapNewObject(cx, scope, obj);
-            }
-            throw new RuntimeException
-                ("Please upgrade from WrapHandler to WrapFactory");
-        }
-    }
-
-    /**
-     * @deprecated  Use {@link WrapFactory} and {@link #setWrapFactory(WrapFactory)}.
-     */
-    public final void setWrapHandler(WrapHandler wrapHandler)
-    {
-        if (sealed) onSealedMutation();
-        if (wrapHandler == null) {
-            setWrapFactory(new WrapFactory());
-        } else {
-            setWrapFactory(new WrapHandlerProxy(wrapHandler));
-        }
-    }
-
-    /**
-     * @deprecated  Use {@link WrapFactory} and {@link #getWrapFactory()}.
-     */
-    public final WrapHandler getWrapHandler()
-    {
-        WrapFactory f = getWrapFactory();
-        if (f instanceof WrapHandlerProxy) {
-            return ((WrapHandlerProxy)f)._handler;
-        }
-        return null;
     }
 
     /**
@@ -2081,7 +1992,7 @@ public class Context
      * <p>
      * The WrapFactory allows custom object wrapping behavior for
      * Java object manipulated with JavaScript.
-     * @see org.mozilla.javascript.WrapFactory
+     * @see WrapFactory
      * @since 1.5 Release 4
      */
     public final void setWrapFactory(WrapFactory wrapFactory)
@@ -2092,8 +2003,8 @@ public class Context
     }
 
     /**
-     * Return the current WrapHandler, or null if none is defined.
-     * @see org.mozilla.javascript.WrapHandler
+     * Return the current WrapFactory, or null if none is defined.
+     * @see WrapFactory
      * @since 1.5 Release 4
      */
     public final WrapFactory getWrapFactory()
@@ -2239,27 +2150,28 @@ public class Context
     public final ClassLoader getApplicationClassLoader()
     {
         if (applicationClassLoader == null) {
-            // If Context was subclassed, the following gets the loader
-            // for the subclass which can be different from Rhino loader,
-            // but then proper Rhino classes should be accessible through it
-            // in any case or JVM class loading is severely broken
-            Class cxClass = this.getClass();
-            ClassLoader loader = cxClass.getClassLoader();
-            if (method_getContextClassLoader != null) {
-                Thread thread = Thread.currentThread();
-                ClassLoader threadLoader = null;
-                try {
-                    threadLoader = (ClassLoader)method_getContextClassLoader.
-                                       invoke(thread, ScriptRuntime.emptyArgs);
-                } catch (Exception ex) { }
-                if (threadLoader != null && threadLoader != loader) {
-                    if (testIfCanUseLoader(threadLoader, cxClass)) {
-                        // Thread.getContextClassLoader is not cached since
-                        // its caching prevents it from GC which may lead to
-                        // a memory leak and hides updates to
-                        // Thread.getContextClassLoader
-                        return threadLoader;
-                    }
+            ContextFactory f = getFactory();
+            ClassLoader loader = f.getApplicationClassLoader();
+            if (loader == null) {
+                ClassLoader threadLoader
+                    = VMBridge.instance.getCurrentThreadClassLoader();
+                if (threadLoader != null
+                    && Kit.testIfCanLoadRhinoClasses(threadLoader))
+                {
+                    // Thread.getContextClassLoader is not cached since
+                    // its caching prevents it from GC which may lead to
+                    // a memory leak and hides updates to
+                    // Thread.getContextClassLoader
+                    return threadLoader;
+                }
+                // Thread.getContextClassLoader can not load Rhino classes,
+                // try to use the loader of ContextFactory or Context
+                // subclasses.
+                Class fClass = f.getClass();
+                if (fClass != ScriptRuntime.ContextFactoryClass) {
+                    loader = fClass.getClassLoader();
+                } else {
+                    loader = getClass().getClassLoader();
                 }
             }
             applicationClassLoader = loader;
@@ -2275,25 +2187,11 @@ public class Context
             applicationClassLoader = null;
             return;
         }
-        if (!testIfCanUseLoader(loader, this.getClass())) {
+        if (!Kit.testIfCanLoadRhinoClasses(loader)) {
             throw new IllegalArgumentException(
                 "Loader can not resolve Rhino classes");
         }
         applicationClassLoader = loader;
-    }
-
-    private static boolean testIfCanUseLoader(ClassLoader loader, Class cxClass)
-    {
-        // Check that Context or its suclass is accesible from this loader
-        Class x = Kit.classOrNull(loader, cxClass.getName());
-        if (x != cxClass) {
-            // The check covers the case when x == null =>
-            // loader does not know about Rhino or the case
-            // when x != null && x != cxClass =>
-            // loader loads unrelated Rhino instance
-            return false;
-        }
-        return true;
     }
 
     /********** end of API **********/
@@ -2344,6 +2242,9 @@ public class Context
         }
 
         Parser p = new Parser(compilerEnv, compilationErrorReporter);
+        if (returnFunction) {
+            p.calledByCompileFunction = true;
+        }
         ScriptOrFnNode tree;
         if (sourceString != null) {
             tree = p.parse(sourceString, sourceName, lineno);
@@ -2385,8 +2286,7 @@ public class Context
 
         Object result;
         if (returnFunction) {
-            result = compiler.createFunctionObject(this, scope, bytecode,
-                                                   securityDomain);
+            result = compiler.createFunctionObject(this, scope, bytecode, securityDomain);
         } else {
             result = compiler.createScriptObject(bytecode, securityDomain);
         }
@@ -2423,7 +2323,7 @@ public class Context
         Context cx = getCurrentContext();
         if (cx == null)
             return null;
-        if (cx.interpreterLineCounting != null) {
+        if (cx.lastInterpreterFrame != null) {
             return Interpreter.getSourcePositionFromStack(cx, linep);
         }
         /**
@@ -2541,41 +2441,6 @@ public class Context
             activationNames.remove(name);
     }
 
-    private static Hashtable threadContexts = new Hashtable(11);
-    private static Object threadLocalCx;
-    private static Method threadLocalGet;
-    private static Method threadLocalSet;
-
-    static {
-        Class cl = Kit.classOrNull("java.lang.ThreadLocal");
-        if (cl != null) {
-            try {
-                threadLocalGet = cl.getMethod("get", null);
-                threadLocalSet = cl.getMethod("set",
-                    new Class[] { ScriptRuntime.ObjectClass });
-                threadLocalCx = cl.newInstance();
-            } catch (Exception ex) { }
-        }
-    }
-
-    // We'd like to use "Thread.getContextClassLoader", but
-    // that's only available on Java2.
-    private static Method method_getContextClassLoader;
-
-    static {
-        // Don't use "Thread.class": that performs the lookup
-        // in the class initializer, which doesn't allow us to
-        // catch possible security exceptions.
-        Class threadClass = Kit.classOrNull("java.lang.Thread");
-        if (threadClass != null) {
-            try {
-                method_getContextClassLoader =
-                    threadClass.getDeclaredMethod("getContextClassLoader",
-                                                   new Class[0]);
-            } catch (Exception ex) { }
-        }
-    }
-
     private static String implementationVersion;
 
     private ContextFactory factory;
@@ -2598,7 +2463,7 @@ public class Context
     private SecurityController securityController;
     private ClassShutter classShutter;
     private ErrorReporter errorReporter;
-    private RegExpProxy regExpProxy;
+    RegExpProxy regExpProxy;
     private Locale locale;
     private boolean generatingDebug;
     private boolean generatingDebugChanged;
@@ -2606,6 +2471,7 @@ public class Context
     boolean compileFunctionsWithDynamicScopeFlag;
     boolean useDynamicScope;
     private int optimizationLevel;
+    private int maximumInterpreterStackDepth;
     private WrapFactory wrapFactory;
     Debugger debugger;
     private Object debuggerData;
@@ -2621,8 +2487,12 @@ public class Context
      */
     Hashtable activationNames;
 
-    // For the interpreter to indicate line/source for error reports.
-    Object interpreterLineCounting;
+    // For the interpreter to store the last frame for error reports etc.
+    Object lastInterpreterFrame;
+
+    // For the interpreter to store information about previous invocations
+    // interpreter invocations
+    ObjArray previousInterpreterInvocations;
 
     // For instruction counting (interpreter only)
     int instructionCount;
@@ -2636,7 +2506,4 @@ public class Context
 
     // It can be used to return the second Scriptable result from function
     Scriptable scratchScriptable;
-
-    // It is used to return the target component for Ref instance
-    Scriptable scratchRefTarget;
 }

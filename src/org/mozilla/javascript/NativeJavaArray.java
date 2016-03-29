@@ -40,7 +40,6 @@
 package org.mozilla.javascript;
 
 import java.lang.reflect.Array;
-import java.io.*;
 
 /**
  * This class reflects Java arrays into the JavaScript environment.
@@ -51,7 +50,9 @@ import java.io.*;
  * @see NativeJavaPackage
  */
 
-public class NativeJavaArray extends NativeJavaObject {
+public class NativeJavaArray extends NativeJavaObject
+{
+    static final long serialVersionUID = -924022554283675333L;
 
     public String getClassName() {
         return "JavaArray";
@@ -114,8 +115,7 @@ public class NativeJavaArray extends NativeJavaObject {
 
     public void put(int index, Scriptable start, Object value) {
         if (0 <= index && index < length) {
-            Array.set(array, index, NativeJavaObject.coerceType(cls, value,
-                                                                true));
+            Array.set(array, index, Context.jsToJava(value, cls));
             return;
         }
         super.put(index, start, value);

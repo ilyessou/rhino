@@ -42,7 +42,6 @@ package org.mozilla.javascript.optimizer;
 import org.mozilla.javascript.*;
 import org.mozilla.classfile.*;
 import java.util.*;
-import java.io.IOException;
 import java.lang.reflect.Constructor;
 
 /**
@@ -199,7 +198,7 @@ public class Codegen extends Interpreter
         ot.transform(tree);
 
         if (optLevel > 0) {
-            (new Optimizer()).optimize(tree, optLevel);
+            (new Optimizer()).optimize(tree);
         }
     }
 
@@ -262,11 +261,10 @@ public class Codegen extends Interpreter
         }
 
         if (hasScript) {
-            ScriptOrFnNode script = scriptOrFnNodes[0];
             cfw.addInterface("org/mozilla/javascript/Script");
-            generateScriptCtor(cfw, script);
+            generateScriptCtor(cfw);
             generateMain(cfw);
-            generateExecute(cfw, script);
+            generateExecute(cfw);
         }
 
         generateCallMethod(cfw);
@@ -317,7 +315,7 @@ public class Codegen extends Interpreter
         Scriptable directConstruct(<directCallArgs>) {
             Scriptable newInstance = createObject(cx, scope);
             Object val = <body-name>(cx, scope, newInstance, <directCallArgs>);
-            if (val instanceof Scriptable && val != Undefined.instance) {
+            if (val instanceof Scriptable) {
                 return (Scriptable) val;
             }
             return newInstance;
@@ -359,9 +357,6 @@ public class Codegen extends Interpreter
         cfw.add(ByteCode.DUP); // make a copy of direct call result
         cfw.add(ByteCode.INSTANCEOF, "org/mozilla/javascript/Scriptable");
         cfw.add(ByteCode.IFEQ, exitLabel);
-        cfw.add(ByteCode.DUP); // make a copy of direct call result
-        pushUndefined(cfw);
-        cfw.add(ByteCode.IF_ACMPEQ, exitLabel);
         // cast direct call result
         cfw.add(ByteCode.CHECKCAST, "org/mozilla/javascript/Scriptable");
         cfw.add(ByteCode.ARETURN);
@@ -371,7 +366,6 @@ public class Codegen extends Interpreter
         cfw.add(ByteCode.ARETURN);
 
         cfw.stopMethod((short)(firstLocal + 1));
-
     }
 
     private void generateCallMethod(ClassFileWriter cfw)
@@ -509,7 +503,7 @@ public class Codegen extends Interpreter
         cfw.stopMethod((short)1);
     }
 
-    private void generateExecute(ClassFileWriter cfw, ScriptOrFnNode script)
+    private void generateExecute(ClassFileWriter cfw)
     {
         cfw.startMethod("exec",
                         "(Lorg/mozilla/javascript/Context;"
@@ -540,8 +534,7 @@ public class Codegen extends Interpreter
         cfw.stopMethod((short)3);
     }
 
-    private void generateScriptCtor(ClassFileWriter cfw,
-                                    ScriptOrFnNode script)
+    private void generateScriptCtor(ClassFileWriter cfw)
     {
         cfw.startMethod("<init>", "()V", ClassFileWriter.ACC_PUBLIC);
 
@@ -552,13 +545,6 @@ public class Codegen extends Interpreter
         cfw.addLoadThis();
         cfw.addPush(0);
         cfw.add(ByteCode.PUTFIELD, cfw.getClassName(), ID_FIELD_NAME, "I");
-
-        // Call
-        // NativeFunction.initScriptObject(version, varNamesArray)
-        cfw.addLoadThis();
-        cfw.addInvoke(ByteCode.INVOKEVIRTUAL,
-                      "org/mozilla/javascript/NativeFunction",
-                      "initScriptObject", "()V");
 
         cfw.add(ByteCode.RETURN);
         // 1 parameter = this
@@ -635,13 +621,11 @@ public class Codegen extends Interpreter
         cfw.addLoadThis();
         cfw.addALoad(CONTEXT_ARG);
         cfw.addALoad(SCOPE_ARG);
-        cfw.addPush(ofn.fnode.getFunctionName());
         cfw.addInvoke(ByteCode.INVOKEVIRTUAL,
                       "org/mozilla/javascript/NativeFunction",
                       "initScriptFunction",
                       "(Lorg/mozilla/javascript/Context;"
                       +"Lorg/mozilla/javascript/Scriptable;"
-                      +"Ljava/lang/String;"
                       +")V");
 
         // precompile all regexp literals
@@ -676,11 +660,12 @@ public class Codegen extends Interpreter
         // The rest of NativeFunction overrides require specific code for each
         // script/function id
 
-        final int Do_getParamCount        = 0;
-        final int Do_getParamAndVarCount  = 1;
-        final int Do_getParamOrVarName    = 2;
-        final int Do_getEncodedSource     = 3;
-        final int SWITCH_COUNT            = 4;
+        final int Do_getFunctionName      = 0;
+        final int Do_getParamCount        = 1;
+        final int Do_getParamAndVarCount  = 2;
+        final int Do_getParamOrVarName    = 3;
+        final int Do_getEncodedSource     = 4;
+        final int SWITCH_COUNT            = 5;
 
         for (int methodIndex = 0; methodIndex != SWITCH_COUNT; ++methodIndex) {
             if (methodIndex == Do_getEncodedSource && encodedSource == null) {
@@ -694,6 +679,11 @@ public class Codegen extends Interpreter
 
             short metodLocals;
             switch (methodIndex) {
+              case Do_getFunctionName:
+                metodLocals = 1; // Only this
+                cfw.startMethod("getFunctionName", "()Ljava/lang/String;",
+                                ClassFileWriter.ACC_PUBLIC);
+                break;
               case Do_getParamCount:
                 metodLocals = 1; // Only this
                 cfw.startMethod("getParamCount", "()I",
@@ -748,6 +738,17 @@ public class Codegen extends Interpreter
 
                 // Impelemnet method-specific switch code
                 switch (methodIndex) {
+                  case Do_getFunctionName:
+                    // Push function name
+                    if (n.getType() == Token.SCRIPT) {
+                        cfw.addPush("");
+                    } else {
+                        String name = ((FunctionNode)n).getFunctionName();
+                        cfw.addPush(name);
+                    }
+                    cfw.add(ByteCode.ARETURN);
+                    break;
+
                   case Do_getParamCount:
                     // Push number of defined parameters
                     cfw.addPush(n.getParamCount());
@@ -1032,7 +1033,6 @@ public class Codegen extends Interpreter
 
     private static String getStaticConstantWrapperType(double num)
     {
-        String constantType;
         int inum = (int)num;
         if (inum == num) {
             return "Ljava/lang/Integer;";
@@ -1043,7 +1043,7 @@ public class Codegen extends Interpreter
     static void pushUndefined(ClassFileWriter cfw)
     {
         cfw.add(ByteCode.GETSTATIC, "org/mozilla/javascript/Undefined",
-                "instance", "Lorg/mozilla/javascript/Scriptable;");
+                "instance", "Ljava/lang/Object;");
     }
 
     int getIndex(ScriptOrFnNode n)
@@ -1148,9 +1148,6 @@ public class Codegen extends Interpreter
     String mainClassName;
     String mainClassSignature;
 
-    boolean itsUseDynamicScope;
-    int languageVersion;
-
     private double[] itsConstantList;
     private int itsConstantListSize;
 }
@@ -1175,7 +1172,7 @@ class BodyCodegen
         } else {
             treeTop = scriptOrFn;
         }
-        generateStatement(treeTop, null);
+        generateStatement(treeTop);
 
         generateEpilogue();
 
@@ -1488,7 +1485,7 @@ class BodyCodegen
                                "(Lorg/mozilla/javascript/Context;)V");
     }
 
-    private void generateStatement(Node node, Node parent)
+    private void generateStatement(Node node)
     {
         // System.out.println("gen code for " + node.toString());
 
@@ -1504,7 +1501,7 @@ class BodyCodegen
               case Token.EMPTY:
                 // no-ops.
                 while (child != null) {
-                    generateStatement(child, node);
+                    generateStatement(child);
                     child = child.getNext();
                 }
                 break;
@@ -1513,7 +1510,7 @@ class BodyCodegen
                 int local = getNewWordLocal();
                 node.putIntProp(Node.LOCAL_PROP, local);
                 while (child != null) {
-                    generateStatement(child, node);
+                    generateStatement(child);
                     child = child.getNext();
                 }
                 releaseWordLocal((short)local);
@@ -1690,7 +1687,7 @@ class BodyCodegen
                     int finallyRegister = getNewWordLocal();
                     cfw.addAStore(finallyRegister);
                     while (child != null) {
-                        generateStatement(child, node);
+                        generateStatement(child);
                         child = child.getNext();
                     }
                     cfw.add(ByteCode.RET, finallyRegister);
@@ -1768,17 +1765,13 @@ class BodyCodegen
                 child = child.getNext();
                 generateCallArgArray(node, child, false);
                 cfw.addALoad(contextLocal);
-                cfw.addALoad(variableObjectLocal);
                 addScriptRuntimeInvoke(
                     "callRef",
-                    "(Lorg/mozilla/javascript/Function;"
+                    "(Lorg/mozilla/javascript/Callable;"
                     +"Lorg/mozilla/javascript/Scriptable;"
                     +"[Ljava/lang/Object;"
                     +"Lorg/mozilla/javascript/Context;"
-                    +"Lorg/mozilla/javascript/Scriptable;"
-                    +")Ljava/lang/Object;");
-                // Load reference target stored in cx by refCal
-                refTargetToStack();
+                    +")Lorg/mozilla/javascript/Ref;");
                 break;
 
               case Token.NUMBER:
@@ -1922,7 +1915,7 @@ class BodyCodegen
 
               case Token.INC:
               case Token.DEC:
-                visitIncDec(node, false);
+                visitIncDec(node);
                 break;
 
               case Token.OR:
@@ -2020,13 +2013,13 @@ class BodyCodegen
                 addDoubleWrap();
                 break;
 
-              case Optimizer.TO_DOUBLE:
+              case Token.TO_DOUBLE:
                 // cnvt to double (not Double)
                 generateExpression(child, node);
                 addObjectToDouble();
                 break;
 
-              case Optimizer.TO_OBJECT: {
+              case Token.TO_OBJECT: {
                 // convert from double
                 int prop = -1;
                 if (child.getType() == Token.NUMBER) {
@@ -2093,12 +2086,11 @@ class BodyCodegen
                 break;
 
               case Token.GET_REF:
-                generateExpression(child, node); // reference and target
+                generateExpression(child, node); // reference
                 cfw.addALoad(contextLocal);
                 addScriptRuntimeInvoke(
                     "refGet",
                     "(Lorg/mozilla/javascript/Ref;"
-                    +"Lorg/mozilla/javascript/Scriptable;"
                     +"Lorg/mozilla/javascript/Context;"
                     +")Ljava/lang/Object;");
                 break;
@@ -2131,12 +2123,11 @@ class BodyCodegen
                     generateExpression(child, node);
                     child = child.getNext();
                     if (type == Token.SET_REF_OP) {
-                        cfw.add(ByteCode.DUP2);
+                        cfw.add(ByteCode.DUP);
                         cfw.addALoad(contextLocal);
                         addScriptRuntimeInvoke(
                             "refGet",
                             "(Lorg/mozilla/javascript/Ref;"
-                            +"Lorg/mozilla/javascript/Scriptable;"
                             +"Lorg/mozilla/javascript/Context;"
                             +")Ljava/lang/Object;");
                     }
@@ -2145,7 +2136,6 @@ class BodyCodegen
                     addScriptRuntimeInvoke(
                         "refSet",
                         "(Lorg/mozilla/javascript/Ref;"
-                        +"Lorg/mozilla/javascript/Scriptable;"
                         +"Ljava/lang/Object;"
                         +"Lorg/mozilla/javascript/Context;"
                         +")Ljava/lang/Object;");
@@ -2157,7 +2147,6 @@ class BodyCodegen
                 cfw.addALoad(contextLocal);
                 addScriptRuntimeInvoke("refDel",
                                        "(Lorg/mozilla/javascript/Ref;"
-                                       +"Lorg/mozilla/javascript/Scriptable;"
                                        +"Lorg/mozilla/javascript/Context;"
                                        +")Ljava/lang/Object;");
                 break;
@@ -2209,8 +2198,6 @@ class BodyCodegen
                         +"Ljava/lang/String;"
                         +"Lorg/mozilla/javascript/Context;"
                         +")Lorg/mozilla/javascript/Ref;");
-                    // Load reference target stored in cx by specialRef
-                    refTargetToStack();
                 }
                 break;
 
@@ -2269,8 +2256,6 @@ class BodyCodegen
                     }
                     cfw.addPush(memberTypeFlags);
                     addScriptRuntimeInvoke(methodName, signature);
-                    // Load reference target stored in cx by methodName
-                    refTargetToStack();
                 }
                 break;
 
@@ -2564,7 +2549,7 @@ class BodyCodegen
         } else {
             methodName = "callSpecial";
             callSignature = "(Lorg/mozilla/javascript/Context;"
-                            +"Lorg/mozilla/javascript/Function;"
+                            +"Lorg/mozilla/javascript/Callable;"
                             +"Lorg/mozilla/javascript/Scriptable;"
                             +"[Ljava/lang/Object;"
                             +"Lorg/mozilla/javascript/Scriptable;"
@@ -2619,7 +2604,7 @@ class BodyCodegen
             } else {
                 generateFunctionAndThisObj(child, node);
                 methodName = "call0";
-                signature = "(Lorg/mozilla/javascript/Function;"
+                signature = "(Lorg/mozilla/javascript/Callable;"
                             +"Lorg/mozilla/javascript/Scriptable;"
                             +"Lorg/mozilla/javascript/Context;"
                             +"Lorg/mozilla/javascript/Scriptable;"
@@ -2650,7 +2635,7 @@ class BodyCodegen
             if (argCount == 1) {
                 generateExpression(firstArgChild, node);
                 methodName = "call1";
-                signature = "(Lorg/mozilla/javascript/Function;"
+                signature = "(Lorg/mozilla/javascript/Callable;"
                             +"Lorg/mozilla/javascript/Scriptable;"
                             +"Ljava/lang/Object;"
                             +"Lorg/mozilla/javascript/Context;"
@@ -2660,7 +2645,7 @@ class BodyCodegen
                 generateExpression(firstArgChild, node);
                 generateExpression(firstArgChild.getNext(), node);
                 methodName = "call2";
-                signature = "(Lorg/mozilla/javascript/Function;"
+                signature = "(Lorg/mozilla/javascript/Callable;"
                             +"Lorg/mozilla/javascript/Scriptable;"
                             +"Ljava/lang/Object;"
                             +"Ljava/lang/Object;"
@@ -2670,7 +2655,7 @@ class BodyCodegen
             } else {
                 generateCallArgArray(node, firstArgChild, false);
                 methodName = "callN";
-                signature = "(Lorg/mozilla/javascript/Function;"
+                signature = "(Lorg/mozilla/javascript/Callable;"
                             +"Lorg/mozilla/javascript/Scriptable;"
                             +"[Ljava/lang/Object;"
                             +"Lorg/mozilla/javascript/Context;"
@@ -2834,7 +2819,7 @@ Else pass the JS object in the aReg and 0.0 in the dReg.
                 +")Lorg/mozilla/javascript/Scriptable;");
         } else {
             cfw.addInvoke(ByteCode.INVOKEINTERFACE,
-                "org/mozilla/javascript/Function",
+                "org/mozilla/javascript/Callable",
                 "call",
                 "(Lorg/mozilla/javascript/Context;"
                 +"Lorg/mozilla/javascript/Scriptable;"
@@ -2906,7 +2891,7 @@ Else pass the JS object in the aReg and 0.0 in the dReg.
                     "(Ljava/lang/Object;"
                     +"Ljava/lang/String;"
                     +"Lorg/mozilla/javascript/Context;"
-                    +")Lorg/mozilla/javascript/Function;");
+                    +")Lorg/mozilla/javascript/Callable;");
             } else {
                 // Optimizer do not optimize this case for now
                 if (node.getIntProp(Node.ISNUMBER_PROP, -1) != -1)
@@ -2918,7 +2903,7 @@ Else pass the JS object in the aReg and 0.0 in the dReg.
                     "(Ljava/lang/Object;"
                     +"Ljava/lang/Object;"
                     +"Lorg/mozilla/javascript/Context;"
-                    +")Lorg/mozilla/javascript/Function;");
+                    +")Lorg/mozilla/javascript/Callable;");
             }
             break;
           }
@@ -2933,7 +2918,7 @@ Else pass the JS object in the aReg and 0.0 in the dReg.
                 "(Ljava/lang/String;"
                 +"Lorg/mozilla/javascript/Context;"
                 +"Lorg/mozilla/javascript/Scriptable;"
-                +")Lorg/mozilla/javascript/Function;");
+                +")Lorg/mozilla/javascript/Callable;");
             break;
           }
 
@@ -2944,7 +2929,7 @@ Else pass the JS object in the aReg and 0.0 in the dReg.
                 "getValueFunctionAndThis",
                 "(Ljava/lang/Object;"
                 +"Lorg/mozilla/javascript/Context;"
-                +")Lorg/mozilla/javascript/Function;");
+                +")Lorg/mozilla/javascript/Callable;");
             break;
         }
         // Get thisObj prepared by get(Name|Prop|Elem|Value)FunctionAndThis
@@ -2990,7 +2975,7 @@ Else pass the JS object in the aReg and 0.0 in the dReg.
         cfw.markLabel(startLabel, (short)1);
 
         while (child != null) {
-            generateStatement(child, node);
+            generateStatement(child);
             child = child.getNext();
         }
 
@@ -3052,9 +3037,9 @@ Else pass the JS object in the aReg and 0.0 in the dReg.
         cfw.markLabel(realEnd);
     }
 
-    private final int JAVASCRIPT_EXCEPTION  = 0;
-    private final int EVALUATOR_EXCEPTION   = 1;
-    private final int ECMAERROR_EXCEPTION   = 2;
+    private static final int JAVASCRIPT_EXCEPTION  = 0;
+    private static final int EVALUATOR_EXCEPTION   = 1;
+    private static final int ECMAERROR_EXCEPTION   = 2;
 
     private void generateCatchBlock(int exceptionType,
                                     short savedVariableObject,
@@ -3158,12 +3143,13 @@ Else pass the JS object in the aReg and 0.0 in the dReg.
                                +")Ljava/lang/String;");
     }
 
-    private void visitIncDec(Node node, boolean isInc)
+    private void visitIncDec(Node node)
     {
         int incrDecrMask = node.getExistingIntProp(Node.INCRDECR_PROP);
         Node child = node.getFirstChild();
         switch (child.getType()) {
           case Token.GETVAR:
+            if (!hasVarsInRegs) Kit.codeBug();
             if (node.getIntProp(Node.ISNUMBER_PROP, -1) != -1) {
                 boolean post = ((incrDecrMask & Node.POST_FLAG) != 0);
                 int varIndex = fnCurrent.getVarIndex(child);
@@ -3182,8 +3168,7 @@ Else pass the JS object in the aReg and 0.0 in the dReg.
                     cfw.add(ByteCode.DUP2);
                 }
                 cfw.addDStore(reg);
-                break;
-            } else if (hasVarsInRegs) {
+            } else {
                 boolean post = ((incrDecrMask & Node.POST_FLAG) != 0);
                 int varIndex = fnCurrent.getVarIndex(child);
                 short reg = varRegisters[varIndex];
@@ -3205,7 +3190,7 @@ Else pass the JS object in the aReg and 0.0 in the dReg.
                 cfw.addAStore(reg);
                 break;
             }
-            // fallthrough
+            break;
           case Token.NAME:
             cfw.addALoad(variableObjectLocal);
             cfw.addPush(child.getString());          // push name
@@ -3250,7 +3235,6 @@ Else pass the JS object in the aReg and 0.0 in the dReg.
             addScriptRuntimeInvoke(
                 "refIncrDecr",
                 "(Lorg/mozilla/javascript/Ref;"
-                +"Lorg/mozilla/javascript/Scriptable;"
                 +"Lorg/mozilla/javascript/Context;"
                 +"I)Ljava/lang/Object;");
             break;
@@ -3406,13 +3390,11 @@ Else pass the JS object in the aReg and 0.0 in the dReg.
             generateExpression(child, node);
             generateExpression(rChild, node);
             cfw.addALoad(contextLocal);
-            cfw.addALoad(variableObjectLocal);
             addScriptRuntimeInvoke(
                 (type == Token.INSTANCEOF) ? "instanceOf" : "in",
                 "(Ljava/lang/Object;"
                 +"Ljava/lang/Object;"
                 +"Lorg/mozilla/javascript/Context;"
-                +"Lorg/mozilla/javascript/Scriptable;"
                 +")Z");
             cfw.add(ByteCode.IFNE, trueGOTO);
             cfw.add(ByteCode.GOTO, falseGOTO);
@@ -3544,7 +3526,7 @@ Else pass the JS object in the aReg and 0.0 in the dReg.
         } else {
             int child_dcp_register = nodeIsDirectCallParameter(child);
             if (child_dcp_register != -1
-                && rChild.getType() == Optimizer.TO_OBJECT)
+                && rChild.getType() == Token.TO_OBJECT)
             {
                 Node convertChild = rChild.getFirstChild();
                 if (convertChild.getType() == Token.NUMBER) {
@@ -3625,86 +3607,66 @@ Else pass the JS object in the aReg and 0.0 in the dReg.
 
     private void visitGetVar(Node node)
     {
-        if (hasVarsInRegs) {
-            int varIndex = fnCurrent.getVarIndex(node);
-            short reg = varRegisters[varIndex];
-            if (varIsDirectCallParameter(varIndex)) {
-                // Remember that here the isNumber flag means that we
-                // want to use the incoming parameter in a Number
-                // context, so test the object type and convert the
-                //  value as necessary.
-                if (node.getIntProp(Node.ISNUMBER_PROP, -1) != -1) {
-                    dcpLoadAsNumber(reg);
-                } else {
-                    dcpLoadAsObject(reg);
-                }
-            } else if (fnCurrent.isNumberVar(varIndex)) {
-                cfw.addDLoad(reg);
+        if (!hasVarsInRegs) Kit.codeBug();
+        int varIndex = fnCurrent.getVarIndex(node);
+        short reg = varRegisters[varIndex];
+        if (varIsDirectCallParameter(varIndex)) {
+            // Remember that here the isNumber flag means that we
+            // want to use the incoming parameter in a Number
+            // context, so test the object type and convert the
+            //  value as necessary.
+            if (node.getIntProp(Node.ISNUMBER_PROP, -1) != -1) {
+                dcpLoadAsNumber(reg);
             } else {
-                cfw.addALoad(reg);
+                dcpLoadAsObject(reg);
             }
+        } else if (fnCurrent.isNumberVar(varIndex)) {
+            cfw.addDLoad(reg);
         } else {
-            cfw.addALoad(variableObjectLocal);
-            cfw.addPush(node.getString());
-            cfw.addALoad(contextLocal);
-            addScriptRuntimeInvoke(
-                "getObjectProp",
-                "(Lorg/mozilla/javascript/Scriptable;"
-                +"Ljava/lang/String;"
-                +"Lorg/mozilla/javascript/Context;"
-                +")Ljava/lang/Object;");
+            cfw.addALoad(reg);
         }
     }
 
     private void visitSetVar(Node node, Node child, boolean needValue)
     {
-        if (hasVarsInRegs) {
-            int varIndex = fnCurrent.getVarIndex(node);
-            generateExpression(child.getNext(), node);
-            boolean isNumber = (node.getIntProp(Node.ISNUMBER_PROP, -1) != -1);
-            short reg = varRegisters[varIndex];
-            if (varIsDirectCallParameter(varIndex)) {
-                if (isNumber) {
-                    if (needValue) cfw.add(ByteCode.DUP2);
-                    cfw.addALoad(reg);
-                    cfw.add(ByteCode.GETSTATIC,
-                            "java/lang/Void",
-                            "TYPE",
-                            "Ljava/lang/Class;");
-                    int isNumberLabel = cfw.acquireLabel();
-                    int beyond = cfw.acquireLabel();
-                    cfw.add(ByteCode.IF_ACMPEQ, isNumberLabel);
-                    short stack = cfw.getStackTop();
-                    addDoubleWrap();
-                    cfw.addAStore(reg);
-                    cfw.add(ByteCode.GOTO, beyond);
-                    cfw.markLabel(isNumberLabel, stack);
-                    cfw.addDStore(reg + 1);
-                    cfw.markLabel(beyond);
-                }
-                else {
-                    if (needValue) cfw.add(ByteCode.DUP);
-                    cfw.addAStore(reg);
-                }
-            } else {
-                if (isNumber) {
-                      cfw.addDStore(reg);
-                      if (needValue) cfw.addDLoad(reg);
-                }
-                else {
-                    cfw.addAStore(reg);
-                    if (needValue) cfw.addALoad(reg);
-                }
+        if (!hasVarsInRegs) Kit.codeBug();
+        int varIndex = fnCurrent.getVarIndex(node);
+        generateExpression(child.getNext(), node);
+        boolean isNumber = (node.getIntProp(Node.ISNUMBER_PROP, -1) != -1);
+        short reg = varRegisters[varIndex];
+        if (varIsDirectCallParameter(varIndex)) {
+            if (isNumber) {
+                if (needValue) cfw.add(ByteCode.DUP2);
+                cfw.addALoad(reg);
+                cfw.add(ByteCode.GETSTATIC,
+                        "java/lang/Void",
+                        "TYPE",
+                        "Ljava/lang/Class;");
+                int isNumberLabel = cfw.acquireLabel();
+                int beyond = cfw.acquireLabel();
+                cfw.add(ByteCode.IF_ACMPEQ, isNumberLabel);
+                short stack = cfw.getStackTop();
+                addDoubleWrap();
+                cfw.addAStore(reg);
+                cfw.add(ByteCode.GOTO, beyond);
+                cfw.markLabel(isNumberLabel, stack);
+                cfw.addDStore(reg + 1);
+                cfw.markLabel(beyond);
             }
-            return;
+            else {
+                if (needValue) cfw.add(ByteCode.DUP);
+                cfw.addAStore(reg);
+            }
+        } else {
+            if (isNumber) {
+                  cfw.addDStore(reg);
+                  if (needValue) cfw.addDLoad(reg);
+            }
+            else {
+                cfw.addAStore(reg);
+                if (needValue) cfw.addALoad(reg);
+            }
         }
-
-        // default: just treat like any other name lookup
-        child.setType(Token.BINDNAME);
-        node.setType(Token.SETNAME);
-        visitSetName(node, child);
-        if (!needValue)
-            cfw.add(ByteCode.POP);
     }
 
     private void visitGetProp(Node node, Node child)
@@ -3946,16 +3908,6 @@ Else pass the JS object in the aReg and 0.0 in the dReg.
         }
     }
 
-    private void refTargetToStack()
-    {
-        cfw.addALoad(contextLocal);
-        cfw.addInvoke(ByteCode.INVOKESTATIC,
-                      "org.mozilla.javascript.Ref",
-                      "popTarget",
-                      "(Lorg/mozilla/javascript/Context;"
-                      +")Lorg/mozilla/javascript/Scriptable;");
-    }
-
     private void addScriptRuntimeInvoke(String methodName,
                                         String methodSignature)
     {
@@ -4039,14 +3991,6 @@ Else pass the JS object in the aReg and 0.0 in the dReg.
         }
         throw Context.reportRuntimeError("Program too complex " +
                                          "(out of locals)");
-    }
-
-    private void releaseWordpairLocal(short local)
-    {
-        if (local < firstFreeLocal)
-            firstFreeLocal = local;
-        locals[local] = false;
-        locals[local + 1] = false;
     }
 
     private void releaseWordLocal(short local)

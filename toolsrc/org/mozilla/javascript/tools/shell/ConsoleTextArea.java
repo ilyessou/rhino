@@ -39,7 +39,6 @@ import java.awt.*;
 import java.awt.event.*;
 import javax.swing.*;
 import javax.swing.event.*;
-import java.util.*;
 import javax.swing.text.Document;
 import javax.swing.text.Segment;
 
@@ -100,8 +99,11 @@ class ConsoleWriter extends java.io.OutputStream {
     }
 };
 
-public class ConsoleTextArea extends JTextArea implements KeyListener,
-DocumentListener {
+public class ConsoleTextArea
+    extends JTextArea implements KeyListener, DocumentListener
+{
+    static final long serialVersionUID = 8557083244830872961L;
+
     private ConsoleWriter console1;
     private ConsoleWriter console2;
     private PrintStream out;

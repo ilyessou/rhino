@@ -44,6 +44,7 @@ package org.mozilla.javascript;
  */
 public class NativeArray extends IdScriptableObject
 {
+    static final long serialVersionUID = 7331366857676127338L;
 
     /*
      * Optimization possibilities and open issues:
@@ -63,8 +64,9 @@ public class NativeArray extends IdScriptableObject
      */
 
     private static final Object ARRAY_TAG = new Object();
+    private static final Integer NEGATIVE_ONE = new Integer(-1);
 
-    static void init(Context cx, Scriptable scope, boolean sealed)
+    static void init(Scriptable scope, boolean sealed)
     {
         NativeArray obj = new NativeArray();
         obj.exportAsJSClass(MAX_PROTOTYPE_ID, scope, sealed);
@@ -161,6 +163,13 @@ public class NativeArray extends IdScriptableObject
           case Id_splice:         arity=1; s="splice";         break;
           case Id_concat:         arity=1; s="concat";         break;
           case Id_slice:          arity=1; s="slice";          break;
+          case Id_indexOf:        arity=1; s="indexOf";        break;
+          case Id_lastIndexOf:    arity=1; s="lastIndexOf";    break;
+          case Id_every:          arity=1; s="every";          break;
+          case Id_filter:         arity=1; s="filter";         break;
+          case Id_forEach:        arity=1; s="forEach";        break;
+          case Id_map:            arity=1; s="map";            break;
+          case Id_some:           arity=1; s="some";           break;
           default: throw new IllegalArgumentException(String.valueOf(id));
         }
         initPrototypeMethod(ARRAY_TAG, id, s, arity);
@@ -222,6 +231,19 @@ public class NativeArray extends IdScriptableObject
 
           case Id_slice:
             return js_slice(cx, thisObj, args);
+
+          case Id_indexOf:
+            return indexOfHelper(cx, thisObj, args, false);
+
+          case Id_lastIndexOf:
+            return indexOfHelper(cx, thisObj, args, true);
+
+          case Id_every:
+          case Id_filter:
+          case Id_forEach:
+          case Id_map:
+          case Id_some:
+            return iterativeMethod(cx, id, scope, thisObj, args);
         }
         throw new IllegalArgumentException(String.valueOf(id));
     }
@@ -356,7 +378,7 @@ public class NativeArray extends IdScriptableObject
         // Only use 1 arg as first element for version 1.2; for
         // any other version (including 1.3) follow ECMA and use it as
         // a length.
-        if (cx.getLanguageVersion() == cx.VERSION_1_2) {
+        if (cx.getLanguageVersion() == Context.VERSION_1_2) {
             return new NativeArray(args);
         } else {
             Object arg0 = args[0];
@@ -434,8 +456,6 @@ public class NativeArray extends IdScriptableObject
             return ((NativeString)obj).getLength();
         } else if (obj instanceof NativeArray) {
             return ((NativeArray)obj).getLength();
-        } else if (!(obj instanceof Scriptable)) {
-            return 0;
         }
         return ScriptRuntime.toUint32(
             ScriptRuntime.getObjectProp(obj, "length", cx));
@@ -543,10 +563,9 @@ public class NativeArray extends IdScriptableObject
                         }
 
                     } else {
-                        if (toLocale && elem != Undefined.instance &&
-                            elem != null)
+                        if (toLocale)
                         {
-                            Function fun;
+                            Callable fun;
                             Scriptable funThis;
                             fun = ScriptRuntime.getPropFunctionAndThis(
                                       elem, "toLocaleString", cx);
@@ -717,7 +736,7 @@ public class NativeArray extends IdScriptableObject
             // assemble args and call supplied JS cmp function
             cmpBuf[0] = x;
             cmpBuf[1] = y;
-            Function fun = ScriptRuntime.getValueFunctionAndThis(cmp, cx);
+            Callable fun = ScriptRuntime.getValueFunctionAndThis(cmp, cx);
             Scriptable funThis = ScriptRuntime.lastStoredScriptable(cx);
 
             Object ret = fun.call(cx, scope, funThis, cmpBuf);
@@ -861,7 +880,7 @@ public class NativeArray extends IdScriptableObject
         if (cx.getLanguageVersion() == Context.VERSION_1_2)
             // if JS1.2 && no arguments, return undefined.
             return args.length == 0
-                ? Context.getUndefinedValue()
+                ? Undefined.instance
                 : args[args.length - 1];
 
         else
@@ -882,7 +901,7 @@ public class NativeArray extends IdScriptableObject
             // We don't need to delete the last property, because
             // setLength does that for us.
         } else {
-            result = Context.getUndefinedValue();
+            result = Undefined.instance;
         }
         // necessary to match js even when length < 0; js pop will give a
         // length property to any target it is called on.
@@ -916,7 +935,7 @@ public class NativeArray extends IdScriptableObject
             // We don't need to delete the last property, because
             // setLength does that for us.
         } else {
-            result = Context.getUndefinedValue();
+            result = Undefined.instance;
         }
         setLengthProperty(cx, thisObj, length);
         return result;
@@ -925,7 +944,6 @@ public class NativeArray extends IdScriptableObject
     private static Object js_unshift(Context cx, Scriptable thisObj,
                                      Object[] args)
     {
-        Object result;
         long length = getLengthProperty(cx, thisObj);
         int argc = args.length;
 
@@ -1011,7 +1029,7 @@ public class NativeArray extends IdScriptableObject
                    && cx.getLanguageVersion() == Context.VERSION_1_2)
         {
             /* Emulate C JS1.2; if no elements are removed, return undefined. */
-            result = Context.getUndefinedValue();
+            result = Undefined.instance;
         }
 
         /* Find the direction (up or down) to copy and make way for argv. */
@@ -1056,7 +1074,7 @@ public class NativeArray extends IdScriptableObject
         /* Put the target in the result array; only add it as an array
          * if it looks like one.
          */
-        if (ScriptRuntime.instanceOf(thisObj, ctor, cx, scope)) {
+        if (ScriptRuntime.instanceOf(thisObj, ctor, cx)) {
             length = getLengthProperty(cx, thisObj);
 
             // Copy from the target object into the result
@@ -1073,7 +1091,7 @@ public class NativeArray extends IdScriptableObject
          * elements separately; otherwise, just copy the argument.
          */
         for (int i = 0; i < args.length; i++) {
-            if (ScriptRuntime.instanceOf(args[i], ctor, cx, scope)) {
+            if (ScriptRuntime.instanceOf(args[i], ctor, cx)) {
                 // ScriptRuntime.instanceOf => instanceof Scriptable
                 Scriptable arg = (Scriptable)args[i];
                 length = getLengthProperty(cx, arg);
@@ -1132,38 +1150,146 @@ public class NativeArray extends IdScriptableObject
         return result;
     }
 
+    /**
+     * Implements the methods "indexOf" and "lastIndexOf".
+     */
+    private Object indexOfHelper(Context cx, Scriptable thisObj,
+                                 Object[] args, boolean isLast)
+    {
+        Object compareTo = args.length > 0 ? args[0] : Undefined.instance;
+        long length = getLengthProperty(cx, thisObj);
+        long start = args.length > 1 
+            ? ScriptRuntime.toInt32(ScriptRuntime.toNumber(args[1]))
+            : (isLast ? length : 0);
+        if (start < 0) {
+            start += length;
+            if (start < 0)
+                start = 0;
+        }
+        if (isLast) {
+          for (long i=start; i >= 0 ; i--) {
+              if (ScriptRuntime.shallowEq(getElem(cx, thisObj, i), compareTo)) {
+                  return new Long(i);
+              }
+          }
+        } else {
+          for (long i=start; i < length; i++) {
+              if (ScriptRuntime.shallowEq(getElem(cx, thisObj, i), compareTo)) {
+                  return new Long(i);
+              }
+          }
+        }
+        return NEGATIVE_ONE;
+    }
+
+    /**
+     * Implements the methods "every", "filter", "forEach", "map", and "some".
+     */
+    private Object iterativeMethod(Context cx, int id, Scriptable scope, 
+                                   Scriptable thisObj, Object[] args)
+    {
+        Object callbackArg = args.length > 0 ? args[0] : Undefined.instance;
+        if (callbackArg == null || !(callbackArg instanceof Function)) {
+            throw ScriptRuntime.notFunctionError(
+                     ScriptRuntime.toString(callbackArg));
+        }
+        Function f = (Function) callbackArg;
+        Scriptable parent = ScriptableObject.getTopLevelScope(f);
+        Scriptable thisArg = args.length > 1 && args[1] instanceof Scriptable
+                             ? (Scriptable) args[1]
+                             : parent;
+        long length = getLengthProperty(cx, thisObj);
+        Scriptable array = null;
+        if (id == Id_filter) {
+            array = ScriptRuntime.newObject(cx, scope, "Array", null);
+        } else if (id == Id_map) {
+            // allocate dense array for efficiency
+            Object[] ctorArgs = { new Long(length) };
+            array = ScriptRuntime.newObject(cx, scope, "Array", ctorArgs);
+        }
+        Object[] innerArgs = new Object[3];
+        long j=0;
+        for (long i=0; i < length; i++) {
+            innerArgs[0] = getElem(cx, thisObj, i);
+            innerArgs[1] = new Long(i);
+            innerArgs[2] = thisObj;
+            Object result = f.call(cx, parent, thisArg, innerArgs);
+            switch (id) {
+              case Id_every:
+                if (!ScriptRuntime.toBoolean(result))
+                    return Boolean.FALSE;
+                break;
+              case Id_filter:
+                if (ScriptRuntime.toBoolean(result))
+                  setElem(cx, array, j++, innerArgs[0]);
+                break;
+              case Id_forEach:
+                break;
+              case Id_map:
+                setElem(cx, array, j++, result);
+                break;
+              case Id_some:
+                if (ScriptRuntime.toBoolean(result))
+                    return Boolean.TRUE;
+                break;
+            }
+        }
+        switch (id) {
+          case Id_every:
+            return Boolean.TRUE;
+          case Id_filter:
+          case Id_map:
+            return array;
+          case Id_some:
+            return Boolean.FALSE;
+          case Id_forEach:
+          default:
+            return Undefined.instance;
+        }
+    }
 
 // #string_id_map#
 
     protected int findPrototypeId(String s)
     {
         int id;
-// #generated# Last update: 2004-03-17 13:17:02 CET
+// #generated# Last update: 2005-09-26 15:47:42 EDT
         L0: { id = 0; String X = null; int c;
             L: switch (s.length()) {
-            case 3: X="pop";id=Id_pop; break L;
-            case 4: c=s.charAt(0);
-                if (c=='j') { X="join";id=Id_join; }
-                else if (c=='p') { X="push";id=Id_push; }
-                else if (c=='s') { X="sort";id=Id_sort; }
+            case 3: c=s.charAt(0);
+                if (c=='m') { if (s.charAt(2)=='p' && s.charAt(1)=='a') {id=Id_map; break L0;} }
+                else if (c=='p') { if (s.charAt(2)=='p' && s.charAt(1)=='o') {id=Id_pop; break L0;} }
                 break L;
+            case 4: switch (s.charAt(2)) {
+                case 'i': X="join";id=Id_join; break L;
+                case 'm': X="some";id=Id_some; break L;
+                case 'r': X="sort";id=Id_sort; break L;
+                case 's': X="push";id=Id_push; break L;
+                } break L;
             case 5: c=s.charAt(1);
                 if (c=='h') { X="shift";id=Id_shift; }
                 else if (c=='l') { X="slice";id=Id_slice; }
+                else if (c=='v') { X="every";id=Id_every; }
                 break L;
             case 6: c=s.charAt(0);
                 if (c=='c') { X="concat";id=Id_concat; }
+                else if (c=='f') { X="filter";id=Id_filter; }
                 else if (c=='s') { X="splice";id=Id_splice; }
                 break L;
-            case 7: c=s.charAt(0);
-                if (c=='r') { X="reverse";id=Id_reverse; }
-                else if (c=='u') { X="unshift";id=Id_unshift; }
-                break L;
+            case 7: switch (s.charAt(0)) {
+                case 'f': X="forEach";id=Id_forEach; break L;
+                case 'i': X="indexOf";id=Id_indexOf; break L;
+                case 'r': X="reverse";id=Id_reverse; break L;
+                case 'u': X="unshift";id=Id_unshift; break L;
+                } break L;
             case 8: c=s.charAt(3);
                 if (c=='o') { X="toSource";id=Id_toSource; }
                 else if (c=='t') { X="toString";id=Id_toString; }
                 break L;
-            case 11: X="constructor";id=Id_constructor; break L;
+            case 11: c=s.charAt(0);
+                if (c=='c') { X="constructor";id=Id_constructor; }
+                else if (c=='l') { X="lastIndexOf";id=Id_lastIndexOf; }
+                break L;
             case 14: X="toLocaleString";id=Id_toLocaleString; break L;
             }
             if (X!=null && X!=s && !X.equals(s)) id = 0;
@@ -1187,8 +1313,15 @@ public class NativeArray extends IdScriptableObject
         Id_splice               = 12,
         Id_concat               = 13,
         Id_slice                = 14,
+        Id_indexOf              = 15,
+        Id_lastIndexOf          = 16,
+        Id_every                = 17,
+        Id_filter               = 18,
+        Id_forEach              = 19,
+        Id_map                  = 20,
+        Id_some                 = 21,
 
-        MAX_PROTOTYPE_ID        = 14;
+        MAX_PROTOTYPE_ID        = 21;
 
 // #/string_id_map#
 

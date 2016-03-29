@@ -39,6 +39,9 @@ package org.mozilla.javascript;
 
 public class IdFunctionObject extends BaseFunction
 {
+
+    static final long serialVersionUID = -5332312783643935019L;
+
     public IdFunctionObject(IdFunctionCall idcall, Object tag, int id, int arity)
     {
         if (arity < 0)
@@ -162,6 +165,11 @@ public class IdFunctionObject extends BaseFunction
 
     public int getLength() { return getArity(); }
 
+    public String getFunctionName()
+    {
+        return (functionName == null) ? "" : functionName;
+    }
+
     public final RuntimeException unknown()
     {
         // It is program error to call id-like methods for unknown function
@@ -174,4 +182,5 @@ public class IdFunctionObject extends BaseFunction
     private final int methodId;
     private int arity;
     private boolean useCallAsConstructor;
+    private String functionName;
 }

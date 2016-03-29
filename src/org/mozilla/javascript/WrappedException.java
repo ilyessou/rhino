@@ -34,8 +34,6 @@
  */
 
 package org.mozilla.javascript;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 
 /**
  * A wrapper for runtime exceptions.
@@ -47,6 +45,8 @@ import java.lang.reflect.Method;
  */
 public class WrappedException extends EvaluatorException
 {
+    static final long serialVersionUID = -1551979216966520648L;
+
     /**
      * @see Context#throwAsScriptRuntimeEx(Throwable e)
      */
@@ -56,17 +56,14 @@ public class WrappedException extends EvaluatorException
         this.exception = exception;
         Kit.initCause(this, exception);
 
-        Context cx = Context.getCurrentContext();
-        if (cx!= null) {
-            int[] linep = { 0 };
-            String sourceName = cx.getSourcePositionFromStack(linep);
-            int lineNumber = linep[0];
-            if (sourceName != null) {
-                initSourceName(sourceName);
-            }
-            if (lineNumber != 0) {
-                initLineNumber(lineNumber);
-            }
+        int[] linep = { 0 };
+        String sourceName = Context.getSourcePositionFromStack(linep);
+        int lineNumber = linep[0];
+        if (sourceName != null) {
+            initSourceName(sourceName);
+        }
+        if (lineNumber != 0) {
+            initLineNumber(lineNumber);
         }
     }
 

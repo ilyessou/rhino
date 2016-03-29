@@ -63,12 +63,13 @@ public abstract class IdScriptableObject extends ScriptableObject
 
     private static final class PrototypeValues implements Serializable
     {
+        static final long serialVersionUID = 3038645279153854371L;
+
         private static final int VALUE_SLOT = 0;
         private static final int NAME_SLOT = 1;
         private static final int SLOT_SPAN = 2;
 
         private IdScriptableObject obj;
-        private Object tag;
         private int maxId;
         private volatile Object[] valueArray;
         private volatile short[] attributeArray;

@@ -46,12 +46,13 @@ package org.mozilla.javascript;
 public class BaseFunction extends IdScriptableObject implements Function
 {
 
+    static final long serialVersionUID = 5311394446546053859L;
+
     private static final Object FUNCTION_TAG = new Object();
 
-    static void init(Context cx, Scriptable scope, boolean sealed)
+    static void init(Scriptable scope, boolean sealed)
     {
         BaseFunction obj = new BaseFunction();
-        obj.functionName = "";
         obj.isPrototypePropertyImmune = true;
         obj.exportAsJSClass(MAX_PROTOTYPE_ID, scope, sealed);
     }
@@ -86,12 +87,11 @@ public class BaseFunction extends IdScriptableObject implements Function
     public boolean hasInstance(Scriptable instance)
     {
         Object protoProp = ScriptableObject.getProperty(this, "prototype");
-        if (protoProp instanceof Scriptable && protoProp != Undefined.instance)
-        {
+        if (protoProp instanceof Scriptable) {
             return ScriptRuntime.jsDelegatesTo(instance, (Scriptable)protoProp);
         }
         throw ScriptRuntime.typeError1("msg.instanceof.bad.prototype",
-                                       functionName);
+                                       getFunctionName());
     }
 
 // #string_id_map#
@@ -263,7 +263,8 @@ public class BaseFunction extends IdScriptableObject implements Function
         if (x instanceof BaseFunction) {
             return (BaseFunction)x;
         }
-        throw ScriptRuntime.typeError1("msg.incompat.call", f.functionName);
+        throw ScriptRuntime.typeError1("msg.incompat.call",
+                                       f.getFunctionName());
     }
 
     /**
@@ -282,7 +283,7 @@ public class BaseFunction extends IdScriptableObject implements Function
     protected Scriptable getClassPrototype()
     {
         Object protoVal = getPrototypeProperty();
-        if (protoVal instanceof Scriptable && protoVal != Undefined.instance) {
+        if (protoVal instanceof Scriptable) {
             return (Scriptable) protoVal;
         }
         return getClassPrototype(this, "Object");
@@ -302,17 +303,17 @@ public class BaseFunction extends IdScriptableObject implements Function
         Scriptable result = createObject(cx, scope);
         if (result != null) {
             Object val = call(cx, scope, result, args);
-            if (val instanceof Scriptable && val != Undefined.instance) {
+            if (val instanceof Scriptable) {
                 result = (Scriptable)val;
             }
         } else {
             Object val = call(cx, scope, null, args);
-            if (!(val instanceof Scriptable && val != Undefined.instance)) {
+            if (!(val instanceof Scriptable)) {
                 // It is program error not to return Scriptable from
                 // the call method if createObject returns null.
                 throw new IllegalStateException(
                     "Bad implementaion of call as constructor, name="
-                    +functionName+" in "+getClass().getName());
+                    +getFunctionName()+" in "+getClass().getName());
             }
             result = (Scriptable)val;
             if (result.getPrototype() == null) {
@@ -347,15 +348,6 @@ public class BaseFunction extends IdScriptableObject implements Function
     }
 
     /**
-     * EXPERIMENTAL: subject to change/removal
-     */
-    protected Ref callRef(Context cx, Scriptable scope,
-                          Scriptable thisObj, Object[] args)
-    {
-        return null;
-    }
-
-    /**
      * Decompile the source information associated with this js
      * function/script back into a string.
      *
@@ -385,10 +377,9 @@ public class BaseFunction extends IdScriptableObject implements Function
 
     public int getLength() { return 0; }
 
-    public String getFunctionName() {
-        if (functionName == null)
-            return "";
-        return functionName;
+    public String getFunctionName()
+    {
+        return "";
     }
 
     final Object getPrototypeProperty() {
@@ -409,9 +400,7 @@ public class BaseFunction extends IdScriptableObject implements Function
     private void setupDefaultPrototype()
     {
         NativeObject obj = new NativeObject();
-        final int attr = ScriptableObject.DONTENUM |
-                         ScriptableObject.READONLY |
-                         ScriptableObject.PERMANENT;
+        final int attr = ScriptableObject.DONTENUM;
         obj.defineProperty("constructor", this, attr);
         // put the prototype property into the object now, then in the
         // wacky case of a user defining a function Object(), we don't
@@ -531,8 +520,6 @@ public class BaseFunction extends IdScriptableObject implements Function
         MAX_PROTOTYPE_ID  = 5;
 
 // #/string_id_map#
-
-    protected String functionName;
 
     private Object prototypeProperty;
     private boolean isPrototypePropertyImmune;

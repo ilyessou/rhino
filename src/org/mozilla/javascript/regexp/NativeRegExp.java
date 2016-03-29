@@ -38,10 +38,17 @@
 
 package org.mozilla.javascript.regexp;
 
-import java.lang.reflect.Method;
 import java.io.Serializable;
 
-import org.mozilla.javascript.*;
+import org.mozilla.javascript.Context;
+import org.mozilla.javascript.Function;
+import org.mozilla.javascript.IdFunctionObject;
+import org.mozilla.javascript.IdScriptableObject;
+import org.mozilla.javascript.Kit;
+import org.mozilla.javascript.ScriptRuntime;
+import org.mozilla.javascript.Scriptable;
+import org.mozilla.javascript.ScriptableObject;
+import org.mozilla.javascript.Undefined;
 
 /**
  * This class implements the RegExp native object.
@@ -61,6 +68,8 @@ import org.mozilla.javascript.*;
 
 public class NativeRegExp extends IdScriptableObject implements Function
 {
+    static final long serialVersionUID = 4965263491464903264L;
+
     private static final Object REGEXP_TAG = new Object();
 
     public static final int JSREG_GLOB = 0x1;       // 'g' flag: global
@@ -140,6 +149,9 @@ public class NativeRegExp extends IdScriptableObject implements Function
         proto.setPrototype(getObjectPrototype(scope));
 
         NativeRegExpCtor ctor = new NativeRegExpCtor();
+        // Bug #324006: ECMA-262 15.10.6.1 says "The initial value of
+        // RegExp.prototype.constructor is the builtin RegExp constructor." 
+        proto.put("constructor", proto, ctor);
 
         ScriptRuntime.setFunctionProtoAndParent(ctor, scope);
 
@@ -2567,6 +2579,8 @@ System.out.println("Testing at " + gData.cp + ", op = " + op);
 
 class RECompiled implements Serializable
 {
+    static final long serialVersionUID = -6144956577595844213L;
+
     char []source;          /* locked source string, sans // */
     int parenCount;         /* number of parenthesized submatches */
     int flags;              /* flags  */
@@ -2732,6 +2746,8 @@ class REGlobalData {
  */
 final class RECharSet implements Serializable
 {
+    static final long serialVersionUID = 7931787979395898394L;
+
     RECharSet(int length, int startIndex, int strlength)
     {
         this.length = length;

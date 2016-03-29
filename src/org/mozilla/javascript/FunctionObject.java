@@ -45,6 +45,7 @@ import java.io.*;
 
 public class FunctionObject extends BaseFunction
 {
+    static final long serialVersionUID = -5332312783643935019L;
 
     /**
      * Create a JavaScript function object from a Java method.
@@ -113,12 +114,11 @@ public class FunctionObject extends BaseFunction
     public FunctionObject(String name, Member methodOrConstructor,
                           Scriptable scope)
     {
-        ClassCache cache = ClassCache.get(scope);
         if (methodOrConstructor instanceof Constructor) {
-            member = new MemberBox((Constructor) methodOrConstructor, cache);
+            member = new MemberBox((Constructor) methodOrConstructor);
             isStatic = true; // well, doesn't take a 'this'
         } else {
-            member = new MemberBox((Method) methodOrConstructor, cache);
+            member = new MemberBox((Method) methodOrConstructor);
             isStatic = member.isStatic();
         }
         String methodName = member.getName();
@@ -173,7 +173,6 @@ public class FunctionObject extends BaseFunction
             } else {
                 returnTypeTag = getTypeTag(returnType);
             }
-            member.prepareInvokerOptimization();
         } else {
             Class ctorType = member.getDeclaringClass();
             if (!ScriptRuntime.ScriptableClass.isAssignableFrom(ctorType)) {
@@ -259,6 +258,11 @@ public class FunctionObject extends BaseFunction
         return getArity();
     }
 
+    public String getFunctionName()
+    {
+        return (functionName == null) ? "" : functionName;
+    }
+
     /**
      * Get Java method or constructor this function represent.
      */
@@ -288,6 +292,14 @@ public class FunctionObject extends BaseFunction
         return found;
     }
 
+    /**
+     * Returns all public methods declared by the specified class. This excludes
+     * inherited methods.
+     *
+     * @param clazz the class from which to pull public declared methods
+     * @return the public methods declared in the specified class
+     * @see Class#getDeclaredMethods()
+     */
     static Method[] getMethodList(Class clazz) {
         Method[] methods = null;
         try {
@@ -542,6 +554,7 @@ public class FunctionObject extends BaseFunction
     public static final int JAVA_OBJECT_TYPE      = 6;
 
     MemberBox member;
+    private String functionName;
     private transient byte[] typeTags;
     private int parmsLength;
     private transient boolean hasVoidReturn;

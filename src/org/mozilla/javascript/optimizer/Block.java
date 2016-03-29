@@ -37,10 +37,8 @@
 package org.mozilla.javascript.optimizer;
 
 import org.mozilla.javascript.*;
-import org.mozilla.classfile.*;
 
 import java.util.Hashtable;
-import java.util.Enumeration;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -470,7 +468,7 @@ class Block
           case Token.CALL :
           case Token.NEW :
           case Token.REF_CALL :
-              return Optimizer.NoType;
+              return Optimizer.AnyType;
 
           case Token.GETELEM :
              return Optimizer.AnyType;
@@ -568,11 +566,6 @@ class Block
         }
 
         return changed;
-    }
-
-    private boolean isLiveOnEntry(int index)
-    {
-        return (itsLiveOnEntrySet != null) && (itsLiveOnEntrySet.test(index));
     }
 
     private void printLiveOnEntrySet(OptFunctionNode fn)

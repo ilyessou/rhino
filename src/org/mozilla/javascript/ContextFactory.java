@@ -143,6 +143,7 @@ public class ContextFactory
     private final Object listenersLock = new Object();
     private volatile Object listeners;
     private boolean disabledListening;
+    private ClassLoader applicationClassLoader;
 
     /**
      * Listener of {@link Context} creation and release events.
@@ -291,6 +292,38 @@ public class ContextFactory
     }
 
     /**
+     * Get ClassLoader to use when searching for Java classes.
+     * Unless it was explicitly initialized with
+     * {@link #initApplicationClassLoader(ClassLoader)} the method returns
+     * null to indicate that Thread.getContextClassLoader() should be used.
+     */
+    public final ClassLoader getApplicationClassLoader()
+    {
+        return applicationClassLoader;
+    }
+
+    /**
+     * Set explicit class loader to use when searching for Java classes.
+     *
+     * @see #getApplicationClassLoader()
+     */
+    public final void initApplicationClassLoader(ClassLoader loader)
+    {
+        if (loader == null)
+            throw new IllegalArgumentException("loader is null");
+        if (!Kit.testIfCanLoadRhinoClasses(loader))
+            throw new IllegalArgumentException(
+                "Loader can not resolve Rhino classes");
+
+        if (this.applicationClassLoader != null)
+            throw new IllegalStateException(
+                "applicationClassLoader can only be set once");
+        checkNotSealed();
+
+        this.applicationClassLoader = loader;
+    }
+
+    /**
      * Execute top call to script or function.
      * When the runtime is about to execute a script or function that will
      * create the first stack frame with scriptable code, it calls this method
@@ -412,6 +445,38 @@ public class ContextFactory
     public final Object call(ContextAction action)
     {
         return Context.call(this, action);
+    }
+    
+    /**
+     * Same as {@link Context#enter()} with the difference that if a new context
+     * needs to be created, then this context factory is used to create it 
+     * instead of the global context factory.
+     * @return a Context associated with the current thread
+     */
+    public final Context enter()
+    {
+        return enter(null);
+    }
+    
+    /**
+     * Same as {@link Context#enter(Context)} with the difference that if a new 
+     * context needs to be created, then this context factory is used to create 
+     * it instead of the global context factory.
+     * @return a Context associated with the current thread
+     */
+    public final Context enter(Context cx)
+    {
+        return Context.enter(cx, this);
+    }
+
+    /**
+     * Same as {@link Context#exit()}, although if you used {@link #enter()} or
+     * {@link #enter(Context)} methods on this object, you should use this exit
+     * method instead of the static one in {@link Context}. 
+     */
+    public final void exit()
+    {
+        Context.exit(this);
     }
 }
 

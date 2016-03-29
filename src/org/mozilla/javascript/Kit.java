@@ -36,6 +36,7 @@
 package org.mozilla.javascript;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.Reader;
 import java.lang.reflect.Method;
 import java.util.Hashtable;
@@ -105,6 +106,23 @@ public class Kit
     }
 
     /**
+     * Check that testClass is accesible from the given loader.
+     */
+    static boolean testIfCanLoadRhinoClasses(ClassLoader loader)
+    {
+        Class testClass = ScriptRuntime.ContextFactoryClass;
+        Class x = Kit.classOrNull(loader, testClass.getName());
+        if (x != testClass) {
+            // The check covers the case when x == null =>
+            // loader does not know about testClass or the case
+            // when x != null && x != testClass =>
+            // loader loads a class unrelated to testClass
+            return false;
+        }
+        return true;
+    }
+
+    /**
      * If initCause methods exists in Throwable, call
      * <tt>ex.initCause(cause)</tt> or otherwise do nothing.
      * @return The <tt>ex</tt> argument.
@@ -129,26 +147,33 @@ public class Kit
      */
     public static String[] semicolonSplit(String s)
     {
-        int count = 0;
-        for (int cursor = 0; ;) {
-            int next = s.indexOf(';', cursor) + 1;
-            if (next <= 0) {
-                // check for missing ;
-                if (cursor + 1 < s.length())
+        String[] array = null;
+        for (;;) {
+            // loop 2 times: first to count semicolons and then to fill array
+            int count = 0;
+            int cursor = 0;
+            for (;;) {
+                int next = s.indexOf(';', cursor);
+                if (next < 0) {
+                    break;
+                }
+                if (array != null) {
+                    array[count] = s.substring(cursor, next);
+                }
+                ++count;
+                cursor = next + 1;
+            }
+            // after the last semicolon
+            if (array == null) {
+                // array size counting state:
+                // check for required terminating ';'
+                if (cursor != s.length())
                     throw new IllegalArgumentException();
+                array = new String[count];
+            } else {
+                // array filling state: stop the loop
                 break;
             }
-            ++count;
-            cursor = next + 1;
-        }
-        String[] array = new String[count];
-        count = 0;
-        for (int cursor = 0; ;) {
-            int next = s.indexOf(';', cursor);
-            if (next < 0) { break; }
-            array[count] = s.substring(cursor, next);
-            ++count;
-            cursor = next + 1;
         }
         return array;
     }
@@ -411,6 +436,33 @@ public class Kit
             }
         }
         return new String(buffer, 0, cursor);
+    }
+
+    public static byte[] readStream(InputStream is, int initialBufferCapacity)
+        throws IOException
+    {
+        if (initialBufferCapacity <= 0) {
+            throw new IllegalArgumentException(
+                "Bad initialBufferCapacity: "+initialBufferCapacity);
+        }
+        byte[] buffer = new byte[initialBufferCapacity];
+        int cursor = 0;
+        for (;;) {
+            int n = is.read(buffer, cursor, buffer.length - cursor);
+            if (n < 0) { break; }
+            cursor += n;
+            if (cursor == buffer.length) {
+                byte[] tmp = new byte[buffer.length * 2];
+                System.arraycopy(buffer, 0, tmp, 0, cursor);
+                buffer = tmp;
+            }
+        }
+        if (cursor != buffer.length) {
+            byte[] tmp = new byte[cursor];
+            System.arraycopy(buffer, 0, tmp, 0, cursor);
+            buffer = tmp;
+        }
+        return buffer;
     }
 
     /**

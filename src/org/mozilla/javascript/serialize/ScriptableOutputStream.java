@@ -83,7 +83,32 @@ public class ScriptableOutputStream extends ObjectOutputStream {
      * serialization. Names excluded from serialization are looked up
      * in the new scope and replaced upon deserialization.
      * @param name a fully qualified name (of the form "a.b.c", where
+     *             "a" must be a property of the top-level object). The object
+     *             need not exist, in which case the name is ignored.
+     * @throws IllegalArgumentException if the object is not a
+     *         {@link Scriptable}.
+     */
+    public void addOptionalExcludedName(String name) {
+        Object obj = lookupQualifiedName(scope, name);
+        if(obj != null && obj != UniqueTag.NOT_FOUND) {
+            if (!(obj instanceof Scriptable)) {
+                throw new IllegalArgumentException(
+                        "Object for excluded name " + name + 
+                        " is not a Scriptable, it is " + 
+                        obj.getClass().getName());
+            }
+            table.put(obj, name);
+        }
+    }
+
+    /**
+     * Adds a qualified name to the list of object to be excluded from
+     * serialization. Names excluded from serialization are looked up
+     * in the new scope and replaced upon deserialization.
+     * @param name a fully qualified name (of the form "a.b.c", where
      *             "a" must be a property of the top-level object)
+     * @throws IllegalArgumentException if the object is not found or is not
+     *         a {@link Scriptable}.
      */
     public void addExcludedName(String name) {
         Object obj = lookupQualifiedName(scope, name);
@@ -123,10 +148,18 @@ public class ScriptableOutputStream extends ObjectOutputStream {
                            "Date", "Date.prototype",
                            "RegExp", "RegExp.prototype",
                            "Script", "Script.prototype",
-                           "Continuation", "Continuation.prototype"
+                           "Continuation", "Continuation.prototype",
                          };
         for (int i=0; i < names.length; i++) {
             addExcludedName(names[i]);
+        }
+        
+        String[] optionalNames = { 
+                "XML", "XML.prototype",
+                "XMLList", "XMLList.prototype",
+        };
+        for (int i=0; i < optionalNames.length; i++) {
+            addOptionalExcludedName(optionalNames[i]);
         }
     }
 
@@ -144,9 +177,14 @@ public class ScriptableOutputStream extends ObjectOutputStream {
         return result;
     }
 
-    static class PendingLookup implements Serializable {
+    static class PendingLookup implements Serializable
+    {
+        static final long serialVersionUID = -2692990309789917727L;
+
         PendingLookup(String name) { this.name = name; }
+
         String getName() { return name; }
+
         private String name;
     };
 

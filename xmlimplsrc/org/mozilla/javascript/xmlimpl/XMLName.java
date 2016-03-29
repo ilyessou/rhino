@@ -39,16 +39,18 @@ package org.mozilla.javascript.xmlimpl;
 import org.mozilla.javascript.Context;
 import org.mozilla.javascript.Kit;
 import org.mozilla.javascript.Ref;
-import org.mozilla.javascript.Scriptable;
 import org.mozilla.javascript.ScriptRuntime;
 import org.mozilla.javascript.Undefined;
 
 class XMLName extends Ref
 {
+    static final long serialVersionUID = 3832176310755686977L;
+
     private String uri;
     private String localName;
     private boolean isAttributeName;
     private boolean isDescendants;
+    private XMLObjectImpl xmlObject;
 
     private XMLName(String uri, String localName)
     {
@@ -64,6 +66,13 @@ class XMLName extends Ref
     static XMLName formProperty(String uri, String localName)
     {
         return new XMLName(uri, localName);
+    }
+
+    void initXMLObject(XMLObjectImpl xmlObject)
+    {
+        if (xmlObject == null) throw new IllegalArgumentException();
+        if (this.xmlObject != null) throw new IllegalStateException();
+        this.xmlObject = xmlObject;
     }
 
     String uri()
@@ -98,18 +107,16 @@ class XMLName extends Ref
         isDescendants = true;
     }
 
-    public boolean has(Context cx, Scriptable target)
+    public boolean has(Context cx)
     {
-        XMLObjectImpl xmlObject = (XMLObjectImpl)target;
         if (xmlObject == null) {
             return false;
         }
         return xmlObject.hasXMLProperty(this);
     }
 
-    public Object get(Context cx, Scriptable target)
+    public Object get(Context cx)
     {
-        XMLObjectImpl xmlObject = (XMLObjectImpl)target;
         if (xmlObject == null) {
             throw ScriptRuntime.undefReadError(Undefined.instance,
                                                toString());
@@ -117,9 +124,8 @@ class XMLName extends Ref
         return xmlObject.getXMLProperty(this);
     }
 
-    public Object set(Context cx, Scriptable target, Object value)
+    public Object set(Context cx, Object value)
     {
-        XMLObjectImpl xmlObject = (XMLObjectImpl)target;
         if (xmlObject == null) {
             throw ScriptRuntime.undefWriteError(Undefined.instance,
                                                 toString(),
@@ -132,9 +138,8 @@ class XMLName extends Ref
         return value;
     }
 
-    public boolean delete(Context cx, Scriptable target)
+    public boolean delete(Context cx)
     {
-        XMLObjectImpl xmlObject = (XMLObjectImpl)target;
         if (xmlObject == null) {
             return true;
         }

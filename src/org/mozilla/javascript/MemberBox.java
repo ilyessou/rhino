@@ -49,16 +49,15 @@ import java.io.*;
 
 final class MemberBox implements Serializable
 {
+    static final long serialVersionUID = 6358550398665688245L;
 
-    MemberBox(Method method, ClassCache cache)
+    MemberBox(Method method)
     {
-        this.cache = cache;
         init(method);
     }
 
-    MemberBox(Constructor constructor, ClassCache cache)
+    MemberBox(Constructor constructor)
     {
-        this.cache = cache;
         init(constructor);
     }
 
@@ -66,28 +65,6 @@ final class MemberBox implements Serializable
     {
         this.memberObject = method;
         this.argTypes = method.getParameterTypes();
-    }
-
-    void prepareInvokerOptimization()
-    {
-        if (cache.invokerOptimization) {
-            Invoker master = (Invoker)cache.invokerMaster;
-            if (master == null) {
-                master = Invoker.makeMaster();
-                if (master == null) {
-                    cache.invokerOptimization = false;
-                } else {
-                    cache.invokerMaster = master;
-                }
-            }
-            if (master != null) {
-                try {
-                    invoker = master.createInvoker(cache, method(), argTypes);
-                } catch (RuntimeException ex) {
-                    cache.invokerOptimization = false;
-                }
-            }
-        }
     }
 
     private void init(Constructor constructor)
@@ -159,15 +136,6 @@ final class MemberBox implements Serializable
 
     Object invoke(Object target, Object[] args)
     {
-        if (invoker != null) {
-            try {
-                return invoker.invoke(target, args);
-            } catch (Exception ex) {
-                throw Context.throwAsScriptRuntimeEx(ex);
-            } catch (LinkageError ex) {
-                invoker = null;
-            }
-        }
         Method method = method();
         try {
             try {
@@ -178,16 +146,14 @@ final class MemberBox implements Serializable
                     memberObject = accessible;
                     method = accessible;
                 } else {
-                    if (!tryToMakeAccessible(method)) {
+                    if (!VMBridge.instance.tryToMakeAccessible(method)) {
                         throw Context.throwAsScriptRuntimeEx(ex);
                     }
                 }
                 // Retry after recovery
                 return method.invoke(target, args);
             }
-        } catch (IllegalAccessException ex) {
-            throw Context.throwAsScriptRuntimeEx(ex);
-        } catch (InvocationTargetException ex) {
+        } catch (Exception ex) {
             throw Context.throwAsScriptRuntimeEx(ex);
         }
     }
@@ -199,16 +165,12 @@ final class MemberBox implements Serializable
             try {
                 return ctor.newInstance(args);
             } catch (IllegalAccessException ex) {
-                if (!tryToMakeAccessible(ctor)) {
+                if (!VMBridge.instance.tryToMakeAccessible(ctor)) {
                     throw Context.throwAsScriptRuntimeEx(ex);
                 }
             }
             return ctor.newInstance(args);
-        } catch (IllegalAccessException ex) {
-            throw Context.throwAsScriptRuntimeEx(ex);
-        } catch (InvocationTargetException ex) {
-            throw Context.throwAsScriptRuntimeEx(ex);
-        } catch (InstantiationException ex) {
+        } catch (Exception ex) {
             throw Context.throwAsScriptRuntimeEx(ex);
         }
     }
@@ -249,26 +211,6 @@ final class MemberBox implements Serializable
             }
         }
         return null;
-    }
-
-    private static boolean tryToMakeAccessible(Member member)
-    {
-        /**
-         * Due to a bug in Sun's VM, public methods in private
-         * classes are not accessible by default (Sun Bug #4071593).
-         * We have to explicitly set the method accessible
-         * via method.setAccessible(true) but we have to use
-         * reflection because the setAccessible() in Method is
-         * not available under jdk 1.1.
-         */
-        if (method_setAccessible != null) {
-            try {
-                Object[] args_wrapper = { Boolean.TRUE };
-                method_setAccessible.invoke(member, args_wrapper);
-                return true;
-            } catch (Exception ex) { }
-        }
-        return false;
     }
 
     private void readObject(ObjectInputStream in)
@@ -398,21 +340,7 @@ final class MemberBox implements Serializable
         return result;
     }
 
-    private ClassCache cache;
     private transient Member memberObject;
     transient Class[] argTypes;
-    transient Invoker invoker;
-
-    private static Method method_setAccessible;
-
-    static {
-        try {
-            Class MethodClass = Class.forName("java.lang.reflect.Method");
-            method_setAccessible = MethodClass.getMethod(
-                "setAccessible", new Class[] { Boolean.TYPE });
-        } catch (Exception ex) {
-            // Assume any exceptions means the method does not exist.
-        }
-    }
 }
 

@@ -44,9 +44,11 @@ package org.mozilla.javascript;
 
 final class NativeMath extends IdScriptableObject
 {
+    static final long serialVersionUID = -8838847185801131569L;
+
     private static final Object MATH_TAG = new Object();
 
-    static void init(Context cx, Scriptable scope, boolean sealed)
+    static void init(Scriptable scope, boolean sealed)
     {
         NativeMath obj = new NativeMath();
         obj.activatePrototypeMap(MAX_ID);
@@ -214,7 +216,7 @@ final class NativeMath extends IdScriptableObject
                     // Round only finite x
                     long l = Math.round(x);
                     if (l != 0) {
-                        x = (double)l;
+                        x = l;
                     } else {
                         // We must propagate the sign of d into the result
                         if (x < 0.0) {

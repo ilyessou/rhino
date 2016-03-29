@@ -37,9 +37,6 @@
 
 package org.mozilla.javascript;
 
-import java.lang.reflect.*;
-import java.io.*;
-
 /**
  * This class reflects a single Java constructor into the JavaScript
  * environment.  It satisfies a request for an overloaded constructor,
@@ -56,11 +53,13 @@ import java.io.*;
 
 public class NativeJavaConstructor extends BaseFunction
 {
+    static final long serialVersionUID = -8149253217482668463L;
+
+    MemberBox ctor;
+
     public NativeJavaConstructor(MemberBox ctor)
     {
         this.ctor = ctor;
-        String sig = JavaMembers.liveConnectSignature(ctor.argTypes);
-        this.functionName = "<init>".concat(sig);
     }
 
     public Object call(Context cx, Scriptable scope, Scriptable thisObj,
@@ -69,11 +68,15 @@ public class NativeJavaConstructor extends BaseFunction
         return NativeJavaClass.constructSpecific(cx, scope, args, ctor);
     }
 
+    public String getFunctionName()
+    {
+        String sig = JavaMembers.liveConnectSignature(ctor.argTypes);
+        return "<init>".concat(sig);
+    }
+
     public String toString()
     {
         return "[JavaConstructor " + ctor.getName() + "]";
     }
-
-    MemberBox ctor;
 }
 

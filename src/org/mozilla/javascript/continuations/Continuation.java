@@ -39,11 +39,13 @@ import org.mozilla.javascript.*;
 
 public final class Continuation extends IdScriptableObject implements Function
 {
+    static final long serialVersionUID = 1794167133757605367L;
+
     private static final Object FTAG = new Object();
 
     private Object implementation;
 
-    public static void init(Context cx, Scriptable scope, boolean sealed)
+    public static void init(Scriptable scope, boolean sealed)
     {
         Continuation obj = new Continuation();
         obj.exportAsJSClass(MAX_PROTOTYPE_ID, scope, sealed);

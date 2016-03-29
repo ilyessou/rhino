@@ -38,9 +38,6 @@
 
 package org.mozilla.javascript;
 
-import java.io.StringReader;
-import java.io.IOException;
-
 /**
  * The JavaScript Script object.
  *
@@ -57,9 +54,11 @@ import java.io.IOException;
 
 class NativeScript extends BaseFunction
 {
+    static final long serialVersionUID = -6795101161980121700L;
+
     private static final Object SCRIPT_TAG = new Object();
 
-    static void init(Context cx, Scriptable scope, boolean sealed)
+    static void init(Scriptable scope, boolean sealed)
     {
         NativeScript obj = new NativeScript(null);
         obj.exportAsJSClass(MAX_PROTOTYPE_ID, scope, sealed);

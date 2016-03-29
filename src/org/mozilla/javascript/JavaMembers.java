@@ -20,6 +20,7 @@
  *
  * Contributor(s):
  * Norris Boyd
+ * Cameron McCormack
  * Frank Mitchell
  * Mike Shaver
  * Kurt Westerfeld
@@ -95,6 +96,8 @@ class JavaMembers
         try {
             if (member instanceof BeanProperty) {
                 BeanProperty bp = (BeanProperty) member;
+                if (bp.getter == null)
+                    return Scriptable.NOT_FOUND;
                 rval = bp.getter.invoke(javaObject, Context.emptyArgs);
                 type = bp.getter.method().getReturnType();
             } else {
@@ -132,13 +135,22 @@ class JavaMembers
             if (bp.setter == null) {
                 throw reportMemberNotFound(name);
             }
-            Class setType = bp.setter.argTypes[0];
-            Object[] args = { NativeJavaObject.coerceType(setType, value,
-                                                          true) };
-            try {
-                bp.setter.invoke(javaObject, args);
-            } catch (Exception ex) {
-                throw Context.throwAsScriptRuntimeEx(ex);
+            // If there's only one setter or if the value is null, use the
+            // main setter. Otherwise, let the NativeJavaMethod decide which
+            // setter to use:
+            if (bp.setters == null || value == null) {
+                Class setType = bp.setter.argTypes[0];
+                Object[] args = { Context.jsToJava(value, setType) };
+                try {
+                    bp.setter.invoke(javaObject, args);
+                } catch (Exception ex) {
+                  throw Context.throwAsScriptRuntimeEx(ex);
+                }
+            } else {
+                Object[] args = { value };
+                bp.setters.call(Context.getContext(),
+                                ScriptableObject.getTopLevelScope(scope),
+                                scope, args);
             }
         }
         else {
@@ -148,8 +160,7 @@ class JavaMembers
                 throw Context.reportRuntimeError1(str, name);
             }
             Field field = (Field)member;
-            Object javaValue = NativeJavaObject.coerceType(field.getType(),
-                                                           value, true);
+            Object javaValue = Context.jsToJava(value, field.getType());
             try {
                 field.set(javaObject, javaValue);
             } catch (IllegalAccessException accessEx) {
@@ -296,8 +307,6 @@ class JavaMembers
 
     private void reflect(Scriptable scope)
     {
-        ClassCache cache = ClassCache.get(scope);
-
         // We reflect methods first, because we want overloaded field/method
         // names to be allocated to the NativeJavaMethod before the field
         // gets in the way.
@@ -343,7 +352,7 @@ class JavaMembers
                 Object value = ht.get(name);
                 if (value instanceof Method) {
                     methodBoxes = new MemberBox[1];
-                    methodBoxes[0] = new MemberBox((Method)value, cache);
+                    methodBoxes[0] = new MemberBox((Method)value);
                 } else {
                     ObjArray overloadedMethods = (ObjArray)value;
                     int N = overloadedMethods.size();
@@ -351,7 +360,7 @@ class JavaMembers
                     methodBoxes = new MemberBox[N];
                     for (int i = 0; i != N; ++i) {
                         Method method = (Method)overloadedMethods.get(i);
-                        methodBoxes[i] = new MemberBox(method, cache);
+                        methodBoxes[i] = new MemberBox(method);
                     }
                 }
                 NativeJavaMethod fun = new NativeJavaMethod(methodBoxes);
@@ -424,11 +433,13 @@ class JavaMembers
                 // Is this a getter?
                 String name = (String) e.nextElement();
                 boolean memberIsGetMethod = name.startsWith("get");
+                boolean memberIsSetMethod = name.startsWith("set");
                 boolean memberIsIsMethod = name.startsWith("is");
-                if (memberIsGetMethod || memberIsIsMethod) {
+                if (memberIsGetMethod || memberIsIsMethod 
+                        || memberIsSetMethod) {
                     // Double check name component.
                     String nameComponent
-                        = name.substring(memberIsGetMethod ? 3 : 2);
+                        = name.substring(memberIsIsMethod ? 2 : 3);
                     if (nameComponent.length() == 0)
                         continue;
 
@@ -449,36 +460,52 @@ class JavaMembers
 
                     // If we already have a member by this name, don't do this
                     // property.
-                    if (ht.containsKey(beanPropertyName))
+                    if (ht.containsKey(beanPropertyName)
+                            || toAdd.containsKey(beanPropertyName)) {
                         continue;
+                    }
 
-                    // Get the method by this name.
-                    Object member = ht.get(name);
-                    if (!(member instanceof NativeJavaMethod))
-                        continue;
+                    // Find the getter method, or if there is none, the is-
+                    // method.
+                    MemberBox getter = null;
+                    String getterName = "get".concat(nameComponent);
+                    String isName = "is".concat(nameComponent);
+                    getter = findGetter(isStatic, ht, getterName);
+                    // If there was no valid getter, check for an is- method.
+                    if (getter == null) {
+                        getter = findGetter(isStatic, ht, isName);
+                    }
 
-                    NativeJavaMethod njmGet = (NativeJavaMethod)member;
-                    MemberBox getter
-                        = extractGetMethod(njmGet.methods, isStatic);
-                    if (getter != null) {
-                        // We have a getter.  Now, do we have a setter?
-                        NativeJavaMethod njmSet = null;
-                        MemberBox setter = null;
-                        String setterName = "set".concat(nameComponent);
-                        if (ht.containsKey(setterName)) {
-                            // Is this value a method?
-                            member = ht.get(setterName);
-                            if (member instanceof NativeJavaMethod) {
-                                njmSet = (NativeJavaMethod)member;
+                    // setter
+                    MemberBox setter = null;
+                    NativeJavaMethod setters = null;
+                    String setterName = "set".concat(nameComponent);
+
+                    if (ht.containsKey(setterName)) {
+                        // Is this value a method?
+                        Object member = ht.get(setterName);
+                        if (member instanceof NativeJavaMethod) {
+                            NativeJavaMethod njmSet = (NativeJavaMethod)member;
+                            if (getter != null) {
+                                // We have a getter. Now, do we have a matching 
+                                // setter?
                                 Class type = getter.method().getReturnType();
                                 setter = extractSetMethod(type, njmSet.methods,
-                                                          isStatic);
+                                                            isStatic);
+                            } else {
+                                // No getter, find any set method
+                                setter = extractSetMethod(njmSet.methods, 
+                                                            isStatic);
+                            }
+                            if (njmSet.methods.length > 1) {
+                                setters = njmSet;
                             }
                         }
-                        // Make the property.
-                        BeanProperty bp = new BeanProperty(getter, setter);
-                        toAdd.put(beanPropertyName, bp);
                     }
+                    // Make the property.
+                    BeanProperty bp = new BeanProperty(getter, setter,
+                                                       setters);
+                    toAdd.put(beanPropertyName, bp);
                 }
             }
 
@@ -494,8 +521,21 @@ class JavaMembers
         Constructor[] constructors = cl.getConstructors();
         ctors = new MemberBox[constructors.length];
         for (int i = 0; i != constructors.length; ++i) {
-            ctors[i] = new MemberBox(constructors[i], cache);
+            ctors[i] = new MemberBox(constructors[i]);
         }
+    }
+
+    private MemberBox findGetter(boolean isStatic, Hashtable ht, String getterName)
+    {
+        if (ht.containsKey(getterName)) {
+            // Check that the getter is a method.
+            Object member = ht.get(getterName);
+            if (member instanceof NativeJavaMethod) {
+                NativeJavaMethod njmGet = (NativeJavaMethod) member;
+                return extractGetMethod(njmGet.methods, isStatic);
+            }
+        }
+        return null;
     }
 
     private static MemberBox extractGetMethod(MemberBox[] methods,
@@ -556,6 +596,23 @@ class JavaMembers
         return null;
     }
 
+    private static MemberBox extractSetMethod(MemberBox[] methods,
+                                              boolean isStatic)
+    {
+
+        for (int i = 0; i < methods.length; ++i) {
+            MemberBox method = methods[i];
+            if (!isStatic || method.isStatic()) {
+                if (method.method().getReturnType() == Void.TYPE) {
+                    if (method.argTypes.length == 1) {
+                        return method;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
     Hashtable getFieldAndMethodsObjects(Scriptable scope, Object javaObject,
                                         boolean isStatic)
     {
@@ -589,7 +646,7 @@ class JavaMembers
                 return members;
             }
             try {
-                members = new JavaMembers(scope, cl);
+                members = new JavaMembers(cache.scope, cl);
                 break;
             } catch (SecurityException e) {
                 // Reflection may fail for objects that are in a restricted
@@ -635,18 +692,21 @@ class JavaMembers
 
 class BeanProperty
 {
-    BeanProperty(MemberBox getter, MemberBox setter)
+    BeanProperty(MemberBox getter, MemberBox setter, NativeJavaMethod setters)
     {
         this.getter = getter;
         this.setter = setter;
+        this.setters = setters;
     }
 
     MemberBox getter;
     MemberBox setter;
+    NativeJavaMethod setters;
 }
 
 class FieldAndMethods extends NativeJavaMethod
 {
+    static final long serialVersionUID = -9222428244284796755L;
 
     FieldAndMethods(Scriptable scope, MemberBox[] methods, Field field)
     {

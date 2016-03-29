@@ -40,7 +40,6 @@ import org.mozilla.javascript.ObjArray;
 import org.mozilla.javascript.UintMap;
 
 import java.io.*;
-import java.util.*;
 
 /**
  * ClassFileWriter
@@ -2515,7 +2514,6 @@ public class ClassFileWriter {
     private static final boolean DEBUGSTACK = false;
     private static final boolean DEBUGLABELS = false;
     private static final boolean DEBUGCODE = false;
-    private static final int CodeBufferSize = 128;
 
     private String generatedClassName;
 
@@ -2529,8 +2527,6 @@ public class ClassFileWriter {
     private int itsCodeBufferTop;
 
     private ConstantPool itsConstantPool;
-
-    private short itsSourceFileAttributeIndex;
 
     private ClassFileMethod itsCurrentMethod;
     private short itsStackTop;
@@ -2967,7 +2963,6 @@ final class ConstantPool
     private ObjToIntMap itsUtf8Hash = new ObjToIntMap();
     private ObjToIntMap itsFieldRefHash = new ObjToIntMap();
     private ObjToIntMap itsMethodRefHash = new ObjToIntMap();
-    private UintMap nameAndTypeHash = new UintMap();
     private ObjToIntMap itsClassHash = new ObjToIntMap();
 
     private int itsTop;

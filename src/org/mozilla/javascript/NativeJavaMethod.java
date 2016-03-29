@@ -38,7 +38,6 @@
 package org.mozilla.javascript;
 
 import java.lang.reflect.*;
-import java.io.*;
 
 /**
  * This class reflects Java methods into the JavaScript environment and
@@ -52,6 +51,7 @@ import java.io.*;
 
 public class NativeJavaMethod extends BaseFunction
 {
+    static final long serialVersionUID = -3440381785576412928L;
 
     NativeJavaMethod(MemberBox[] methods)
     {
@@ -67,7 +67,12 @@ public class NativeJavaMethod extends BaseFunction
 
     public NativeJavaMethod(Method method, String name)
     {
-        this(new MemberBox(method, null), name);
+        this(new MemberBox(method), name);
+    }
+
+    public String getFunctionName()
+    {
+        return functionName;
     }
 
     static String scriptSignature(Object[] values)
@@ -148,7 +153,7 @@ public class NativeJavaMethod extends BaseFunction
         int index = findFunction(cx, methods, args);
         if (index < 0) {
             Class c = methods[0].method().getDeclaringClass();
-            String sig = c.getName() + '.' + functionName + '(' +
+            String sig = c.getName() + '.' + getFunctionName() + '(' +
                          scriptSignature(args) + ')';
             throw Context.reportRuntimeError1("msg.java.no_such_method", sig);
         }
@@ -160,8 +165,7 @@ public class NativeJavaMethod extends BaseFunction
         Object[] origArgs = args;
         for (int i = 0; i < args.length; i++) {
             Object arg = args[i];
-            Object coerced = NativeJavaObject.coerceType(argTypes[i], arg,
-                                                         true);
+            Object coerced = Context.jsToJava(arg, argTypes[i]);
             if (coerced != arg) {
                 if (origArgs == args) {
                     args = (Object[])args.clone();
@@ -178,7 +182,7 @@ public class NativeJavaMethod extends BaseFunction
             for (;;) {
                 if (o == null) {
                     throw Context.reportRuntimeError3(
-                        "msg.nonjava.method", functionName,
+                        "msg.nonjava.method", getFunctionName(),
                         ScriptRuntime.toString(thisObj), c.getName());
                 }
                 if (o instanceof Wrapper) {
@@ -214,10 +218,9 @@ public class NativeJavaMethod extends BaseFunction
                                " class = " + actualType);
         }
 
-        if (wrapped == Undefined.instance)
-            return wrapped;
-        if (wrapped == null && staticType == Void.TYPE)
-            return Undefined.instance;
+        if (wrapped == null && staticType == Void.TYPE) {
+            wrapped = Undefined.instance;
+        }
         return wrapped;
     }
 
@@ -468,5 +471,6 @@ public class NativeJavaMethod extends BaseFunction
     }
 
     MemberBox[] methods;
+    private String functionName;
 }
 

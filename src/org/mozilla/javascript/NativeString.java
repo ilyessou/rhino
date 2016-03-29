@@ -51,10 +51,11 @@ package org.mozilla.javascript;
  */
 final class NativeString extends IdScriptableObject
 {
+    static final long serialVersionUID = 920268368584188687L;
 
     private static final Object STRING_TAG = new Object();
 
-    static void init(Context cx, Scriptable scope, boolean sealed)
+    static void init(Scriptable scope, boolean sealed)
     {
         NativeString obj = new NativeString("");
         obj.exportAsJSClass(MAX_PROTOTYPE_ID, scope, sealed);
@@ -496,7 +497,7 @@ final class NativeString extends IdScriptableObject
             return (i == length) ? -1 : i + 1;
         }
 
-        /* Punt to j.l.s.indexOf; return target length if seperator is
+        /* Punt to j.l.s.indexOf; return target length if separator is
          * not found.
          */
         if (ip[0] >= length)

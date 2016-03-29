@@ -37,11 +37,7 @@
 package org.mozilla.javascript;
 
 import java.util.Date;
-import java.util.TimeZone;
-import java.util.Locale;
-import java.text.NumberFormat;
 import java.text.DateFormat;
-import java.text.SimpleDateFormat;
 
 /**
  * This class implements the Date native object.
@@ -50,11 +46,13 @@ import java.text.SimpleDateFormat;
  */
 final class NativeDate extends IdScriptableObject
 {
+    static final long serialVersionUID = -8307438915861678966L;
+
     private static final Object DATE_TAG = new Object();
 
     private static final String js_NaN_date_str = "Invalid Date";
 
-    static void init(Context cx, Scriptable scope, boolean sealed)
+    static void init(Scriptable scope, boolean sealed)
     {
         NativeDate obj = new NativeDate();
         // Set the value of the prototype Date to NaN ('invalid date');
@@ -441,11 +439,6 @@ final class NativeDate extends IdScriptableObject
         return lo;
     }
 
-    private static boolean InLeapYear(double t)
-    {
-        return IsLeapYear(YearFromTime(t));
-    }
-
     private static double DayFromMonth(int m, int year)
     {
         int day = m * 30;
@@ -549,7 +542,7 @@ final class NativeDate extends IdScriptableObject
 
     private static double now()
     {
-        return (double) System.currentTimeMillis();
+        return System.currentTimeMillis();
     }
 
     /* Should be possible to determine the need for this dynamically

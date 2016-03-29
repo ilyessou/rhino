@@ -39,6 +39,8 @@ import org.mozilla.javascript.*;
 
 class XMLCtor extends IdFunctionObject
 {
+    static final long serialVersionUID = -8708195078359817341L;
+
     private static final Object XMLCTOR_TAG = new Object();
 
     private XMLLibImpl lib;
@@ -66,7 +68,7 @@ class XMLCtor extends IdFunctionObject
             int id = super.getMaxInstanceId() + i;
             String name = getInstanceIdName(id);
             Object value = ScriptableObject.getProperty(source, name);
-            if (value == ScriptableObject.NOT_FOUND) {
+            if (value == Scriptable.NOT_FOUND) {
                 continue;
             }
             switch (i) {
@@ -248,7 +250,6 @@ class XMLCtor extends IdFunctionObject
             return obj;
           }
           case Id_setSettings: {
-            Scriptable obj = null;
             if (args.length == 0
                 || args[0] == null
                 || args[0] == Undefined.instance)
