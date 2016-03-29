@@ -15,13 +15,10 @@
  *
  * The Initial Developer of the Original Code is Netscape
  * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1997-1999 Netscape Communications Corporation. All
+ * Copyright (C) 1997-2000 Netscape Communications Corporation. All
  * Rights Reserved.
  *
- * Contributor(s):
- * Norris Boyd
- * Roger Lawrence
- * Andi Vajda
+ * Contributor(s): 
  * Kemal Bayram
  *
  * Alternatively, the contents of this file may be used under the
@@ -35,26 +32,24 @@
  * the provisions above, a recipient may use your version of this
  * file under either the NPL or the GPL.
  */
-
 package org.mozilla.javascript;
 
-public interface ClassNameHelper {
+import java.io.*;
 
-    public String getTargetPackage();
-
-    public void setTargetPackage(String targetPackage);
-
-    public void setTargetExtends(Class extendsClass);
-    
-    public void setTargetImplements(Class[] implementsClasses);
-
-    public ClassRepository getClassRepository();
-
-    public void setClassRepository(ClassRepository repository);
-    
-    public String getClassName();
-
-    public void setClassName(String initialName);
-    
-    public void reset();
+/**
+ * This interface provides a means to store generated class and to
+ * allow selective class loading.
+ *
+ * @see Context
+ * @author Kemal Bayram
+ */
+public interface ClassRepository {  
+    /**
+     * @param className the name of the class.
+     * @param classBytes a byte array of the generated class.
+     * @param isTopLevel if true, represents the top-level script being compiled.
+     * @return true if the class should be loaded, false otherwise. 
+     */
+    public boolean storeClass(String className, byte[] classBytes, 
+                           boolean isTopLevel) throws IOException;
 }

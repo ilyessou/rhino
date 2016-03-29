@@ -146,8 +146,8 @@ public class JSConsole extends JFrame implements ActionListener {
         consoleTextArea = new ConsoleTextArea(args);
         JScrollPane scroller = new JScrollPane(consoleTextArea);
         setContentPane(scroller);
-	consoleTextArea.setRows(24);
-	consoleTextArea.setColumns(80);
+        consoleTextArea.setRows(24);
+        consoleTextArea.setColumns(80);
         addWindowListener(new WindowAdapter() {
                 public void windowClosing(WindowEvent e) {
                     System.exit(0);
@@ -155,10 +155,13 @@ public class JSConsole extends JFrame implements ActionListener {
             });
         pack();
         setVisible(true);
-        System.setIn(consoleTextArea.getIn());
-        System.setOut(consoleTextArea.getOut());
-        System.setErr(consoleTextArea.getErr());
-        Main.exec(args);
+        // System.setIn(consoleTextArea.getIn());
+        // System.setOut(consoleTextArea.getOut());
+        // System.setErr(consoleTextArea.getErr());
+        Main.setIn(consoleTextArea.getIn());
+        Main.setOut(consoleTextArea.getOut());
+        Main.setErr(consoleTextArea.getErr());
+        Main.main(args);
     }
 
     public void actionPerformed(ActionEvent e) {

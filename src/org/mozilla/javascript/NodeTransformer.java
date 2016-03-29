@@ -215,15 +215,8 @@ public class NodeTransformer {
               }
 
               case TokenStream.NEWLOCAL : {
-                    Integer localCount
-                            = (Integer)(tree.getProp(Node.LOCALCOUNT_PROP));
-                    if (localCount == null) {
-                        tree.putProp(Node.LOCALCOUNT_PROP, new Integer(1));
-                    }
-                    else {
-                        tree.putProp(Node.LOCALCOUNT_PROP,
-                                        new Integer(localCount.intValue() + 1));
-                    }
+                    int localCount = tree.getIntProp(Node.LOCALCOUNT_PROP, 0);
+                    tree.putIntProp(Node.LOCALCOUNT_PROP, localCount + 1);
                 }
                 break;
 
@@ -255,15 +248,8 @@ public class NodeTransformer {
                     loops.push(node);
                     loopEnds.push(finallytarget);
                 }
-                Integer localCount
-                        = (Integer)(tree.getProp(Node.LOCALCOUNT_PROP));
-                if (localCount == null) {
-                    tree.putProp(Node.LOCALCOUNT_PROP, new Integer(1));
-                }
-                else {
-                    tree.putProp(Node.LOCALCOUNT_PROP,
-                                 new Integer(localCount.intValue() + 1));
-                }
+                int localCount = tree.getIntProp(Node.LOCALCOUNT_PROP, 0);
+                tree.putIntProp(Node.LOCALCOUNT_PROP, localCount + 1);
                 break;
               }
 
@@ -421,10 +407,12 @@ public class NodeTransformer {
 
               case TokenStream.VAR:
               {
-                ShallowNodeIterator i = node.getChildIterator();
                 Node result = new Node(TokenStream.BLOCK);
-                while (i.hasMoreElements()) {
-                    Node n = i.nextNode();
+                for (Node cursor = node.getFirstChild(); cursor != null;) {
+                    // Move cursor to next before createAssignment get chance
+                    // to change n.next
+                    Node n = cursor;
+                    cursor = cursor.getNextSibling();
                     if (!n.hasChildren())
                         continue;
                     Node init = n.getFirstChild();
@@ -461,7 +449,7 @@ public class NodeTransformer {
                     } else {
                         // Local variables are by definition permanent
                         Node n = new Node(TokenStream.PRIMARY,
-                                          new Integer(TokenStream.FALSE));
+                                          TokenStream.FALSE);
                         iterator.replaceCurrent(n);
                     }
                 }
@@ -533,14 +521,14 @@ public class NodeTransformer {
             }
             if (nodeType != TokenStream.VAR)
                 continue;
-            ShallowNodeIterator i = node.getChildIterator();
-            while (i.hasMoreElements()) {
-                Node n = i.nextNode();
-                if (ht == null || ht.get(n.getString()) == null)
-                    vars.addLocal(n.getString());
+            for (Node cursor = node.getFirstChild(); cursor != null;
+                 cursor = cursor.getNextSibling()) 
+            {
+                if (ht == null || ht.get(cursor.getString()) == null)
+                    vars.addLocal(cursor.getString());
             }
         }
-        String name = (String) tree.getDatum();
+        String name = tree.getString();
         if (inFunction && ((FunctionNode) tree).getFunctionType() ==
                           FunctionNode.FUNCTION_EXPRESSION &&
             name != null && name.length() > 0 &&
@@ -557,7 +545,7 @@ public class NodeTransformer {
                             new Node(TokenStream.SETVAR,
                                 new Node(TokenStream.STRING, name),
                                 new Node(TokenStream.PRIMARY,
-                                    new Integer(TokenStream.THISFN))));
+                                         TokenStream.THISFN)));
             block.addChildrenToFront(setFn);
         }
     }
@@ -568,10 +556,10 @@ public class NodeTransformer {
         if (args.getType() == TokenStream.LP && vars.getParameterCount() == 0)
         {
             // Add parameters
-            ShallowNodeIterator i = args.getChildIterator();
-            while (i.hasMoreElements()) {
-                Node n = i.nextNode();
-                String arg = n.getString();
+            for (Node cursor = args.getFirstChild(); cursor != null;
+                 cursor = cursor.getNextSibling()) 
+            {
+                String arg = cursor.getString();
                 vars.addParameter(arg);
             }
         }

@@ -73,9 +73,38 @@ public class Node implements Cloneable {
         right.next = null;
     }
 
-    public Node(int nodeType, Object datum) {
+    public Node(int nodeType, int value) {
         type = nodeType;
-        this.datum = datum;
+        this.datum = new Integer(value);
+    }
+
+    public Node(int nodeType, double value) {
+        type = nodeType;
+        int ivalue = (int)value;
+        if (ivalue == value) {
+            if ((byte)ivalue == ivalue) {
+                this.datum = new Byte((byte)ivalue);
+            }
+            else if ((short)ivalue == ivalue) {
+                this.datum = new Short((short)ivalue);
+            }
+            else {
+                this.datum = new Integer(ivalue);
+            }
+        }
+        else {
+            this.datum = new Double(value);
+        }
+    }
+
+    public Node(int nodeType, String str) {
+        type = nodeType;
+        this.datum = str;
+    }
+
+    public Node(int nodeType, Node child, int value) {
+        this(nodeType, child);
+        this.datum = new Integer(value);
     }
 
     public Node(int nodeType, Node child, Object datum) {
@@ -130,10 +159,6 @@ public class Node implements Cloneable {
             n = n.next;
         }
         return n;
-    }
-
-    public ShallowNodeIterator getChildIterator() {
-        return new ShallowNodeIterator(first);
     }
 
     public PreorderNodeIterator getPreorderIterator() {
@@ -224,6 +249,15 @@ public class Node implements Cloneable {
             Node prev = getChildBefore(child);
             prev.next = newChild;
         }
+        if (child == last)
+            last = newChild;
+        child.next = null;
+    }
+
+    public void replaceChildAfter(Node prevChild, Node newChild) {
+        Node child = prevChild.next;
+        newChild.next = child.next;
+        prevChild.next = newChild;
         if (child == last)
             last = newChild;
         child.next = null;
@@ -342,18 +376,27 @@ public class Node implements Cloneable {
     }
 
     public void putProp(int propType, Object prop) {
-        if (props == null)
-            props = new UintMap(2);
-        if (prop == null)
-            props.remove(propType);
-        else
+        if (prop == null) {
+            removeProp(propType);
+        }
+        else {
+            if (props == null) {
+                props = new UintMap(2);
+            }
             props.put(propType, prop);
+        }
     }
 
     public void putIntProp(int propType, int prop) {
         if (props == null)
             props = new UintMap(2);
         props.put(propType, prop);
+    }
+    
+    public void removeProp(int propType) {
+        if (props != null) {
+            props.remove(propType);
+        }
     }
 
     public Object getDatum() {
@@ -362,6 +405,10 @@ public class Node implements Cloneable {
 
     public void setDatum(Object datum) {
         this.datum = datum;
+    }
+
+    public Number getNumber() {
+        return (Number)datum;
     }
 
     public int getInt() {
@@ -456,17 +503,16 @@ public class Node implements Cloneable {
             }
             s.append(toString());
             s.append('\n');
-            ShallowNodeIterator iterator = getChildIterator();
-            if (iterator != null) {
-                while (iterator.hasMoreElements()) {
-                    Node n = (Node) iterator.nextElement();
-                    if (n.getType() == TokenStream.FUNCTION) {
-                        Node p = (Node) n.getProp(Node.FUNCTION_PROP);
-                        if (p != null)
-                            n = p;
-                    }
-                    s.append(n.toStringTreeHelper(level+1));
+            for (Node cursor = getFirstChild(); cursor != null;
+                 cursor = cursor.getNextSibling()) 
+            {
+                Node n = cursor;
+                if (cursor.getType() == TokenStream.FUNCTION) {
+                    Node p = (Node) cursor.getProp(Node.FUNCTION_PROP);
+                    if (p != null)
+                        n = p;
                 }
+                s.append(n.toStringTreeHelper(level+1));
             }
             return s.toString();
         }

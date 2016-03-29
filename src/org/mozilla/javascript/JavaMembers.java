@@ -91,7 +91,15 @@ class JavaMembers {
         try {
             if (member instanceof BeanProperty) {
                 BeanProperty bp = (BeanProperty) member;
-                rval = bp.getter.invoke(javaObject, ScriptRuntime.emptyArgs);
+                try {
+                    rval = bp.getter.invoke(javaObject, null);
+                } catch (IllegalAccessException e) {
+                    rval = NativeJavaMethod.retryIllegalAccessInvoke(
+                            bp.getter,
+                            javaObject,
+                            null,
+                            e);
+                }
                 type = bp.getter.getReturnType();
             } else {
                 Field field = (Field) member;
@@ -484,16 +492,20 @@ class JavaMembers {
             Modifier.isPublic(staticType.getModifiers()))
         {
             cl = staticType;
-            
-            // We can use the static type, and that is OK, but we'll trace
-            // back the java class chain here to look for something more suitable.
-            for (Class parentType = dynamicType; 
-                 parentType != null && parentType != ScriptRuntime.ObjectClass;
-                 parentType = parentType.getSuperclass())
+
+            // If the static type is an interface, use it
+            if( !cl.isInterface() )
             {
-                if (Modifier.isPublic(parentType.getModifiers())) {
-                   cl = parentType;
-                   break;
+                // We can use the static type, and that is OK, but we'll trace
+                // back the java class chain here to look for something more suitable.
+                for (Class parentType = dynamicType; 
+                     parentType != null && parentType != ScriptRuntime.ObjectClass;
+                     parentType = parentType.getSuperclass())
+                {
+                    if (Modifier.isPublic(parentType.getModifiers())) {
+                        cl = parentType;
+                        break;
+                    }
                 }
             }
         }

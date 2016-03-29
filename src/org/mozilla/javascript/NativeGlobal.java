@@ -237,7 +237,7 @@ public class NativeGlobal implements IdFunctionMaster {
                 if (c == 'x' || c == 'X') {
                     radix = 16;
                     start += 2;
-                } else if (c != '.') {
+                } else if ('0' <= c && c <= '9') {
                     radix = 8;
                     start++;
                 }
@@ -576,7 +576,8 @@ public class NativeGlobal implements IdFunctionMaster {
 
         Object args[] = { message };
         try {
-            Object errorObject = cx.newObject(scopeObject, error, args);
+            Scriptable errorObject = cx.newObject(scopeObject, error, args);
+            errorObject.put("name", errorObject, error);
             return new EcmaError((NativeError)errorObject, sourceName,
                                  lineNumber, columnNumber, lineSource);
         }

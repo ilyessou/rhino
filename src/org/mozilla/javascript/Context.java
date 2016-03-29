@@ -29,6 +29,7 @@
  * Ian D. Stewart
  * Andi Vajda
  * Andrew Wason
+ * Kemal Bayram
  *
  * Alternatively, the contents of this file may be used under the
  * terms of the GNU Public License (the "GPL"), in which case the
@@ -343,7 +344,7 @@ public class Context {
      *         number, and date.
      */
      public String getImplementationVersion() {
-        return "Rhino 1.5 release 2 2001 07 27";
+        return "Rhino 1.5 release 3 2002 01 27";
      }
 
     /**
@@ -595,7 +596,9 @@ public class Context {
      * as a global object as in ECMA 15.1.<p>
      *
      * This method must be called to initialize a scope before scripts
-     * can be evaluated in that scope.
+     * can be evaluated in that scope.<p>
+     *
+     * This method does not affect the Context it is called upon.
      *
      * @param scope the scope to initialize, or null, in which case a new
      *        object will be created to serve as the scope
@@ -614,6 +617,8 @@ public class Context {
      *
      * This method must be called to initialize a scope before scripts
      * can be evaluated in that scope.<p>
+     *
+     * This method does not affect the Context it is called upon.<p>
      * 
      * This form of the method also allows for creating "sealed" standard
      * objects. An object that is sealed cannot have properties added or
@@ -1267,7 +1272,26 @@ public class Context {
             optimizationLevel = -1;
         this.optimizationLevel = optimizationLevel;
     }
+    
+    /**
+     * Get the current class name.
+     * 
+     * @since 30/10/01 tip + patch (Kemal Bayram)
+     */
+    public String getClassName() {
+        return nameHelper != null ? nameHelper.getClassName() : null;
+    }
 
+    /**
+     * Set the current class name.
+     * 
+     * @since 30/10/01 tip + patch (Kemal Bayram)
+     */
+    public void setClassName(String className) {
+        if (nameHelper != null) 
+	      nameHelper.setClassName(className);
+    }
+    
     /**
      * Get the current target class file name.
      * <p>
@@ -1276,11 +1300,14 @@ public class Context {
      * @since 1.3
      */
     public String getTargetClassFileName() {
-        return nameHelper == null
-               ? null 
-               : nameHelper.getTargetClassFileName();
+        if (nameHelper != null) {
+	  	ClassRepository repository = nameHelper.getClassRepository();
+		if (repository instanceof FileClassRepository)
+		    return ((FileClassRepository)repository).getTargetClassFileName(nameHelper.getClassName());
+	  }
+	  return null;
     }
-
+    
     /**
      * Set the current target class file name.
      * <p>
@@ -1292,7 +1319,10 @@ public class Context {
      */
     public void setTargetClassFileName(String classFileName) {
         if (nameHelper != null)
-            nameHelper.setTargetClassFileName(classFileName);
+	      if (classFileName != null)
+                nameHelper.setClassRepository(new FileClassRepository(classFileName));
+		else
+		    nameHelper.setClassName(null);
     }
 
     /**
@@ -1301,7 +1331,7 @@ public class Context {
      * @since 1.3
      */
     public String getTargetPackage() {
-        return (nameHelper == null) ? null : nameHelper.getTargetPackage();
+        return nameHelper != null ? nameHelper.getTargetPackage() : null;
     }
 
     /**
@@ -1313,6 +1343,27 @@ public class Context {
         if (nameHelper != null)
             nameHelper.setTargetPackage(targetPackage);
     }
+    
+    /**
+     * Get the current class repository.
+     * 
+     * @see ClassRepository
+     * @since 30/10/01 tip + patch (Kemal Bayram)
+     */
+    public ClassRepository getClassRepository() {
+        return nameHelper != null ? nameHelper.getClassRepository() : null;
+    }
+
+    /**
+     * Set the current class repository.
+     * 
+     * @see ClassRepository
+     * @since 30/10/01 tip + patch (Kemal Bayram)
+     */
+    public void setClassRepository(ClassRepository classRepository) {
+        if (nameHelper != null)
+            nameHelper.setClassRepository(classRepository);
+    }
 
     /**
      * Get the current interface to write class bytes into.
@@ -1321,7 +1372,15 @@ public class Context {
      * @since 1.5 Release 2
      */
     public ClassOutput getClassOutput() {
-        return nameHelper == null ? null : nameHelper.getClassOutput();
+        if (nameHelper != null) {
+            ClassRepository repository = nameHelper.getClassRepository();
+            if ((repository != null) && 
+                (repository instanceof ClassOutputWrapper)) 
+            {
+                return ((ClassOutputWrapper)repository).classOutput;
+            }
+        }
+        return null;
     }
 
     /**
@@ -1334,8 +1393,12 @@ public class Context {
      * @since 1.5 Release 2
      */
     public void setClassOutput(ClassOutput classOutput) {
-        if (nameHelper != null)
-            nameHelper.setClassOutput(classOutput);
+        if (nameHelper != null) {
+            if (classOutput != null) 
+                nameHelper.setClassRepository(new ClassOutputWrapper(classOutput));
+            else
+                nameHelper.setClassRepository(null);
+        }
     }
     
     /**
@@ -1564,30 +1627,56 @@ public class Context {
     public static final int FEATURE_NON_ECMA_GET_YEAR = 1;
     
     /**
+     * if hasFeature(FEATURE_MEMBER_EXPR_AS_FUNCTION_NAME) returns true,
+     * allow 'function <MemberExpression>(...) { ... }' to be syntax sugar for 
+     * '<MemberExpression> = function(...) { ... }', when <MemberExpression> 
+     * is not simply identifier. 
+     * See Ecma-262, section 11.2 for definition of <MemberExpression>
+     */
+    public static final int FEATURE_MEMBER_EXPR_AS_FUNCTION_NAME = 2;
+    
+    /**
+     * if hasFeature(RESERVED_KEYWORD_AS_IDENTIFIER) returns true,
+     * treat future reserved keyword (see  Ecma-262, section 7.5.3) as ordinary
+     * identifiers but warn about this usage
+     */
+    public static final int FEATURE_RESERVED_KEYWORD_AS_IDENTIFIER = 3;
+    
+    /**
      * Controls certain aspects of script semantics. 
      * Should be overwritten to alter default behavior.
      * @param featureIndex feature index to check
      * @return true if the <code>featureIndex</code> feature is turned on
      * @see #FEATURE_NON_ECMA_GET_YEAR
+     * @see #FEATURE_MEMBER_EXPR_AS_FUNCTION_NAME
+     * @see #FEATURE_RESERVED_KEYWORD_AS_IDENTIFIER
      */
     public boolean hasFeature(int featureIndex) {
-        if (featureIndex == FEATURE_NON_ECMA_GET_YEAR) {
-           /*
-            * During the great date rewrite of 1.3, we tried to track the
-            * evolving ECMA standard, which then had a definition of
-            * getYear which always subtracted 1900.  Which we
-            * implemented, not realizing that it was incompatible with
-            * the old behavior...  now, rather than thrash the behavior
-            * yet again, we've decided to leave it with the - 1900
-            * behavior and point people to the getFullYear method.  But
-            * we try to protect existing scripts that have specified a
-            * version...
-            */
-            return (version == Context.VERSION_1_0 
-                    || version == Context.VERSION_1_1
-                    || version == Context.VERSION_1_2);
+        switch (featureIndex) {
+            case FEATURE_NON_ECMA_GET_YEAR:
+               /*
+                * During the great date rewrite of 1.3, we tried to track the
+                * evolving ECMA standard, which then had a definition of
+                * getYear which always subtracted 1900.  Which we
+                * implemented, not realizing that it was incompatible with
+                * the old behavior...  now, rather than thrash the behavior
+                * yet again, we've decided to leave it with the - 1900
+                * behavior and point people to the getFullYear method.  But
+                * we try to protect existing scripts that have specified a
+                * version...
+                */
+                return (version == Context.VERSION_1_0 
+                        || version == Context.VERSION_1_1
+                        || version == Context.VERSION_1_2);
+
+            case FEATURE_MEMBER_EXPR_AS_FUNCTION_NAME:
+                return false;
+            
+            case FEATURE_RESERVED_KEYWORD_AS_IDENTIFIER:
+                return false;
         }
-        throw new RuntimeException("Bad feature index: " + featureIndex);
+        // It is a bug to call the method with unknown featureIndex
+        throw new IllegalArgumentException();
     }
 
     /**
@@ -1844,7 +1933,7 @@ public class Context {
                      open < colon && colon < close) 
             {
                 String fileStr = s.substring(open + 1, colon);
-                if (fileStr.endsWith(".js")) {
+                if (!fileStr.endsWith(".java")) {
                     String lineStr = s.substring(colon + 1, close);
                     try {
                         linep[0] = Integer.parseInt(lineStr);
@@ -2001,6 +2090,12 @@ public class Context {
             activationNames.remove(name);
     }
 
+// Rudimentary support for Design-by-Contract
+    static void codeBug() {
+        throw new RuntimeException("FAILED ASSERTION");
+    }
+
+    static final boolean check = true;
 
     static final boolean useJSObject = false;
 
@@ -2057,4 +2152,74 @@ public class Context {
     // For instruction counting (interpreter only)
     int instructionCount;
     int instructionThreshold;
+    
+    // Implement class file saving here instead of inside codegen.
+    private class FileClassRepository implements ClassRepository {
+    
+        FileClassRepository(String classFileName) {
+            int lastSeparator = classFileName.lastIndexOf(File.separatorChar);
+            String initialName;
+            if (lastSeparator == -1) {
+                generatingDirectory = null;
+                initialName = classFileName;
+            } else {
+                generatingDirectory = classFileName.substring(0, lastSeparator);
+                initialName = classFileName.substring(lastSeparator+1);
+            }
+            if (initialName.endsWith(".class"))
+                initialName = initialName.substring(0, initialName.length()-6);
+            nameHelper.setClassName(initialName);
+        }
+    
+        public boolean storeClass(String className, byte[] bytes, boolean tl) 
+            throws IOException 
+        {
+            // no "elegant" way of getting file name from fully 
+            // qualified class name.
+            String targetPackage = nameHelper.getTargetPackage();
+            if ((targetPackage != null) && (targetPackage.length()>0) && 
+                className.startsWith(targetPackage+".")) 
+            {
+                className = className.substring(targetPackage.length()+1);
+            }
+
+            FileOutputStream out = new FileOutputStream(getTargetClassFileName(className));
+            out.write(bytes);
+            out.close();
+
+            return false;
+        }
+
+        String getTargetClassFileName(String className) {
+            StringBuffer sb = new StringBuffer();
+            if (generatingDirectory != null) {
+            sb.append(generatingDirectory);
+            sb.append(File.separator);
+            }
+            sb.append(className);
+            sb.append(".class");
+            return sb.toString();
+        }
+      
+        String generatingDirectory;
+    };
+    
+    private static class ClassOutputWrapper implements ClassRepository {
+
+        ClassOutputWrapper(ClassOutput classOutput) {
+            this.classOutput = classOutput;
+        }
+
+        public boolean storeClass(String name, byte[] bytes, boolean tl) 
+            throws IOException 
+        {
+            OutputStream out = classOutput.getOutputStream(name, tl);
+            out.write(bytes);
+            out.close();
+
+            return true;
+        }
+
+        ClassOutput classOutput;
+    }
 }

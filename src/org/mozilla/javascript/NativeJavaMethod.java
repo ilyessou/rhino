@@ -225,11 +225,17 @@ public class NativeJavaMethod extends NativeFunction implements Function {
                 printDebug("Calling ", meth, args);
             }
 
-            Object retval = meth.invoke(javaObject, args);
+            Object retval;
+            try {
+                retval = meth.invoke(javaObject, args);
+            } catch (IllegalAccessException e) {
+                retval = retryIllegalAccessInvoke(meth, javaObject, args, e);
+            }
             Class staticType = meth.getReturnType();
 
             if (debug) {
-                Class actualType = (retval == null) ? null : retval.getClass();
+                Class actualType = (retval == null) ? null 
+                                                    : retval.getClass();
                 System.err.println(" ----- Returned " + retval + 
                                    " actual = " + actualType +
                                    " expect = " + staticType);
@@ -238,7 +244,8 @@ public class NativeJavaMethod extends NativeFunction implements Function {
             Object wrapped = NativeJavaObject.wrap(scope, retval, staticType);
 
             if (debug) {
-                Class actualType = (wrapped == null) ? null : wrapped.getClass();
+                Class actualType = (wrapped == null) ? null 
+                                                     : wrapped.getClass();
                 System.err.println(" ----- Wrapped as " + wrapped + 
                                    " class = " + actualType);
             }
@@ -249,10 +256,58 @@ public class NativeJavaMethod extends NativeFunction implements Function {
                 return Undefined.instance;
             return wrapped;
         } catch (IllegalAccessException accessEx) {
-            throw Context.reportRuntimeError(accessEx.getMessage());
+            throw Context.reportRuntimeError(
+                "While attempting to call \"" + meth.getName() + 
+                "\" in class \"" + meth.getDeclaringClass().getName() +
+                "\" receieved " + accessEx.toString());
         } catch (InvocationTargetException e) {
             throw JavaScriptException.wrapException(scope, e);
         }
+    }
+
+    static Object retryIllegalAccessInvoke(Method method, Object obj, 
+                                           Object[] args, 
+                                           IllegalAccessException illegalAccess)
+        throws IllegalAccessException, InvocationTargetException
+    {
+        if (Modifier.isPublic(method.getModifiers())) {
+            String name = method.getName();
+            Class[] parms = method.getParameterTypes();
+            Class c = method.getDeclaringClass();
+            Class[] intfs = c.getInterfaces();
+            for (int i=0; i < intfs.length; i++) {
+                c = intfs[i];
+                try {
+                    Method m = c.getMethod(name, parms);
+                    return m.invoke(obj, args);
+                } catch (NoSuchMethodException ex) {
+                    continue;
+                } catch (IllegalAccessException ex) {
+                    continue;
+                }
+            }
+        }
+        /**
+         * Due to a bug in Sun's VM, public methods in private
+         * classes are not accessible by default (Sun Bug #4071593).
+         * We have to explicitly set the method accessible 
+         * via method.setAccessible(true) but we have to use 
+         * reflection because the setAccessible() in Method is 
+         * not available under jdk 1.1. We wait until a failure 
+         * to retry to avoid the overhead of this call on cases 
+         * that don't require it.
+         */
+        if (method_setAccessible != null) {
+            Object[] args_wrapper = { Boolean.TRUE };
+            try {
+                method_setAccessible.invoke(method, args_wrapper);
+            }
+            catch (IllegalAccessException ex) { }
+            catch (IllegalArgumentException ex) { }
+            catch (InvocationTargetException ex) { }
+            return method.invoke(obj, args);
+        }
+        throw illegalAccess;
     }
 
     /** 
@@ -501,6 +556,17 @@ public class NativeJavaMethod extends NativeFunction implements Function {
         return methods; 
     }
 
+    // Utility to call Class.getMethod and get null instead of thrown exceptions
+    private static Method getMethod(Class cl, String name, Class[] signature) {
+        try {
+            return cl.getMethod(name, signature);
+        }
+        catch (NoSuchMethodException ex) { }
+        catch (SecurityException ex) { }
+        return null;
+    }
+
+
     private static final boolean debug = false;
 
     private static void printDebug(String msg, Member member, Object[] args) {
@@ -513,5 +579,10 @@ public class NativeJavaMethod extends NativeFunction implements Function {
     }
 
     Method methods[];
+    
+    private static final Method method_setAccessible
+        = getMethod(Method.class,
+                    "setAccessible", new Class[] { Boolean.TYPE });
+
 }
 

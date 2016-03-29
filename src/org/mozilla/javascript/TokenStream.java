@@ -255,8 +255,12 @@ public class TokenStream {
         SOURCEFILE  = 148,
         
         // For debugger
-        
-        BREAKPOINT  = 149;
+        BREAKPOINT  = 149,
+
+        // For Interpreter to store shorts and ints inline
+        SHORTNUMBER = 150,
+        INTNUMBER   = 151;
+
     // end enum
 
 
@@ -417,6 +421,9 @@ public class TokenStream {
                 "script",
                 "line",
                 "sourcefile",
+                "breakpoint",
+                "shortnumber",
+                "intnumber",
             };
             names = a;
         }
@@ -841,11 +848,28 @@ public class TokenStream {
                 }
                 str = new String(ca, 0, destination);
             }
-            else
+            else {
                 // Return the corresponding token if it's a keyword
-                if ((result = stringToKeyword(str)) != EOF) {
-                    return result;
+                result = stringToKeyword(str);
+                if (result != EOF) {
+                    if (result != RESERVED) {
+                        return result;
+                    }
+                    else if (!Context.getContext().hasFeature(
+                            Context.FEATURE_RESERVED_KEYWORD_AS_IDENTIFIER))
+                    {
+                        return result;
+                    }
+                    else {
+                        // If implementation permits to use future reserved
+                        // keywords in violation with the EcmaScript standard,
+                        // treat it as name but issue warning
+                        Object[] errArgs = { str };
+                        reportSyntaxWarning("msg.reserved.keyword", errArgs);
+                        result = EOF;
+                    }
                 }
+            }
 
             this.string = str;
             return NAME;
@@ -855,10 +879,6 @@ public class TokenStream {
         if (isDigit(c) || (c == '.' && isDigit(in.peek()))) {
             int base = 10;
             in.startString();
-
-            double dval = ScriptRuntime.NaN;
-            long longval = 0;
-            boolean isInteger = true;
 
             if (c == '0') {
                 c = in.read();
@@ -884,16 +904,14 @@ public class TokenStream {
                      */
                     if (base == 8 && c >= '8') {
                         Object[] errArgs = { c == '8' ? "8" : "9" };
-                        Context.reportWarning(
-                            Context.getMessage("msg.bad.octal.literal",
-                                               errArgs),
-                            getSourceName(),
-                            in.getLineno(), getLine(), getOffset());
+                        reportSyntaxWarning("msg.bad.octal.literal", errArgs);
                         base = 10;
                     }
                 }
                 c = in.read();
             }
+
+            boolean isInteger = true;
 
             if (base == 10 && (c == '.' || c == 'e' || c == 'E')) {
                 isInteger = false;
@@ -921,6 +939,7 @@ public class TokenStream {
             in.unread();
             String numString = in.getString();
 
+            double dval;
             if (base == 10 && !isInteger) {
                 try {
                     // Use Java conversion to number from string...
@@ -933,38 +952,9 @@ public class TokenStream {
                 }
             } else {
                 dval = ScriptRuntime.stringToNumber(numString, 0, base);
-                longval = (long) dval;
-
-                // is it an integral fits-in-a-long value?
-                if (longval != dval)
-                    isInteger = false;
             }
 
-            if (!isInteger) {
-                /* Can't handle floats right now, because postfix INC/DEC
-                   generate Doubles, but I would generate a Float through this
-                   path, and it causes a stack mismatch. FIXME (MS)
-                   if (Float.MIN_VALUE <= dval && dval <= Float.MAX_VALUE)
-                   this.number = new Xloat((float) dval);
-                   else
-                */
-                this.number = new Double(dval);
-            } else {
-                // We generate the smallest possible type here
-                if (Byte.MIN_VALUE <= longval && longval <= Byte.MAX_VALUE)
-                    this.number = new Byte((byte)longval);
-                else if (Short.MIN_VALUE <= longval &&
-                         longval <= Short.MAX_VALUE)
-                    this.number = new Short((short)longval);
-                else if (Integer.MIN_VALUE <= longval &&
-                         longval <= Integer.MAX_VALUE)
-                    this.number = new Integer((int)longval);
-                else {
-                    // May lose some precision here, but that's the 
-                    // appropriate semantics.
-                    this.number = new Double(longval);
-                }
-            }
+            this.number = dval;
             return NUMBER;
         }
 
@@ -1255,15 +1245,9 @@ public class TokenStream {
                 return getToken();
             }
             if (in.match('*')) {
-                while ((c = in.read()) != -1
-                       && !(c == '*' && in.match('/'))) {
-                    if (c == '\n') {
-                    } else if (c == '/' && in.match('*')) {
-                        if (in.match('/'))
-                            return getToken();
-                        reportSyntaxError("msg.nested.comment", null);
-                        return ERROR;
-                    }
+                while ((c = in.read()) != -1 && 
+                       !(c == '*' && in.match('/'))) {
+                    ; // empty loop body
                 }
                 if (c == EOF_CHAR) {
                     reportSyntaxError("msg.unterminated.comment", null);
@@ -1376,11 +1360,17 @@ public class TokenStream {
         }
     }
 
+    private void reportSyntaxWarning(String messageProperty, Object[] args) {
+        String message = Context.getMessage(messageProperty, args);
+        Context.reportWarning(message, getSourceName(),
+                              getLineno(), getLine(), getOffset());
+    }
+
     public String getSourceName() { return sourceName; }
     public int getLineno() { return in.getLineno(); }
     public int getOp() { return op; }
     public String getString() { return string; }
-    public Number getNumber() { return number; }
+    public double getNumber() { return number; }
     public String getLine() { return in.getLine(); }
     public int getOffset() { return in.getOffset(); }
     public int getTokenno() { return tokenno; }
@@ -1410,5 +1400,5 @@ public class TokenStream {
     // string is found.  Fosters one class of error, but saves lots of
     // code.
     private String string = "";
-    private Number number;
+    private double number;
 }
