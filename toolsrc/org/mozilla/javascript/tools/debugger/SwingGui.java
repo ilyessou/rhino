@@ -1,44 +1,8 @@
 /* -*- Mode: java; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Rhino JavaScript Debugger code, released
- * November 21, 2000.
- *
- * The Initial Developer of the Original Code is
- * SeeBeyond Corporation.
- * Portions created by the Initial Developer are Copyright (C) 2000
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Igor Bukanov
- *   Matt Gould
- *   Cameron McCormack
- *   Christopher Oliver
- *   Hannes Wallnoefer
- *
- * Alternatively, the contents of this file may be used under the terms of
- * the GNU General Public License Version 2 or later (the "GPL"), in which
- * case the provisions of the GPL are applicable instead of those above. If
- * you wish to allow use of your version of this file only under the terms of
- * the GPL and not to allow others to use your version of this file under the
- * MPL, indicate your decision by deleting the provisions above and replacing
- * them with the notice and other provisions required by the GPL. If you do
- * not delete the provisions above, a recipient may use your version of this
- * file under either the MPL or the GPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 package org.mozilla.javascript.tools.debugger;
 
 import javax.swing.*;
@@ -152,13 +116,13 @@ public class SwingGui extends JFrame implements GuiCallback {
     /**
      * Hash table of internal frame names to the internal frames themselves.
      */
-    private final Map<String,JFrame> toplevels = 
+    private final Map<String,JFrame> toplevels =
         Collections.synchronizedMap(new HashMap<String,JFrame>());
 
     /**
      * Hash table of script URLs to their internal frames.
      */
-    private final Map<String,FileWindow> fileWindows = 
+    private final Map<String,FileWindow> fileWindows =
         Collections.synchronizedMap(new HashMap<String,FileWindow>());
 
 
@@ -1389,7 +1353,7 @@ class FilePopupMenu extends JPopupMenu {
      * The popup x position.
      */
     int x;
-    
+
     /**
      * The popup y position.
      */
@@ -2043,7 +2007,7 @@ class FileHeader extends JPanel implements MouseListener {
      */
     public void mouseEntered(MouseEvent e) {
     }
-    
+
     /**
      * Called when a mouse button is pressed.
      */
@@ -2115,7 +2079,7 @@ class FileWindow extends JInternalFrame implements ActionListener {
      * The FileHeader that is the gutter for {@link #textArea}.
      */
     private FileHeader fileHeader;
-    
+
     /**
      * Scroll pane for containing {@link #textArea}.
      */
@@ -3209,13 +3173,13 @@ class Menubar extends JMenuBar implements ActionListener {
     /**
      * Items that are enabled only when interrupted.
      */
-    private List<JMenuItem> interruptOnlyItems = 
+    private List<JMenuItem> interruptOnlyItems =
         Collections.synchronizedList(new ArrayList<JMenuItem>());
 
     /**
      * Items that are enabled only when running.
      */
-    private List<JMenuItem> runOnlyItems = 
+    private List<JMenuItem> runOnlyItems =
         Collections.synchronizedList(new ArrayList<JMenuItem>());
 
     /**

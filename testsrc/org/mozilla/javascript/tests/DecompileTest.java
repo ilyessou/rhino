@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 package org.mozilla.javascript.tests;
 
 
@@ -15,7 +19,7 @@ public class DecompileTest {
 
 	/**
 	 * As of head of trunk on 30.09.09, decompile of "new Date()" returns "new Date" without parentheses.
-	 * @see <a href="https://bugzilla.mozilla.org/show_bug.cgi?id=519692">Bug 519692</a> 
+	 * @see <a href="https://bugzilla.mozilla.org/show_bug.cgi?id=519692">Bug 519692</a>
 	 */
 	@Test
 	public void newObject0Arg()

@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 package org.mozilla.javascript.tests;
 
 import java.io.File;
@@ -21,17 +25,17 @@ public class JsTestsTest extends JsTestsBase {
                 });
         runJsTests(tests);
     }
-    
+
     public void testJsTestsInterpreted() throws IOException {
         setOptimizationLevel(-1);
         runJsTests();
     }
-    
+
     public void testJsTestsCompiled() throws IOException {
         setOptimizationLevel(0);
         runJsTests();
     }
-    
+
     public void testJsTestsOptimized() throws IOException {
         setOptimizationLevel(9);
         runJsTests();

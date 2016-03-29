@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 package org.mozilla.javascript.tests;
 
 import org.mozilla.javascript.ScriptableObject;
@@ -67,7 +71,7 @@ public class Bug448816Test extends TestCase {
         assertTrue(map.size() == 4);
         assertEquals(map.remove("b"), Boolean.TRUE);
         reference.remove("b");
-        assertTrue(map.size() == 3);        
+        assertTrue(map.size() == 3);
         assertEquals(reference, map);
         testCollections();
     }

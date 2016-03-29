@@ -1,5 +1,9 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 /**
- * 
+ *
  */
 package org.mozilla.javascript.tests;
 
@@ -25,7 +29,7 @@ public class ClassShutterExceptionTest extends TestCase {
             return false;
         }
     }
-    
+
     public void helper(String source) {
         Context cx = Context.enter();
         Context.ClassShutterSetter setter = cx.getClassShutterSetter();
@@ -43,7 +47,7 @@ public class ClassShutterExceptionTest extends TestCase {
             Context.exit();
         }
     }
-    
+
     public void testClassShutterException() {
         try {
             helper("java.lang.System.out.println('hi');");

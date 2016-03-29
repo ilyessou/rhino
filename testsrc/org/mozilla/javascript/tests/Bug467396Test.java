@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 package org.mozilla.javascript.tests;
 
 import org.mozilla.javascript.Context;
@@ -7,7 +11,7 @@ import org.mozilla.javascript.Wrapper;
 import junit.framework.TestCase;
 
 /**
- * Test for overloaded varargs/non-varargs methods. 
+ * Test for overloaded varargs/non-varargs methods.
  * See https://bugzilla.mozilla.org/show_bug.cgi?id=467396
  * @author Hannes Wallnoefer
  */

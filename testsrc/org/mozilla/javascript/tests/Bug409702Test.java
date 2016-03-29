@@ -1,5 +1,9 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 /**
- * 
+ *
  */
 package org.mozilla.javascript.tests;
 
@@ -12,7 +16,7 @@ import org.mozilla.javascript.*;
  * @author Norris Boyd
  */
 public class Bug409702Test extends TestCase {
-  
+
     public static abstract class Foo {
         public Foo() {
         }
@@ -28,10 +32,10 @@ public class Bug409702Test extends TestCase {
             }
         }
     }
-  
+
   public void testAdapter() {
       final int value = 12;
-      String source = 
+      String source =
           "var instance = " +
           "  new JavaAdapter(" + Foo.Subclass.class.getName() + "," +
           "{ b: function () { return " + value + "; } });" +
@@ -45,5 +49,5 @@ public class Bug409702Test extends TestCase {
       } finally {
           Context.exit();
       }
-  }  
+  }
 }

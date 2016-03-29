@@ -1,49 +1,14 @@
 /* -*- Mode: java; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Rhino code, released
- * May 6, 1998.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1997-1999
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Patrick Beard
- *   Norris Boyd
- *   Igor Bukanov
- *   Rob Ginda
- *   Kurt Westerfeld
- *   Hannes Wallnoefer
- *
- * Alternatively, the contents of this file may be used under the terms of
- * the GNU General Public License Version 2 or later (the "GPL"), in which
- * case the provisions of the GPL are applicable instead of those above. If
- * you wish to allow use of your version of this file only under the terms of
- * the GPL and not to allow others to use your version of this file under the
- * MPL, indicate your decision by deleting the provisions above and replacing
- * them with the notice and other provisions required by the GPL. If you do
- * not delete the provisions above, a recipient may use your version of this
- * file under either the MPL or the GPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 package org.mozilla.javascript.tools.shell;
 
 import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -52,6 +17,8 @@ import java.io.UnsupportedEncodingException;
 import java.lang.ref.ReferenceQueue;
 import java.lang.ref.SoftReference;
 import java.lang.reflect.UndeclaredThrowableException;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -62,7 +29,6 @@ import java.util.Map;
 
 import org.mozilla.javascript.Context;
 import org.mozilla.javascript.ContextAction;
-import org.mozilla.javascript.EvaluatorException;
 import org.mozilla.javascript.Function;
 import org.mozilla.javascript.GeneratedClassLoader;
 import org.mozilla.javascript.Kit;
@@ -72,6 +38,7 @@ import org.mozilla.javascript.Script;
 import org.mozilla.javascript.Scriptable;
 import org.mozilla.javascript.ScriptableObject;
 import org.mozilla.javascript.SecurityController;
+import org.mozilla.javascript.commonjs.module.ModuleScope;
 import org.mozilla.javascript.commonjs.module.Require;
 import org.mozilla.javascript.tools.SourceReader;
 import org.mozilla.javascript.tools.ToolErrorReporter;
@@ -99,6 +66,7 @@ public class Main
     static List<String> modulePath;
     static String mainModule;
     static boolean sandboxed = false;
+    static boolean useRequire = false;
     static Require require;
     private static SecurityProxy securityImpl;
     private final static ScriptCache scriptCache = new ScriptCache(32);
@@ -127,17 +95,13 @@ public class Main
 
         public Object run(Context cx)
         {
-            if (modulePath != null || mainModule != null) {
+            if (useRequire) {
                 require = global.installRequire(cx, modulePath, sandboxed);
             }
             if (type == PROCESS_FILES) {
                 processFiles(cx, args);
             } else if (type == EVAL_INLINE_SCRIPT) {
-                Script script = loadScriptFromSource(cx, scriptText,
-                                                     "<command>", 1, null);
-                if (script != null) {
-                    evaluateScript(script, cx, getGlobal());
-                }
+                evalInlineScript(cx, scriptText);
             } else {
                 throw Kit.codeBug();
             }
@@ -185,11 +149,9 @@ public class Main
         errorReporter = new ToolErrorReporter(false, global.getErr());
         shellContextFactory.setErrorReporter(errorReporter);
         String[] args = processOptions(origArgs);
-        if (mainModule != null && !fileList.contains(mainModule))
-            fileList.add(mainModule);
-        if (processStdin)
+        if (processStdin) {
             fileList.add(null);
-
+        }
         if (!global.initialized) {
             global.init(shellContextFactory);
         }
@@ -212,13 +174,81 @@ public class Main
                               ScriptableObject.DONTENUM);
 
         for (String file: fileList) {
-            processSource(cx, file);
+            try {
+                processSource(cx, file);
+            } catch (IOException ioex) {
+                Context.reportError(ToolErrorReporter.getMessage(
+                        "msg.couldnt.read.source", file, ioex.getMessage()));
+                exitCode = EXITCODE_FILE_NOT_FOUND;
+            } catch (RhinoException rex) {
+                ToolErrorReporter.reportException(
+                    cx.getErrorReporter(), rex);
+                exitCode = EXITCODE_RUNTIME_ERROR;
+            } catch (VirtualMachineError ex) {
+                // Treat StackOverflow and OutOfMemory as runtime errors
+                ex.printStackTrace();
+                String msg = ToolErrorReporter.getMessage(
+                    "msg.uncaughtJSException", ex.toString());
+                Context.reportError(msg);
+                exitCode = EXITCODE_RUNTIME_ERROR;
+            }
+        }
+    }
+
+    static void evalInlineScript(Context cx, String scriptText) {
+        try {
+            Script script = cx.compileString(scriptText, "<command>", 1, null);
+            if (script != null) {
+                script.exec(cx, getShellScope());
+            }
+        } catch (RhinoException rex) {
+            ToolErrorReporter.reportException(
+                    cx.getErrorReporter(), rex);
+            exitCode = EXITCODE_RUNTIME_ERROR;
+        } catch (VirtualMachineError ex) {
+            // Treat StackOverflow and OutOfMemory as runtime errors
+            ex.printStackTrace();
+            String msg = ToolErrorReporter.getMessage(
+                    "msg.uncaughtJSException", ex.toString());
+            Context.reportError(msg);
+            exitCode = EXITCODE_RUNTIME_ERROR;
         }
     }
 
     public static Global getGlobal()
     {
         return global;
+    }
+
+    static Scriptable getShellScope() {
+        return getScope(null);
+    }
+
+    static Scriptable getScope(String path) {
+        if (useRequire) {
+            // If CommonJS modules are enabled use a module scope that resolves
+            // relative ids relative to the current URL, file or working directory.
+            URI uri;
+            if (path == null) {
+                // use current directory for shell and -e switch
+                uri = new File(System.getProperty("user.dir")).toURI();
+            } else {
+                // find out whether this is a file path or a URL
+                if (SourceReader.toUrl(path) != null) {
+                    try {
+                        uri = new URI(path);
+                    } catch (URISyntaxException x) {
+                        // fall back to file uri
+                        uri = new File(path).toURI();
+                    }
+                } else {
+                    uri = new File(path).toURI();
+                }
+            }
+            return new ModuleScope(global, uri, null);
+        } else {
+            return global;
+        }
     }
 
     /**
@@ -235,6 +265,7 @@ public class Main
             if (!arg.startsWith("-")) {
                 processStdin = false;
                 fileList.add(arg);
+                mainModule = arg;
                 String[] result = new String[args.length - i - 1];
                 System.arraycopy(args, i+1, result, 0, args.length - i - 1);
                 return result;
@@ -313,6 +344,15 @@ public class Main
                 shellContextFactory.call(iproxy);
                 continue;
             }
+            if (arg.equals("-require")) {
+                useRequire = true;
+                continue;
+            }
+            if (arg.equals("-sandbox")) {
+                sandboxed = true;
+                useRequire = true;
+                continue;
+            }
             if (arg.equals("-modules")) {
                 if (++i == args.length) {
                     usageError = arg;
@@ -322,19 +362,7 @@ public class Main
                     modulePath = new ArrayList<String>();
                 }
                 modulePath.add(args[i]);
-                continue;
-            }
-            if (arg.equals("-main")) {
-                if (++i == args.length) {
-                    usageError = arg;
-                    break goodUsage;
-                }
-                mainModule = args[i];
-                processStdin = false;
-                continue;
-            }
-            if (arg.equals("-sandbox")) {
-                sandboxed = true;
+                useRequire = true;
                 continue;
             }
             if (arg.equals("-w")) {
@@ -347,7 +375,12 @@ public class Main
                     usageError = arg;
                     break goodUsage;
                 }
-                fileList.add(args[i].equals("-") ? null : args[i]);
+                if (args[i].equals("-")) {
+                    fileList.add(null);
+                } else {
+                    fileList.add(args[i]);
+                    mainModule = args[i];
+                }
                 continue;
             }
             if (arg.equals("-sealedlib")) {
@@ -405,10 +438,14 @@ public class Main
      * @param cx the current context
      * @param filename the name of the file to compile, or null
      *                 for interactive mode.
+     * @throws IOException if the source could not be read
+     * @throws RhinoException thrown during evaluation of source
      */
     public static void processSource(Context cx, String filename)
+            throws IOException
     {
         if (filename == null || filename.equals("-")) {
+            Scriptable scope = getShellScope();
             PrintStream ps = global.getErr();
             if (filename == null) {
                 // print implementation version
@@ -423,7 +460,7 @@ public class Main
             BufferedReader in;
             try
             {
-                in = new BufferedReader(new InputStreamReader(global.getIn(), 
+                in = new BufferedReader(new InputStreamReader(global.getIn(),
                         charEnc));
             }
             catch(UnsupportedEncodingException e)
@@ -459,49 +496,69 @@ public class Main
                         break;
                     ps.print(prompts[1]);
                 }
-                Script script = loadScriptFromSource(cx, source, "<stdin>",
-                                                     lineno, null);
-                if (script != null) {
-                    Object result = evaluateScript(script, cx, global);
-                    // Avoid printing out undefined or function definitions.
-                    if (result != Context.getUndefinedValue() &&
-                        !(result instanceof Function &&
-                          source.trim().startsWith("function")))
-                    {
-                        try {
-                            ps.println(Context.toString(result));
-                        } catch (RhinoException rex) {
-                            ToolErrorReporter.reportException(
-                                cx.getErrorReporter(), rex);
+                try {
+                    Script script = cx.compileString(source, "<stdin>", lineno, null);
+                    if (script != null) {
+                        Object result = script.exec(cx, scope);
+                        // Avoid printing out undefined or function definitions.
+                        if (result != Context.getUndefinedValue() &&
+                                !(result instanceof Function &&
+                                        source.trim().startsWith("function")))
+                        {
+                            try {
+                                ps.println(Context.toString(result));
+                            } catch (RhinoException rex) {
+                                ToolErrorReporter.reportException(
+                                        cx.getErrorReporter(), rex);
+                            }
                         }
+                        NativeArray h = global.history;
+                        h.put((int)h.getLength(), h, source);
                     }
-                    NativeArray h = global.history;
-                    h.put((int)h.getLength(), h, source);
+                } catch (RhinoException rex) {
+                    ToolErrorReporter.reportException(
+                        cx.getErrorReporter(), rex);
+                    exitCode = EXITCODE_RUNTIME_ERROR;
+                } catch (VirtualMachineError ex) {
+                    // Treat StackOverflow and OutOfMemory as runtime errors
+                    ex.printStackTrace();
+                    String msg = ToolErrorReporter.getMessage(
+                        "msg.uncaughtJSException", ex.toString());
+                    Context.reportError(msg);
+                    exitCode = EXITCODE_RUNTIME_ERROR;
                 }
             }
             ps.println();
-        } else if (filename.equals(mainModule)) {
-            try {
-                require.requireMain(cx, filename);
-            } catch (RhinoException rex) {
-                ToolErrorReporter.reportException(
-                        cx.getErrorReporter(), rex);
-                exitCode = EXITCODE_RUNTIME_ERROR;
-            } catch (VirtualMachineError ex) {
-                // Treat StackOverflow and OutOfMemory as runtime errors
-                ex.printStackTrace();
-                String msg = ToolErrorReporter.getMessage(
-                        "msg.uncaughtJSException", ex.toString());
-                exitCode = EXITCODE_RUNTIME_ERROR;
-                Context.reportError(msg);
-            }
+        } else if (useRequire && filename.equals(mainModule)) {
+            require.requireMain(cx, filename);
         } else {
-            processFile(cx, global, filename);
+            processFile(cx, getScope(filename), filename);
         }
     }
 
-    public static void processFile(Context cx, Scriptable scope,
-                                   String filename)
+    public static void processFileNoThrow(Context cx, Scriptable scope, String filename) {
+        try {
+            processFile(cx, scope, filename);
+        } catch (IOException ioex) {
+            Context.reportError(ToolErrorReporter.getMessage(
+                    "msg.couldnt.read.source", filename, ioex.getMessage()));
+            exitCode = EXITCODE_FILE_NOT_FOUND;
+        } catch (RhinoException rex) {
+            ToolErrorReporter.reportException(
+                    cx.getErrorReporter(), rex);
+            exitCode = EXITCODE_RUNTIME_ERROR;
+        } catch (VirtualMachineError ex) {
+            // Treat StackOverflow and OutOfMemory as runtime errors
+            ex.printStackTrace();
+            String msg = ToolErrorReporter.getMessage(
+                    "msg.uncaughtJSException", ex.toString());
+            Context.reportError(msg);
+            exitCode = EXITCODE_RUNTIME_ERROR;
+        }
+    }
+
+    public static void processFile(Context cx, Scriptable scope, String filename)
+            throws IOException
     {
         if (securityImpl == null) {
             processFileSecure(cx, scope, filename, null);
@@ -511,15 +568,11 @@ public class Main
     }
 
     static void processFileSecure(Context cx, Scriptable scope,
-                                  String path, Object securityDomain) {
+                                  String path, Object securityDomain)
+            throws IOException {
 
         boolean isClass = path.endsWith(".class");
         Object source = readFileOrUrl(path, !isClass);
-
-        if (source == null) {
-            exitCode = EXITCODE_FILE_NOT_FOUND;
-            return;
-        }
 
         byte[] digest = getDigest(source);
         String key = path + "_" + cx.getOptimizationLevel();
@@ -543,39 +596,14 @@ public class Main
                         }
                     }
                 }
-                script = loadScriptFromSource(cx, strSrc, path, 1, securityDomain);
+                script = cx.compileString(strSrc, path, 1, securityDomain);
             }
             scriptCache.put(key, digest, script);
         }
 
         if (script != null) {
-            evaluateScript(script, cx, scope);
+            script.exec(cx, scope);
         }
-    }
-
-    public static Script loadScriptFromSource(Context cx, String scriptSource,
-                                              String path, int lineno,
-                                              Object securityDomain)
-    {
-        try {
-            return cx.compileString(scriptSource, path, lineno,
-                                    securityDomain);
-        } catch (EvaluatorException ee) {
-            // Already printed message.
-            exitCode = EXITCODE_RUNTIME_ERROR;
-        } catch (RhinoException rex) {
-            ToolErrorReporter.reportException(
-                cx.getErrorReporter(), rex);
-            exitCode = EXITCODE_RUNTIME_ERROR;
-        } catch (VirtualMachineError ex) {
-            // Treat StackOverflow and OutOfMemory as runtime errors
-            ex.printStackTrace();
-            String msg = ToolErrorReporter.getMessage(
-                "msg.uncaughtJSException", ex.toString());
-            exitCode = EXITCODE_RUNTIME_ERROR;
-            Context.reportError(msg);
-        }
-        return null;
     }
 
     private static byte[] getDigest(Object source) {
@@ -605,10 +633,10 @@ public class Main
 
     private static Script loadCompiledScript(Context cx, String path,
                                              byte[] data, Object securityDomain)
+            throws FileNotFoundException
     {
         if (data == null) {
-            exitCode = EXITCODE_FILE_NOT_FOUND;
-            return null;
+            throw new FileNotFoundException(path);
         }
         // XXX: For now extract class name of compiled Script from path
         // instead of parsing class bytes
@@ -633,38 +661,13 @@ public class Main
                 throw Context.reportRuntimeError("msg.must.implement.Script");
             }
             return (Script) clazz.newInstance();
-         } catch (RhinoException rex) {
-            ToolErrorReporter.reportException(
-                cx.getErrorReporter(), rex);
-            exitCode = EXITCODE_RUNTIME_ERROR;
         } catch (IllegalAccessException iaex) {
-            exitCode = EXITCODE_RUNTIME_ERROR;
             Context.reportError(iaex.toString());
+            throw new RuntimeException(iaex);
         } catch (InstantiationException inex) {
-            exitCode = EXITCODE_RUNTIME_ERROR;
             Context.reportError(inex.toString());
+            throw new RuntimeException(inex);
         }
-        return null;
-    }
-
-    public static Object evaluateScript(Script script, Context cx,
-                                        Scriptable scope)
-    {
-        try {
-            return script.exec(cx, scope);
-        } catch (RhinoException rex) {
-            ToolErrorReporter.reportException(
-                cx.getErrorReporter(), rex);
-            exitCode = EXITCODE_RUNTIME_ERROR;
-        } catch (VirtualMachineError ex) {
-            // Treat StackOverflow and OutOfMemory as runtime errors
-            ex.printStackTrace();
-            String msg = ToolErrorReporter.getMessage(
-                "msg.uncaughtJSException", ex.toString());
-            exitCode = EXITCODE_RUNTIME_ERROR;
-            Context.reportError(msg);
-        }
-        return Context.getUndefinedValue();
     }
 
     public static InputStream getIn() {
@@ -697,15 +700,10 @@ public class Main
      * <tt>convertToString</tt> is true.
      */
     private static Object readFileOrUrl(String path, boolean convertToString)
+            throws IOException
     {
-        try {
-            return SourceReader.readFileOrUrl(path, convertToString, 
-                    shellContextFactory.getCharacterEncoding());
-        } catch (IOException ex) {
-            Context.reportError(ToolErrorReporter.getMessage(
-                    "msg.couldnt.read.source", path, ex.getMessage()));
-            return null;
-        }
+        return SourceReader.readFileOrUrl(path, convertToString,
+                shellContextFactory.getCharacterEncoding());
     }
 
     static class ScriptReference extends SoftReference<Script> {

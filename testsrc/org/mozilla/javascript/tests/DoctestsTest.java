@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 package org.mozilla.javascript.tests;
 
 import java.io.File;
@@ -19,11 +23,11 @@ import static org.junit.Assert.*;
 
 /**
  * Run doctests in folder testsrc/doctests.
- * 
+ *
  * A doctest is a test in the form of an interactive shell session; Rhino
  * collects and runs the inputs to the shell prompt and compares them to the
  * expected outputs.
- * 
+ *
  * @author Norris Boyd
  */
 @RunWith(Parameterized.class)
@@ -39,7 +43,7 @@ public class DoctestsTest {
         this.source = source;
         this.optimizationLevel = optimizationLevel;
     }
-    
+
     public static File[] getDoctestFiles() {
         return TestUtils.recursiveListFiles(new File(baseDirectory),
                 new FileFilter() {
@@ -48,7 +52,7 @@ public class DoctestsTest {
                     }
             });
     }
-    
+
     public static String loadFile(File f) throws IOException {
         int length = (int) f.length(); // don't worry about very long files
         char[] buf = new char[length];
@@ -68,7 +72,7 @@ public class DoctestsTest {
         }
         return result;
     }
-    
+
     // move "@Parameters" to this method to test a single doctest
     public static Collection<Object[]> singleDoctest() throws IOException {
         List<Object[]> result = new ArrayList<Object[]>();
@@ -95,6 +99,6 @@ public class DoctestsTest {
           throw ex;
         } finally {
             Context.exit();
-        }  
+        }
     }
 }

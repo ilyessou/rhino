@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 package org.mozilla.javascript.tests;
 
 import java.lang.reflect.Method;
@@ -53,12 +57,12 @@ public class WriteReadOnlyPropertyTest {
 
 				final ScriptableObject top = cx.initStandardObjects();
 				ScriptableObject.putProperty(top, "foo", foo);
-				
+
 				cx.evaluateString(top, script, "script", 0, null);
 				return null;
 			}
 		};
-		
+
 		final ContextFactory contextFactory = new ContextFactory() {
 			@Override
 			protected boolean hasFeature(final Context cx, final int featureIndex) {
@@ -87,7 +91,7 @@ public class WriteReadOnlyPropertyTest {
 		{
 			return "Foo";
 		}
-		
+
 		public String getMyProp()
 		{
 			return prop_;

@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 package org.mozilla.javascript.drivers;
 
 import java.io.File;
@@ -12,11 +16,11 @@ import org.mozilla.javascript.Scriptable;
 
 public class JsTestsBase extends TestCase {
     private int optimizationLevel;
-    
+
     public void setOptimizationLevel(int level) {
         this.optimizationLevel = level;
     }
-  
+
     public void runJsTest(Context cx, Scriptable shared, String name, String source) {
         // create a lightweight top-level scope
         Scriptable scope = cx.newObject(shared);
@@ -33,7 +37,7 @@ public class JsTestsBase extends TestCase {
         assertTrue("success".equals(result));
         System.out.println("passed");
     }
-    
+
     public void runJsTests(File[] tests) throws IOException {
         ContextFactory factory = ContextFactory.getGlobal();
         Context cx = factory.enterContext();

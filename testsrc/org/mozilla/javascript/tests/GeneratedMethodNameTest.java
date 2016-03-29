@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 package org.mozilla.javascript.tests;
 
 import org.mozilla.javascript.Context;
@@ -33,7 +37,7 @@ public class GeneratedMethodNameTest extends TestCase
 	}
 
 	public void testScriptName() throws Exception {
-		final String scriptCode = 
+		final String scriptCode =
 		  "var m = javaNameGetter.readCurrentFunctionJavaName();\n"
 			+ "if (m != 'script') throw 'got '  + m;";
 		doTest(scriptCode);
@@ -56,7 +60,7 @@ public class GeneratedMethodNameTest extends TestCase
 			+ "myFunc();";
 		doTest(scriptCode);
 	}
-	
+
 	public class JavaNameGetter {
 	    public String readCurrentFunctionJavaName() {
             final Throwable t = new RuntimeException();

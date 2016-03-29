@@ -1,43 +1,8 @@
 /* -*- Mode: java; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Rhino code, released
- * May 6, 1999.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1997-2000
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Igor Bukanov
- *   Ethan Hugg
- *   Terry Lucas
- *   Milen Nankov
- *
- * Alternatively, the contents of this file may be used under the terms of
- * the GNU General Public License Version 2 or later (the "GPL"), in which
- * case the provisions of the GPL are applicable instead of those above. If
- * you wish to allow use of your version of this file only under the terms of
- * the GPL and not to allow others to use your version of this file under the
- * MPL, indicate your decision by deleting the provisions above and replacing
- * them with the notice and other provisions required by the GPL. If you do
- * not delete the provisions above, a recipient may use your version of this
- * file under either the MPL or the GPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 package org.mozilla.javascript.xml.impl.xmlbeans;
 
@@ -143,11 +108,6 @@ abstract class XMLObjectImpl extends XMLObject
                                             Object[] args);
 
 
-    final Object getMethod(String id)
-    {
-        return super.get(id, this);
-    }
-
     //
     //
     // Methods overriding ScriptableObject
@@ -159,10 +119,6 @@ abstract class XMLObjectImpl extends XMLObject
         return toString();
     }
 
-    public void delete(String name)
-    {
-        throw new IllegalArgumentException("String: [" + name + "]");
-    }
 
     /**
      * XMLObject always compare with any value and equivalentValues
@@ -189,7 +145,7 @@ abstract class XMLObjectImpl extends XMLObject
     /**
      * Implementation of ECMAScript [[Has]]
      */
-    public final boolean ecmaHas(Context cx, Object id)
+    public final boolean has(Context cx, Object id)
     {
         if (cx == null) cx = Context.getCurrentContext();
         XMLName xmlName = lib.toXMLNameOrIndex(cx, id);
@@ -201,10 +157,16 @@ abstract class XMLObjectImpl extends XMLObject
         return hasXMLProperty(xmlName);
     }
 
+    @Override
+    public boolean has(String name, Scriptable start) {
+        Context cx = Context.getCurrentContext();
+        return hasXMLProperty(lib.toXMLNameFromString(cx, name));
+    }
     /**
      * Implementation of ECMAScript [[Get]]
      */
-    public final Object ecmaGet(Context cx, Object id)
+    @Override
+    public final Object get(Context cx, Object id)
     {
         if (cx == null) cx = Context.getCurrentContext();
         XMLName xmlName = lib.toXMLNameOrIndex(cx, id);
@@ -220,10 +182,16 @@ abstract class XMLObjectImpl extends XMLObject
         return getXMLProperty(xmlName);
     }
 
+    @Override
+    public Object get(String name, Scriptable start) {
+        Context cx = Context.getCurrentContext();
+        return getXMLProperty(lib.toXMLNameFromString(cx, name));
+    }
     /**
      * Implementation of ECMAScript [[Put]]
      */
-    public final void ecmaPut(Context cx, Object id, Object value)
+    @Override
+    public final void put(Context cx, Object id, Object value)
     {
         if (cx == null) cx = Context.getCurrentContext();
         XMLName xmlName = lib.toXMLNameOrIndex(cx, id);
@@ -236,10 +204,16 @@ abstract class XMLObjectImpl extends XMLObject
         putXMLProperty(xmlName, value);
     }
 
+    @Override
+    public void put(String name, Scriptable start, Object value) {
+        Context cx = Context.getCurrentContext();
+        putXMLProperty(lib.toXMLNameFromString(cx, name), value);
+    }
     /**
      * Implementation of ECMAScript [[Delete]].
      */
-    public final boolean ecmaDelete(Context cx, Object id)
+    @Override
+    public final boolean delete(Context cx, Object id)
     {
         if (cx == null) cx = Context.getCurrentContext();
         XMLName xmlName = lib.toXMLNameOrIndex(cx, id);
@@ -251,6 +225,38 @@ abstract class XMLObjectImpl extends XMLObject
         }
         deleteXMLProperty(xmlName);
         return true;
+    }
+
+    @Override
+    public void delete(String name) {
+        Context cx = Context.getCurrentContext();
+        deleteXMLProperty(lib.toXMLNameFromString(cx, name));
+    }
+
+    @Override
+    public Object getFunctionProperty(Context cx, int id) {
+        if (prototypeFlag) {
+            return super.get(id, this);
+        } else {
+            Scriptable proto = getPrototype();
+            if (proto instanceof XMLObject) {
+                return ((XMLObject)proto).getFunctionProperty(cx, id);
+            }
+        }
+        return NOT_FOUND;
+    }
+
+    @Override
+    public Object getFunctionProperty(Context cx, String name) {
+        if (prototypeFlag) {
+            return super.get(name, this);
+        } else {
+            Scriptable proto = getPrototype();
+            if (proto instanceof XMLObject) {
+                return ((XMLObject)proto).getFunctionProperty(cx, name);
+            }
+        }
+        return NOT_FOUND;
     }
 
     public Ref memberRef(Context cx, Object elem, int memberTypeFlags)
