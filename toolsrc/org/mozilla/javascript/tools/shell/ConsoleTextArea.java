@@ -56,7 +56,7 @@ class ConsoleWrite implements Runnable {
     public void run() {
         textArea.write(str);
     }
-};
+}
 
 class ConsoleWriter extends java.io.OutputStream {
 
@@ -68,6 +68,7 @@ class ConsoleWriter extends java.io.OutputStream {
         buffer = new StringBuffer();
     }
 
+    @Override
     public synchronized void write(int ch) {
         buffer.append((char)ch);
         if(ch == '\n') {
@@ -84,12 +85,14 @@ class ConsoleWriter extends java.io.OutputStream {
         }
     }
 
+    @Override
     public synchronized void flush() {
         if (buffer.length() > 0) {
             flushBuffer();
         }
     }
 
+    @Override
     public void close () {
         flush();
     }
@@ -99,7 +102,7 @@ class ConsoleWriter extends java.io.OutputStream {
         buffer.setLength(0);
         SwingUtilities.invokeLater(new ConsoleWrite(textArea, str));
     }
-};
+}
 
 public class ConsoleTextArea
     extends JTextArea implements KeyListener, DocumentListener
@@ -112,10 +115,11 @@ public class ConsoleTextArea
     private PrintStream err;
     private PrintWriter inPipe;
     private PipedInputStream in;
-    private java.util.Vector history;
+    private java.util.List<String> history;
     private int historyIndex = -1;
     private int outputMark = 0;
 
+    @Override
     public void select(int start, int end) {
         requestFocus();
         super.select(start, end);
@@ -123,11 +127,11 @@ public class ConsoleTextArea
 
     public ConsoleTextArea(String[] argv) {
         super();
-        history = new java.util.Vector();
+        history = new java.util.ArrayList<String>();
         console1 = new ConsoleWriter(this);
         console2 = new ConsoleWriter(this);
-        out = new PrintStream(console1);
-        err = new PrintStream(console2);
+        out = new PrintStream(console1, true);
+        err = new PrintStream(console2, true);
         PipedOutputStream outPipe = new PipedOutputStream();
         inPipe = new PrintWriter(outPipe);
         in = new PipedInputStream();
@@ -153,7 +157,7 @@ public class ConsoleTextArea
             ignored.printStackTrace();
         }
         if(segment.count > 0) {
-            history.addElement(segment.toString());
+            history.add(segment.toString());
         }
         historyIndex = history.size();
         inPipe.write(segment.array, segment.offset, segment.count);
@@ -201,7 +205,7 @@ public class ConsoleTextArea
                     historyIndex = history.size() -1;
                 }
                 if(historyIndex >= 0) {
-                    String str = (String)history.elementAt(historyIndex);
+                    String str = history.get(historyIndex);
                     int len = getDocument().getLength();
                     replaceRange(str, outputMark, len);
                     int caretPos = outputMark + str.length();
@@ -219,8 +223,8 @@ public class ConsoleTextArea
                 historyIndex++;
                 if(historyIndex < 0) {historyIndex = 0;}
                 int len = getDocument().getLength();
-                if(historyIndex < history.size()) {
-                    String str = (String)history.elementAt(historyIndex);
+                if (historyIndex < history.size()) {
+                    String str = history.get(historyIndex);
                     replaceRange(str, outputMark, len);
                     caretPos = outputMark + str.length();
                 } else {
@@ -297,4 +301,4 @@ public class ConsoleTextArea
         return err;
     }
 
-};
+}

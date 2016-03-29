@@ -49,9 +49,7 @@ import org.mozilla.javascript.Scriptable;
 import org.mozilla.javascript.ScriptRuntime;
 import org.mozilla.javascript.ScriptableObject;
 
-import java.util.Vector;
-import java.util.Enumeration;
-import java.util.Properties;
+import java.util.Map;
 
 /**
  * Environment, intended to be instantiated at global scope, provides
@@ -73,6 +71,7 @@ public class Environment extends ScriptableObject
         }
     }
 
+    @Override
     public String getClassName() {
         return "Environment";
     }
@@ -91,6 +90,7 @@ public class Environment extends ScriptableObject
         }
     }
 
+    @Override
     public boolean has(String name, Scriptable start) {
         if (this == thePrototypeInstance)
             return super.has(name, start);
@@ -98,6 +98,7 @@ public class Environment extends ScriptableObject
         return (System.getProperty(name) != null);
     }
 
+    @Override
     public Object get(String name, Scriptable start) {
         if (this == thePrototypeInstance)
             return super.get(name, start);
@@ -109,6 +110,7 @@ public class Environment extends ScriptableObject
             return Scriptable.NOT_FOUND;
     }
 
+    @Override
     public void put(String name, Scriptable start, Object value) {
         if (this == thePrototypeInstance)
             super.put(name, start, value);
@@ -117,22 +119,18 @@ public class Environment extends ScriptableObject
     }
 
     private Object[] collectIds() {
-        Properties props = System.getProperties();
-        Enumeration names = props.propertyNames();
-        Vector keys = new Vector();
-        while (names.hasMoreElements())
-            keys.addElement(names.nextElement());
-        Object[] ids = new Object[keys.size()];
-        keys.copyInto(ids);
-        return ids;
+        Map<Object,Object> props = System.getProperties();
+        return props.keySet().toArray();
     }
 
+    @Override
     public Object[] getIds() {
         if (this == thePrototypeInstance)
             return super.getIds();
         return collectIds();
     }
 
+    @Override
     public Object[] getAllIds() {
         if (this == thePrototypeInstance)
             return super.getAllIds();

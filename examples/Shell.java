@@ -48,6 +48,9 @@ import java.io.*;
  */
 public class Shell extends ScriptableObject
 {
+    private static final long serialVersionUID = -5638074146250193112L;
+
+    @Override
     public String getClassName()
     {
         return "global";
@@ -80,8 +83,10 @@ public class Shell extends ScriptableObject
 
             // Set up "arguments" in the global scope to contain the command
             // line arguments after the name of the script to execute
-            Object[] array = args;
-            if (args.length > 0) {
+            Object[] array;
+            if (args.length == 0) {
+                array = new Object[0];
+            } else {
                 int length = args.length - 1;
                 array = new Object[length];
                 System.arraycopy(args, 1, array, 0, length);
@@ -128,7 +133,7 @@ public class Shell extends ScriptableObject
     private static void usage(String s) {
         p("Didn't understand \"" + s + "\".");
         p("Valid arguments are:");
-        p("-version 100|110|120|130|140|150|160");
+        p("-version 100|110|120|130|140|150|160|170");
         System.exit(1);
     }
 
@@ -200,7 +205,7 @@ public class Shell extends ScriptableObject
     public static double version(Context cx, Scriptable thisObj,
                                  Object[] args, Function funObj)
     {
-        double result = (double) cx.getLanguageVersion();
+        double result = cx.getLanguageVersion();
         if (args.length > 0) {
             double d = Context.toNumber(args[0]);
             cx.setLanguageVersion((int) d);

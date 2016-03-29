@@ -37,12 +37,9 @@
 package org.mozilla.javascript.drivers;
 
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.FileNotFoundException;
-import java.io.InputStream;
 import java.net.URL;
 import java.util.Arrays;
-import java.util.Properties;
 
 import junit.framework.Assert;
 import junit.framework.TestCase;
@@ -54,51 +51,50 @@ import org.mozilla.javascript.tools.shell.ShellContextFactory;
  * Executes the tests in the js/tests directory, much like jsDriver.pl does.
  * Excludes tests found in the js/tests/rhino-n.tests file.
  * @author Attila Szegedi
+ * @version $Id: StandardTests.java,v 1.15 2009/07/21 17:39:05 nboyd%atg.com Exp $
  */
 public class StandardTests extends TestSuite
 {
-    public static TestSuite suite() throws Exception
+    // Disable this suite in favor of
+    // org.mozilla.javascript.tests.MozillaSuiteTest
+    private static final boolean DISABLE = true;
+
+	public static TestSuite suite() throws Exception
     {
         TestSuite suite = new TestSuite("Standard JavaScript tests");
-
-        File testDir = null;
-        if (System.getProperty("mozilla.js.tests") != null) {
-            testDir = new File(System.getProperty("mozilla.js.tests"));
-        } else {
-            URL url = StandardTests.class.getResource(".");
-            String path = url.getFile();
-            int jsIndex = path.lastIndexOf("/js");
-            if(jsIndex == -1)
-            {
-                throw new IllegalStateException("You aren't running the tests from within the standard mozilla/js directory structure");
+        if (!DISABLE) {
+            File testDir = null;
+            if (System.getProperty("mozilla.js.tests") != null) {
+                testDir = new File(System.getProperty("mozilla.js.tests"));
+            } else {
+                URL url = StandardTests.class.getResource(".");
+                String path = url.getFile();
+                int jsIndex = path.lastIndexOf("/js");
+                if(jsIndex == -1)
+                {
+                    throw new IllegalStateException("You aren't running the tests from within the standard mozilla/js directory structure");
+                }
+                path = path.substring(0, jsIndex + 3).replace('/', File.separatorChar);
+                path = path.replace("%20", " ");
+                testDir = new File(path, "tests");
             }
-            path = path.substring(0, jsIndex + 3).replace('/', File.separatorChar);
-            testDir = new File(path, "tests");
-        }
-        if(!testDir.isDirectory())
-        {
-            throw new FileNotFoundException(testDir + " is not a directory");
-        }
-        Properties excludes = new Properties();
-        InputStream in = new FileInputStream(new File(testDir, "rhino-n.tests"));
-        try
-        {
-            excludes.load(in);
-        }
-        finally
-        {
-            in.close();
-        }
-        for(int i = -1; i < 2; ++i)
-        {
-            TestSuite optimizationLevelSuite = new TestSuite("Optimization level " + i);
-            addSuites(optimizationLevelSuite, testDir, excludes, i);
-            suite.addTest(optimizationLevelSuite);
+            if(!testDir.isDirectory())
+            {
+                throw new FileNotFoundException(testDir + " is not a directory");
+            }
+            String[] excludes = TestUtils.loadTestsFromResource("/base.skip", null);
+            String[] opt1Excludes = TestUtils.loadTestsFromResource("/opt1.skip", excludes);
+            for(int i = -1; i < 2; ++i)
+            {
+                TestSuite optimizationLevelSuite = new TestSuite("Optimization level " + i);
+                addSuites(optimizationLevelSuite, testDir, i == -1 ? excludes : opt1Excludes, i);
+                suite.addTest(optimizationLevelSuite);
+            }
         }
         return suite;
     }
 
-    private static void addSuites(TestSuite topLevel, File testDir, Properties excludes, int optimizationLevel)
+    private static void addSuites(TestSuite topLevel, File testDir, String[] excludes, int optimizationLevel)
     {
         File[] subdirs = testDir.listFiles(ShellTest.DIRECTORY_FILTER);
         Arrays.sort(subdirs);
@@ -106,13 +102,16 @@ public class StandardTests extends TestSuite
         {
             File subdir = subdirs[i];
             String name = subdir.getName();
+            if (TestUtils.matches(excludes, name)) {
+                continue;
+            }
             TestSuite testSuite = new TestSuite(name);
             addCategories(testSuite, subdir, name + "/", excludes, optimizationLevel);
             topLevel.addTest(testSuite);
         }
     }
 
-    private static void addCategories(TestSuite suite, File suiteDir, String prefix, Properties excludes, int optimizationLevel)
+    private static void addCategories(TestSuite suite, File suiteDir, String prefix, String[] excludes, int optimizationLevel)
     {
         File[] subdirs = suiteDir.listFiles(ShellTest.DIRECTORY_FILTER);
         Arrays.sort(subdirs);
@@ -126,7 +125,7 @@ public class StandardTests extends TestSuite
         }
     }
 
-    private static void addTests(TestSuite suite, File suiteDir, String prefix, Properties excludes, int optimizationLevel)
+    private static void addTests(TestSuite suite, File suiteDir, String prefix, String[] excludes, int optimizationLevel)
     {
         File[] jsFiles = suiteDir.listFiles(ShellTest.TEST_FILTER);
         Arrays.sort(jsFiles);
@@ -134,41 +133,46 @@ public class StandardTests extends TestSuite
         {
             File jsFile = jsFiles[i];
             String name = jsFile.getName();
-            if(excludes.containsKey(prefix + name))
-            {
-                continue;
+            if (!TestUtils.matches(excludes, prefix + name)) {
+                suite.addTest(new JsTestCase(jsFile, optimizationLevel));
             }
-            suite.addTest(new JsTestCase(jsFile, optimizationLevel));
         }
     }
 
-    private static class JunitStatus extends ShellTest.Status {
-        final void running(File jsFile) {
+    public static class JunitStatus extends ShellTest.Status {
+        @Override
+        public final void running(File jsFile) {
             //    do nothing
         }
 
-        final void failed(String s) {
+        @Override
+        public final void failed(String s) {
             Assert.fail(s);
         }
 
-        final void exitCodesWere(int expected, int actual) {
+        @Override
+        public final void exitCodesWere(int expected, int actual) {
             Assert.assertEquals("Unexpected exit code", expected, actual);
         }
 
-        final void outputWas(String s) {
-            System.out.print(s);
+        @Override
+        public final void outputWas(String s) {
+            // Do nothing; we don't want to see the output when running JUnit 
+            // tests.
         }
 
-        final void threw(Throwable t) {
+        @Override
+        public final void threw(Throwable t) {
             Assert.fail(ShellTest.getStackTrace(t));
         }
 
-        final void timedOut() {
+        @Override
+        public final void timedOut() {
             failed("Timed out.");
         }
     }
 
-    private static final class JsTestCase extends TestCase
+    public static final class JsTestCase extends TestCase
     {
         private final File jsFile;
         private final int optimizationLevel;
@@ -180,13 +184,15 @@ public class StandardTests extends TestSuite
             this.optimizationLevel = optimizationLevel;
         }
 
+        @Override
         public int countTestCases()
         {
             return 1;
         }
 
-        private static class ShellTestParameters extends ShellTest.Parameters {
-            int getTimeoutMilliseconds() {
+        public static class ShellTestParameters extends ShellTest.Parameters {
+            @Override
+            public int getTimeoutMilliseconds() {
                 if (System.getProperty("mozilla.js.tests.timeout") != null) {
                     return Integer.parseInt(System.getProperty("mozilla.js.tests.timeout"));
                 }
@@ -194,11 +200,13 @@ public class StandardTests extends TestSuite
             }
         }
 
+        @Override
         public void runBare() throws Exception
         {
             final ShellContextFactory shellContextFactory = new ShellContextFactory();
             shellContextFactory.setOptimizationLevel(optimizationLevel);
-            ShellTest.run(shellContextFactory, jsFile, new ShellTestParameters(), new JunitStatus());
+            ShellTestParameters params = new ShellTestParameters();
+            ShellTest.run(shellContextFactory, jsFile, params, new JunitStatus());
         }
     }
 }

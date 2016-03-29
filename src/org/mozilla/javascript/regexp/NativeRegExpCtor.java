@@ -63,11 +63,13 @@ class NativeRegExpCtor extends BaseFunction
     {
     }
 
+    @Override
     public String getFunctionName()
     {
         return "RegExp";
     }
 
+    @Override
     public Object call(Context cx, Scriptable scope, Scriptable thisObj,
                        Object[] args)
     {
@@ -79,11 +81,12 @@ class NativeRegExpCtor extends BaseFunction
         return construct(cx, scope, args);
     }
 
+    @Override
     public Scriptable construct(Context cx, Scriptable scope, Object[] args)
     {
         NativeRegExp re = new NativeRegExp();
         re.compile(cx, scope, args);
-        ScriptRuntime.setObjectProtoAndParent(re, scope);
+        ScriptRuntime.setBuiltinProtoAndParent(re, scope, TopLevel.Builtins.RegExp);
         return re;
     }
 
@@ -129,11 +132,13 @@ class NativeRegExpCtor extends BaseFunction
 
         MAX_INSTANCE_ID = DOLLAR_ID_BASE + 9;
 
+    @Override
     protected int getMaxInstanceId()
     {
         return super.getMaxInstanceId() + MAX_INSTANCE_ID;
     }
 
+    @Override
     protected int findInstanceIdInfo(String s) {
         int id;
 // #generated# Last update: 2001-05-24 16:09:31 GMT+02:00
@@ -189,6 +194,7 @@ class NativeRegExpCtor extends BaseFunction
 
 // #/string_id_map#
 
+    @Override
     protected String getInstanceIdName(int id)
     {
         int shifted = id - super.getMaxInstanceId();
@@ -220,6 +226,7 @@ class NativeRegExpCtor extends BaseFunction
         return super.getInstanceIdName(id);
     }
 
+    @Override
     protected Object getInstanceIdValue(int id)
     {
         int shifted = id - super.getMaxInstanceId();
@@ -269,6 +276,7 @@ class NativeRegExpCtor extends BaseFunction
         return super.getInstanceIdValue(id);
     }
 
+    @Override
     protected void setInstanceIdValue(int id, Object value)
     {
         int shifted = id - super.getMaxInstanceId();
@@ -282,6 +290,21 @@ class NativeRegExpCtor extends BaseFunction
             case Id_UNDERSCORE:
                 getImpl().input = ScriptRuntime.toString(value);
                 return;
+
+            case Id_lastMatch:
+            case Id_AMPERSAND:
+            case Id_lastParen:
+            case Id_PLUS:
+            case Id_leftContext:
+            case Id_BACK_QUOTE:
+            case Id_rightContext:
+            case Id_QUOTE:
+                return;
+            default:
+                int substring_number = shifted - DOLLAR_ID_BASE - 1;
+                if (0 <= substring_number && substring_number <= 8) {
+                  return;
+                }
         }
         super.setInstanceIdValue(id, value);
     }

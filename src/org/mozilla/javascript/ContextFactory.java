@@ -40,6 +40,9 @@
 
 package org.mozilla.javascript;
 
+import java.security.AccessController;
+import java.security.PrivilegedAction;
+
 /**
  * Factory class that Rhino runtime uses to create new {@link Context}
  * instances.  A <code>ContextFactory</code> can also notify listeners
@@ -78,9 +81,6 @@ package org.mozilla.javascript;
  *     protected Context makeContext()
  *     {
  *         MyContext cx = new MyContext();
- *         // Use pure interpreter mode to allow for
- *         // {@link #observeInstructionCount(Context, int)} to work
- *         cx.setOptimizationLevel(-1);
  *         // Make Rhino runtime to call observeInstructionCount
  *         // each 10000 bytecode instructions
  *         cx.setInstructionObserverThreshold(10000);
@@ -121,7 +121,9 @@ package org.mozilla.javascript;
  *         }
  *     }
  *
- *     // Override {@link #doTopCall(Callable, Context, Scriptable scope, Scriptable thisObj, Object[] args)}
+ *     // Override {@link #doTopCall(Callable,
+                               Context, Scriptable,
+                               Scriptable, Object[])}
  *     protected Object doTopCall(Callable callable,
  *                                Context cx, Scriptable scope,
  *                                Scriptable thisObj, Object[] args)
@@ -198,7 +200,7 @@ public class ContextFactory
      * @see #getGlobal()
      * @see #hasExplicitGlobal()
      */
-    public static void initGlobal(ContextFactory factory)
+    public synchronized static void initGlobal(ContextFactory factory)
     {
         if (factory == null) {
             throw new IllegalArgumentException();
@@ -209,7 +211,28 @@ public class ContextFactory
         hasCustomGlobal = true;
         global = factory;
     }
-
+    
+    public interface GlobalSetter {
+        public void setContextFactoryGlobal(ContextFactory factory);
+        public ContextFactory getContextFactoryGlobal();
+    }
+    
+    public synchronized static GlobalSetter getGlobalSetter() {
+        if (hasCustomGlobal) {
+            throw new IllegalStateException();
+        }
+        hasCustomGlobal = true;
+        class GlobalSetterImpl implements GlobalSetter {
+            public void setContextFactoryGlobal(ContextFactory factory) {
+                global = factory == null ? new ContextFactory() : factory;
+            }
+            public ContextFactory getContextFactoryGlobal() {
+                return global;
+            }
+        }
+        return new GlobalSetterImpl();
+    }
+    
     /**
      * Create new {@link Context} instance to be associated with the current
      * thread.
@@ -221,7 +244,7 @@ public class ContextFactory
      */
     protected Context makeContext()
     {
-        return new Context();
+        return new Context(this);
     }
 
     /**
@@ -254,7 +277,7 @@ public class ContextFactory
             return false;
 
           case Context.FEATURE_RESERVED_KEYWORD_AS_IDENTIFIER:
-            return false;
+            return true;
 
           case Context.FEATURE_TO_STRING_AS_SOURCE:
             version = cx.getLanguageVersion();
@@ -276,62 +299,68 @@ public class ContextFactory
 
           case Context.FEATURE_STRICT_EVAL:
             return false;
-            
+
           case Context.FEATURE_LOCATION_INFORMATION_IN_ERROR:
             return false;
-            
+
           case Context.FEATURE_STRICT_MODE:
             return false;
-          
+
           case Context.FEATURE_WARNING_AS_ERROR:
+            return false;
+
+          case Context.FEATURE_ENHANCED_JAVA_ACCESS:
             return false;
         }
         // It is a bug to call the method with unknown featureIndex
         throw new IllegalArgumentException(String.valueOf(featureIndex));
     }
-	
-	private boolean isDom3Present() {
-		Class nodeClass = Kit.classOrNull("org.w3c.dom.Node");
-		if (nodeClass == null) return false;
-		//	Check to see whether DOM3 is present; use a new method defined in DOM3 that is vital to our implementation
-		try {
-			nodeClass.getMethod("getUserData", new Class[] { String.class });
-			return true;
-		} catch (NoSuchMethodException e) {
-			return false;
-		}
-	}
-	
-	/**
-		Provides a default {@link org.mozilla.javascript.xml.XMLLib.Factory XMLLib.Factory}
-		to be used by the <code>Context</code> instances produced by this factory.
-	 
-		See {@link Context#getE4xImplementationFactory} for details.
-	 */
-	protected org.mozilla.javascript.xml.XMLLib.Factory getE4xImplementationFactory() {
-		//	Must provide default implementation, rather than abstract method,
-		//	so that past implementors of ContextFactory do not fail at runtime
-		//	upon invocation of this method.
-		
-		//	Note that the default implementation "illegally" returns null if we
-		//	neither have XMLBeans nor a DOM3 implementation present.
-		//
-		//	TODO	More thinking about what to do in the failure scenario
-		
-		//	For now, if XMLBeans is in the classpath, it will be the default.
-		if (Kit.classOrNull("org.apache.xmlbeans.XmlCursor") != null) {
-			return org.mozilla.javascript.xml.XMLLib.Factory.create(
-				"org.mozilla.javascript.xml.impl.xmlbeans.XMLLibImpl"
-			);
-		} else if (isDom3Present()) {
-			return org.mozilla.javascript.xml.XMLLib.Factory.create(
-				"org.mozilla.javascript.xmlimpl.XMLLibImpl"
-			);
-		} else {
-			//	Uh-oh -- results if FEATURE_E4X is true are unknown.
-			return null;
-		}
-	}
+
+    private boolean isDom3Present() {
+        Class<?> nodeClass = Kit.classOrNull("org.w3c.dom.Node");
+        if (nodeClass == null) return false;
+        // Check to see whether DOM3 is present; use a new method defined in
+        // DOM3 that is vital to our implementation
+        try {
+            nodeClass.getMethod("getUserData", new Class<?>[] { String.class });
+            return true;
+        } catch (NoSuchMethodException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Provides a default
+     * {@link org.mozilla.javascript.xml.XMLLib.Factory XMLLib.Factory}
+     * to be used by the <code>Context</code> instances produced by this
+     * factory. See {@link Context#getE4xImplementationFactory} for details.
+     * 
+     * May return null, in which case E4X functionality is not supported in
+     * Rhino.
+     * 
+     * The default implementation now prefers the DOM3 E4X implementation.
+     */
+    protected org.mozilla.javascript.xml.XMLLib.Factory
+        getE4xImplementationFactory()
+    {
+        // Must provide default implementation, rather than abstract method,
+        // so that past implementors of ContextFactory do not fail at runtime
+        // upon invocation of this method.
+        // Note that the default implementation returns null if we
+        // neither have XMLBeans nor a DOM3 implementation present.
+
+        if (isDom3Present()) {
+            return org.mozilla.javascript.xml.XMLLib.Factory.create(
+                "org.mozilla.javascript.xmlimpl.XMLLibImpl"
+            );
+        } else if (Kit.classOrNull("org.apache.xmlbeans.XmlCursor") != null) {
+            return org.mozilla.javascript.xml.XMLLib.Factory.create(
+                "org.mozilla.javascript.xml.impl.xmlbeans.XMLLibImpl"
+            );
+        } else {
+            return null;
+        }
+    }
 
 
     /**
@@ -342,9 +371,13 @@ public class ContextFactory
      * is installed.
      * Application can override the method to provide custom class loading.
      */
-    protected GeneratedClassLoader createClassLoader(ClassLoader parent)
+    protected GeneratedClassLoader createClassLoader(final ClassLoader parent)
     {
-        return new DefiningClassLoader(parent);
+        return AccessController.doPrivileged(new PrivilegedAction<DefiningClassLoader>() {
+            public DefiningClassLoader run(){
+                return new DefiningClassLoader(parent);
+            }
+        });
     }
 
     /**
@@ -399,8 +432,7 @@ public class ContextFactory
      * This can be used to customize {@link Context} without introducing
      * additional subclasses.
      */
-    protected void observeInstructionCount(Context cx, int instructionCount)
-    {
+    protected void observeInstructionCount(Context cx, int instructionCount) {
     }
 
     protected void onContextCreated(Context cx)
@@ -448,7 +480,7 @@ public class ContextFactory
     }
 
     /**
-     * The method is used only to imlement
+     * The method is used only to implement
      * Context.disableStaticContextListening()
      */
     final void disableContextListening()
@@ -502,37 +534,85 @@ public class ContextFactory
     {
         return Context.call(this, action);
     }
+
+    /**
+     * Get a context associated with the current thread, creating one if need 
+     * be. The Context stores the execution state of the JavaScript engine, so 
+     * it is required that the context be entered before execution may begin. 
+     * Once a thread has entered a Context, then getCurrentContext() may be 
+     * called to find the context that is associated with the current thread.
+     * <p>
+     * Calling <code>enterContext()</code> will return either the Context 
+     * currently associated with the thread, or will create a new context and 
+     * associate it with the current thread. Each call to 
+     * <code>enterContext()</code> must have a matching call to 
+     * {@link Context#exit()}.
+     * <pre>
+     *      Context cx = contextFactory.enterContext();
+     *      try {
+     *          ...
+     *          cx.evaluateString(...);
+     *      } finally {
+     *          Context.exit();
+     *      }
+     * </pre>
+     * Instead of using <tt>enterContext()</tt>, <tt>exit()</tt> pair consider 
+     * using {@link #call(ContextAction)} which guarantees proper association 
+     * of Context instances with the current thread.
+     * With this method the above example becomes:
+     * <pre>
+     *      ContextFactory.call(new ContextAction() {
+     *          public Object run(Context cx) {
+     *              ...
+     *              cx.evaluateString(...);
+     *              return null;
+     *          }
+     *      });
+     * </pre>
+     * @return a Context associated with the current thread
+     * @see Context#getCurrentContext()
+     * @see Context#exit()
+     * @see #call(ContextAction)
+     */
+    public Context enterContext()
+    {
+        return enterContext(null);
+    }
     
     /**
-     * Same as {@link Context#enter()} with the difference that if a new context
-     * needs to be created, then this context factory is used to create it 
-     * instead of the global context factory.
+     * @deprecated use {@link #enterContext()} instead
      * @return a Context associated with the current thread
      */
     public final Context enter()
     {
-        return enter(null);
-    }
-    
-    /**
-     * Same as {@link Context#enter(Context)} with the difference that if a new 
-     * context needs to be created, then this context factory is used to create 
-     * it instead of the global context factory.
-     * @return a Context associated with the current thread
-     */
-    public final Context enter(Context cx)
-    {
-        return Context.enter(cx, this);
+        return enterContext(null);
     }
 
     /**
-     * Same as {@link Context#exit()}, although if you used {@link #enter()} or
-     * {@link #enter(Context)} methods on this object, you should use this exit
-     * method instead of the static one in {@link Context}. 
+     * @deprecated Use {@link Context#exit()} instead.
      */
     public final void exit()
     {
-        Context.exit(this);
+        Context.exit();
+    }
+
+    /**
+     * Get a Context associated with the current thread, using the given 
+     * Context if need be.
+     * <p>
+     * The same as <code>enterContext()</code> except that <code>cx</code>
+     * is associated with the current thread and returned if the current thread
+     * has no associated context and <code>cx</code> is not associated with any
+     * other thread.
+     * @param cx a Context to associate with the thread if possible
+     * @return a Context associated with the current thread
+     * @see #enterContext()
+     * @see #call(ContextAction)
+     * @throws IllegalStateException if <code>cx</code> is already associated
+     * with a different thread
+     */
+    public final Context enterContext(Context cx)
+    {
+        return Context.enter(cx, this);
     }
 }
-

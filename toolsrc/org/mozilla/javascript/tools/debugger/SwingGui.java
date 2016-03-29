@@ -45,10 +45,39 @@ import javax.swing.*;
 import javax.swing.text.*;
 import javax.swing.event.*;
 import javax.swing.table.*;
-import java.awt.*;
+import java.awt.EventQueue;
+import java.awt.ActiveEvent;
+import java.awt.AWTEvent;
+import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.Component;
+import java.awt.Container;
+import java.awt.Dimension;
+import java.awt.Event;
+import java.awt.Font;
+import java.awt.FontMetrics;
+import java.awt.Frame;
+import java.awt.Graphics;
+import java.awt.GridBagConstraints;
+import java.awt.GridBagLayout;
+import java.awt.GridLayout;
+import java.awt.MenuComponent;
+import java.awt.Point;
+import java.awt.Polygon;
+import java.awt.Rectangle;
+import java.awt.Toolkit;
 import java.awt.event.*;
 
-import java.util.*;
+import java.util.List;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.EventListener;
+import java.util.EventObject;
+import java.util.Map;
+import java.util.HashMap;
+import java.util.Properties;
 import java.io.*;
 import javax.swing.tree.DefaultTreeCellRenderer;
 import javax.swing.tree.TreePath;
@@ -59,9 +88,9 @@ import org.mozilla.javascript.SecurityUtilities;
 
 import org.mozilla.javascript.tools.shell.ConsoleTextArea;
 
-import org.mozilla.javascript.tools.debugger.downloaded.JTreeTable;
-import org.mozilla.javascript.tools.debugger.downloaded.TreeTableModel;
-import org.mozilla.javascript.tools.debugger.downloaded.TreeTableModelAdapter;
+import org.mozilla.javascript.tools.debugger.treetable.JTreeTable;
+import org.mozilla.javascript.tools.debugger.treetable.TreeTableModel;
+import org.mozilla.javascript.tools.debugger.treetable.TreeTableModelAdapter;
 
 /**
  * GUI for the Rhino debugger.
@@ -110,7 +139,8 @@ public class SwingGui extends JFrame implements GuiCallback {
     private JSInternalConsole console;
 
     /**
-     * The {@link JSplitPane} that separates {@link #desk} from {@link context}.
+     * The {@link JSplitPane} that separates {@link #desk} from
+     * {@link org.mozilla.javascript.Context}.
      */
     private JSplitPane split1;
 
@@ -122,12 +152,15 @@ public class SwingGui extends JFrame implements GuiCallback {
     /**
      * Hash table of internal frame names to the internal frames themselves.
      */
-    private Hashtable toplevels = new Hashtable();
+    private final Map<String,JFrame> toplevels = 
+        Collections.synchronizedMap(new HashMap<String,JFrame>());
 
     /**
      * Hash table of script URLs to their internal frames.
      */
-    private Hashtable fileWindows = new Hashtable();
+    private final Map<String,FileWindow> fileWindows = 
+        Collections.synchronizedMap(new HashMap<String,FileWindow>());
+
 
     /**
      * The {@link FileWindow} that last had the focus.
@@ -180,6 +213,7 @@ public class SwingGui extends JFrame implements GuiCallback {
     /**
      * Sets the visibility of the debugger GUI.
      */
+    @Override
     public void setVisible(boolean b) {
         super.setVisible(b);
         if (b) {
@@ -303,6 +337,7 @@ public class SwingGui extends JFrame implements GuiCallback {
 
         javax.swing.filechooser.FileFilter filter =
             new javax.swing.filechooser.FileFilter() {
+                    @Override
                     public boolean accept(File f) {
                         if (f.isDirectory()) {
                             return true;
@@ -318,12 +353,14 @@ public class SwingGui extends JFrame implements GuiCallback {
                         return false;
                     }
 
+                    @Override
                     public String getDescription() {
                         return "JavaScript Files (*.js)";
                     }
                 };
         dlg.addChoosableFileFilter(filter);
         addWindowListener(new WindowAdapter() {
+                @Override
                 public void windowClosing(WindowEvent e) {
                     exit();
                 }
@@ -347,7 +384,7 @@ public class SwingGui extends JFrame implements GuiCallback {
         if (url == null || url.equals("<stdin>")) {
             return null;
         }
-        return (FileWindow)fileWindows.get(url);
+        return fileWindows.get(url);
     }
 
     /**
@@ -594,14 +631,14 @@ public class SwingGui extends JFrame implements GuiCallback {
         Dim.ContextData contextData = lastFrame.contextData();
 
         JComboBox ctx = context.context;
-        Vector toolTips = context.toolTips;
+        List<String> toolTips = context.toolTips;
         context.disableUpdate();
         int frameCount = contextData.frameCount();
         ctx.removeAllItems();
         // workaround for JDK 1.4 bug that caches selected value even after
         // removeAllItems() is called
         ctx.setSelectedItem(null);
-        toolTips.removeAllElements();
+        toolTips.clear();
         for (int i = 0; i < frameCount; i++) {
             Dim.StackFrame frame = contextData.getFrame(i);
             String url = frame.getUrl();
@@ -613,7 +650,7 @@ public class SwingGui extends JFrame implements GuiCallback {
             String location = "\"" + shortName + "\", line " + lineNumber;
             ctx.insertItemAt(location, i);
             location = "\"" + url + "\", line " + lineNumber;
-            toolTips.addElement(location);
+            toolTips.add(location);
         }
         context.enableUpdate();
         ctx.setSelectedIndex(0);
@@ -693,10 +730,10 @@ public class SwingGui extends JFrame implements GuiCallback {
                 setExtendedState(Frame.NORMAL);
             }
             toFront();
-            context.enable();
+            context.setEnabled(true);
         } else {
             if (currentWindow != null) currentWindow.setPosition(-1);
-            context.disable();
+            context.setEnabled(false);
         }
     }
 
@@ -998,7 +1035,7 @@ class EvalTextArea
     /**
      * History of expressions that have been evaluated
      */
-    private Vector history;
+    private List<String> history;
 
     /**
      * Index of the selected history item.
@@ -1015,7 +1052,7 @@ class EvalTextArea
      */
     public EvalTextArea(SwingGui debugGui) {
         this.debugGui = debugGui;
-        history = new java.util.Vector();
+        history = Collections.synchronizedList(new ArrayList<String>());
         Document doc = getDocument();
         doc.addDocumentListener(this);
         addKeyListener(this);
@@ -1028,6 +1065,7 @@ class EvalTextArea
     /**
      * Selects a subrange of the text.
      */
+    @Override
     public void select(int start, int end) {
         //requestFocus();
         super.select(start, end);
@@ -1048,7 +1086,7 @@ class EvalTextArea
         String text = segment.toString();
         if (debugGui.dim.stringIsCompilableUnit(text)) {
             if (text.trim().length() > 0) {
-               history.addElement(text);
+               history.add(text);
                historyIndex = history.size();
             }
             append("\n");
@@ -1109,7 +1147,7 @@ class EvalTextArea
                     historyIndex = history.size() -1;
                 }
                 if (historyIndex >= 0) {
-                    String str = (String)history.elementAt(historyIndex);
+                    String str = history.get(historyIndex);
                     int len = getDocument().getLength();
                     replaceRange(str, outputMark, len);
                     int caretPos = outputMark + str.length();
@@ -1128,7 +1166,7 @@ class EvalTextArea
                 if (historyIndex < 0) {historyIndex = 0;}
                 int len = getDocument().getLength();
                 if (historyIndex < history.size()) {
-                    String str = (String)history.elementAt(historyIndex);
+                    String str = history.get(historyIndex);
                     replaceRange(str, outputMark, len);
                     caretPos = outputMark + str.length();
                 } else {
@@ -1190,7 +1228,7 @@ class EvalTextArea
     }
 
     /**
-     * Attempts to clean up the damange done by {@link #updateComponentTreeUI}.
+     * Attempts to clean up the damage done by {@link #updateUI()}.
      */
     public synchronized void postUpdateUI() {
         //requestFocus();
@@ -1238,6 +1276,7 @@ class EvalWindow extends JInternalFrame implements ActionListener {
     /**
      * Sets whether the text area is enabled.
      */
+    @Override
     public void setEnabled(boolean b) {
         super.setEnabled(b);
         evalTextArea.setEnabled(b);
@@ -1282,6 +1321,7 @@ class JSInternalConsole extends JInternalFrame implements ActionListener {
         setContentPane(scroller);
         pack();
         addInternalFrameListener(new InternalFrameAdapter() {
+                @Override
                 public void internalFrameActivated(InternalFrameEvent e) {
                     // hack
                     if (consoleTextArea.hasFocus()) {
@@ -1608,7 +1648,7 @@ class MoreWindows extends JDialog implements ActionListener {
     /**
      * Creates a new MoreWindows.
      */
-    MoreWindows(SwingGui frame, Hashtable fileWindows, String title,
+    MoreWindows(SwingGui frame, Map<String,FileWindow> fileWindows, String title,
                 String labelText) {
         super(frame, title, true);
         this.swingGui = frame;
@@ -1624,9 +1664,7 @@ class MoreWindows extends JDialog implements ActionListener {
         DefaultListModel model = (DefaultListModel)list.getModel();
         model.clear();
         //model.fireIntervalRemoved(model, 0, size);
-        Enumeration e = fileWindows.keys();
-        while (e.hasMoreElements()) {
-            String data = e.nextElement().toString();
+        for (String data: fileWindows.keySet()) {
             model.addElement(data);
         }
         list.setSelectedIndex(0);
@@ -1669,6 +1707,7 @@ class MoreWindows extends JDialog implements ActionListener {
         contentPane.add(buttonPane, BorderLayout.SOUTH);
         pack();
         addKeyListener(new KeyAdapter() {
+                @Override
                 public void keyPressed(KeyEvent ke) {
                     int code = ke.getKeyCode();
                     if (code == KeyEvent.VK_ESCAPE) {
@@ -1711,13 +1750,14 @@ class MoreWindows extends JDialog implements ActionListener {
      * MouseListener implementation for {@link #list}.
      */
     private class MouseHandler extends MouseAdapter {
+        @Override
         public void mouseClicked(MouseEvent e) {
             if (e.getClickCount() == 2) {
                 setButton.doClick();
             }
         }
-    };
-};
+    }
+}
 
 /**
  * Find function dialog.
@@ -1814,6 +1854,7 @@ class FindFunction extends JDialog implements ActionListener {
         contentPane.add(buttonPane, BorderLayout.SOUTH);
         pack();
         addKeyListener(new KeyAdapter() {
+                @Override
                 public void keyPressed(KeyEvent ke) {
                     int code = ke.getKeyCode();
                     if (code == KeyEvent.VK_ESCAPE) {
@@ -1869,12 +1910,13 @@ class FindFunction extends JDialog implements ActionListener {
      * MouseListener implementation for {@link #list}.
      */
     class MouseHandler extends MouseAdapter {
+        @Override
         public void mouseClicked(MouseEvent e) {
             if (e.getClickCount() == 2) {
                 setButton.doClick();
             }
         }
-    };
+    }
 }
 
 /**
@@ -1930,6 +1972,7 @@ class FileHeader extends JPanel implements MouseListener {
     /**
      * Paints the component.
      */
+    @Override
     public void paint(Graphics g) {
         super.paint(g);
         FileTextArea textArea = fileWindow.textArea;
@@ -2041,7 +2084,7 @@ class FileHeader extends JPanel implements MouseListener {
             }
         }
     }
-};
+}
 
 /**
  * An internal frame for script files.
@@ -2177,8 +2220,15 @@ class FileWindow extends JInternalFrame implements ActionListener {
      * Updates the tool tip contents.
      */
     private void updateToolTip() {
-        // in case fileName is very long, try to set tool tip on frame
-        Component c = getComponent(1);
+        // Try to set tool tip on frame. On Mac OS X 10.5,
+        // the number of components is different, so try to be safe.
+        int n = getComponentCount() - 1;
+        if (n > 1) {
+            n = 1;
+        } else if (n < 0) {
+            return;
+        }
+        Component c = getComponent(n);
         // this will work at least for Metal L&F
         if (c != null && c instanceof JComponent) {
             ((JComponent)c).setToolTipText(getUrl());
@@ -2231,6 +2281,7 @@ class FileWindow extends JInternalFrame implements ActionListener {
     /**
      * Disposes this FileWindow.
      */
+    @Override
     public void dispose() {
         debugGui.removeWindow(this);
         super.dispose();
@@ -2251,7 +2302,7 @@ class FileWindow extends JInternalFrame implements ActionListener {
             // textArea.paste();
         }
     }
-};
+}
 
 /**
  * Table model class for watched expressions.
@@ -2269,24 +2320,24 @@ class MyTableModel extends AbstractTableModel {
     private SwingGui debugGui;
 
     /**
-     * Vector of watched expressions.
+     * List of watched expressions.
      */
-    private Vector expressions;
+    private List<String> expressions;
 
     /**
-     * Vector of values from evaluated from {@link #expressions}.
+     * List of values from evaluated from {@link #expressions}.
      */
-    private Vector values;
+    private List<String> values;
 
     /**
      * Creates a new MyTableModel.
      */
     public MyTableModel(SwingGui debugGui) {
         this.debugGui = debugGui;
-        expressions = new Vector();
-        values = new Vector();
-        expressions.addElement("");
-        values.addElement("");
+        expressions = Collections.synchronizedList(new ArrayList<String>());
+        values = Collections.synchronizedList(new ArrayList<String>());
+        expressions.add("");
+        values.add("");
     }
 
     /**
@@ -2306,6 +2357,7 @@ class MyTableModel extends AbstractTableModel {
     /**
      * Returns the name of the given column.
      */
+    @Override
     public String getColumnName(int column) {
         switch (column) {
         case 0:
@@ -2319,6 +2371,7 @@ class MyTableModel extends AbstractTableModel {
     /**
      * Returns whether the given cell is editable.
      */
+    @Override
     public boolean isCellEditable(int row, int column) {
         return true;
     }
@@ -2329,9 +2382,9 @@ class MyTableModel extends AbstractTableModel {
     public Object getValueAt(int row, int column) {
         switch (column) {
         case 0:
-            return expressions.elementAt(row);
+            return expressions.get(row);
         case 1:
-            return values.elementAt(row);
+            return values.get(row);
         }
         return "";
     }
@@ -2339,21 +2392,22 @@ class MyTableModel extends AbstractTableModel {
     /**
      * Sets the value in the given cell.
      */
+    @Override
     public void setValueAt(Object value, int row, int column) {
         switch (column) {
         case 0:
             String expr = value.toString();
-            expressions.setElementAt(expr, row);
+            expressions.set(row, expr);
             String result = "";
             if (expr.length() > 0) {
                 result = debugGui.dim.eval(expr);
                 if (result == null) result = "";
             }
-            values.setElementAt(result, row);
+            values.set(row, result);
             updateModel();
             if (row + 1 == expressions.size()) {
-                expressions.addElement("");
-                values.addElement("");
+                expressions.add("");
+                values.add("");
                 fireTableRowsInserted(row + 1, row + 1);
             }
             break;
@@ -2368,8 +2422,7 @@ class MyTableModel extends AbstractTableModel {
      */
     void updateModel() {
         for (int i = 0; i < expressions.size(); ++i) {
-            Object value = expressions.elementAt(i);
-            String expr = value.toString();
+            String expr = expressions.get(i);
             String result = "";
             if (expr.length() > 0) {
                 result = debugGui.dim.eval(expr);
@@ -2378,7 +2431,7 @@ class MyTableModel extends AbstractTableModel {
                 result = "";
             }
             result = result.replace('\n', ' ');
-            values.setElementAt(result, i);
+            values.set(i, result);
         }
         fireTableDataChanged();
     }
@@ -2421,7 +2474,7 @@ class VariableModel implements TreeTableModel {
     /**
      * Tree column types.
      */
-    private static final Class[] cTypes =
+    private static final Class<?>[] cTypes =
         { TreeTableModel.class, String.class };
 
     /**
@@ -2559,7 +2612,7 @@ class VariableModel implements TreeTableModel {
     /**
      * Returns the type of value stored in the given column.
      */
-    public Class getColumnClass(int column) {
+    public Class<?> getColumnClass(int column) {
         return cTypes[column];
     }
 
@@ -2605,10 +2658,10 @@ class VariableModel implements TreeTableModel {
 
         Object value = getValue(node);
         Object[] ids = debugger.getObjectIds(value);
-        if (ids.length == 0) {
+        if (ids == null || ids.length == 0) {
             children = CHILDLESS;
         } else {
-            Arrays.sort(ids, new Comparator() {
+            Arrays.sort(ids, new Comparator<Object>() {
                     public int compare(Object l, Object r)
                     {
                         if (l instanceof String) {
@@ -2678,6 +2731,7 @@ class VariableModel implements TreeTableModel {
         /**
          * Returns a string representation of this node.
          */
+        @Override
         public String toString() {
             return id instanceof String
                 ? (String) id : "[" + ((Integer) id).intValue() + "]";
@@ -2814,7 +2868,7 @@ class ContextWindow extends JPanel implements ActionListener {
     /**
      * Tool tips for the stack frames.
      */
-    Vector toolTips;
+    List<String> toolTips;
 
     /**
      * Tabbed pane for "this" and "locals".
@@ -2880,7 +2934,7 @@ class ContextWindow extends JPanel implements ActionListener {
         JLabel label = new JLabel("Context:");
         context = new JComboBox();
         context.setLightWeightPopupEnabled(false);
-        toolTips = new java.util.Vector();
+        toolTips = Collections.synchronizedList(new java.util.ArrayList<String>());
         label.setBorder(context.getBorder());
         context.addActionListener(this);
         context.setActionCommand("ContextSwitch");
@@ -2983,6 +3037,7 @@ class ContextWindow extends JPanel implements ActionListener {
                                     frame.getListeners(WindowListener.class);
                                 frame.removeWindowListener((WindowListener)l[0]);
                                 frame.addWindowListener(new WindowAdapter() {
+                                        @Override
                                         public void windowClosing(WindowEvent e) {
                                             context.hidePopup();
                                             ((WindowListener)l[0]).windowClosing(e);
@@ -3078,29 +3133,19 @@ class ContextWindow extends JPanel implements ActionListener {
             });
         t1.addComponentListener(clistener);
         t2.addComponentListener(clistener);
-        disable();
+        setEnabled(false);
     }
 
     /**
-     * Disables the component.
+     * Enables or disables the component.
      */
-    public void disable() {
-        context.setEnabled(false);
-        thisTable.setEnabled(false);
-        localsTable.setEnabled(false);
-        evaluator.setEnabled(false);
-        cmdLine.setEnabled(false);
-    }
-
-    /**
-     * Enables the component.
-     */
-    public void enable() {
-        context.setEnabled(true);
-        thisTable.setEnabled(true);
-        localsTable.setEnabled(true);
-        evaluator.setEnabled(true);
-        cmdLine.setEnabled(true);
+    @Override
+    public void setEnabled(boolean enabled) {
+        context.setEnabled(enabled);
+        thisTable.setEnabled(enabled);
+        localsTable.setEnabled(enabled);
+        evaluator.setEnabled(enabled);
+        cmdLine.setEnabled(enabled);
     }
 
     /**
@@ -3128,7 +3173,7 @@ class ContextWindow extends JPanel implements ActionListener {
             Dim.ContextData contextData = debugGui.dim.currentContextData();
             if (contextData == null) { return; }
             int frameIndex = context.getSelectedIndex();
-            context.setToolTipText(toolTips.elementAt(frameIndex).toString());
+            context.setToolTipText(toolTips.get(frameIndex));
             int frameCount = contextData.frameCount();
             if (frameIndex >= frameCount) {
                 return;
@@ -3164,12 +3209,14 @@ class Menubar extends JMenuBar implements ActionListener {
     /**
      * Items that are enabled only when interrupted.
      */
-    private Vector interruptOnlyItems = new Vector();
+    private List<JMenuItem> interruptOnlyItems = 
+        Collections.synchronizedList(new ArrayList<JMenuItem>());
 
     /**
      * Items that are enabled only when running.
      */
-    private Vector runOnlyItems = new Vector();
+    private List<JMenuItem> runOnlyItems = 
+        Collections.synchronizedList(new ArrayList<JMenuItem>());
 
     /**
      * The debugger GUI.
@@ -3419,12 +3466,12 @@ class Menubar extends JMenuBar implements ActionListener {
      */
     public void updateEnabled(boolean interrupted) {
         for (int i = 0; i != interruptOnlyItems.size(); ++i) {
-            JMenuItem item = (JMenuItem)interruptOnlyItems.elementAt(i);
+            JMenuItem item = interruptOnlyItems.get(i);
             item.setEnabled(interrupted);
         }
 
         for (int i = 0; i != runOnlyItems.size(); ++i) {
-            JMenuItem item = (JMenuItem)runOnlyItems.elementAt(i);
+            JMenuItem item = runOnlyItems.get(i);
             item.setEnabled(!interrupted);
         }
     }

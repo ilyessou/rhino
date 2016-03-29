@@ -42,6 +42,7 @@ import java.io.*;
 import java.util.*;
 import org.mozilla.javascript.*;
 import org.mozilla.javascript.optimizer.ClassCompiler;
+import org.mozilla.javascript.tools.SourceReader;
 import org.mozilla.javascript.tools.ToolErrorReporter;
 
 /**
@@ -140,6 +141,10 @@ public class Main {
                 compiler.setMainMethodClass(args[i]);
                 continue;
             }
+            if (arg.equals("-encoding") && ++i < args.length) {
+                characterEncoding = args[i];
+                continue;
+            }
             if (arg.equals("-o") && ++i < args.length) {
                 String name = args[i];
                 int end = name.length();
@@ -165,6 +170,9 @@ public class Main {
                 }
                 targetName = name;
                 continue;
+            }
+            if (arg.equals("-observe-instruction-count")) {
+                compilerEnv.setGenerateObserverCount(true);
             }
             if (arg.equals("-package") && ++i < args.length) {
                 String pkg = args[i];
@@ -193,7 +201,7 @@ public class Main {
             }
             if (arg.equals("-extends") && ++i < args.length) {
                 String targetExtends = args[i];
-                Class superClass;
+                Class<?> superClass;
                 try {
                     superClass = Class.forName(targetExtends);
                 } catch (ClassNotFoundException e) {
@@ -207,17 +215,16 @@ public class Main {
                 String targetImplements = args[i];
                 StringTokenizer st = new StringTokenizer(targetImplements,
                                                          ",");
-                Vector v = new Vector();
+                List<Class<?>> list = new ArrayList<Class<?>>();
                 while (st.hasMoreTokens()) {
                     String className = st.nextToken();
                     try {
-                        v.addElement(Class.forName(className));
+                        list.add(Class.forName(className));
                     } catch (ClassNotFoundException e) {
                         throw new Error(e.toString()); // TODO: better error
                     }
                 }
-                Class[] implementsClasses = new Class[v.size()];
-                v.copyInto(implementsClasses);
+                Class<?>[] implementsClasses = list.toArray(new Class<?>[list.size()]);
                 compiler.setTargetImplements(implementsClasses);
                 continue;
             }
@@ -302,19 +309,16 @@ public class Main {
 
     private String readSource(File f)
     {
-        if (!f.exists()) {
-            addError("msg.jsfile.not.found", f.getAbsolutePath());
+        String absPath = f.getAbsolutePath();
+        if (!f.isFile()) {
+            addError("msg.jsfile.not.found", absPath);
             return null;
         }
         try {
-            Reader in = new FileReader(f);
-            try {
-                return Kit.readReader(in);
-            } finally {
-                in.close();
-            }
+            return (String)SourceReader.readFileOrUrl(absPath, true, 
+                    characterEncoding);
         } catch (FileNotFoundException ex) {
-            addError("msg.couldnt.open", f.getAbsolutePath());
+            addError("msg.couldnt.open", absPath);
         } catch (IOException ioe) {
             addFormatedError(ioe.toString());
         }
@@ -388,5 +392,6 @@ public class Main {
     private String targetName;
     private String targetPackage;
     private String destinationDir;
+    private String characterEncoding;
 }
 

@@ -41,6 +41,8 @@
 
 package org.mozilla.javascript;
 
+import org.mozilla.javascript.ast.FunctionNode;
+
 /**
  * The following class save decompilation information about the source.
  * Source information is returned from the parser as a String
@@ -590,6 +592,10 @@ public class Decompiler
                 result.append("var ");
                 break;
 
+            case Token.LET:
+              result.append("let ");
+              break;
+
             case Token.SEMI:
                 result.append(';');
                 if (Token.EOL != getNext(source, length, i)) {
@@ -747,6 +753,10 @@ public class Decompiler
             case Token.CONST:
                 result.append("const ");
                 break;
+                
+            case Token.YIELD:
+                result.append("yield ");
+                break;
             
             case Token.NOT:
                 result.append('!');
@@ -806,6 +816,10 @@ public class Decompiler
 
             case Token.XMLATTR:
                 result.append('@');
+                break;
+
+            case Token.DEBUGGER:
+                result.append("debugger;\n");
                 break;
 
             default:

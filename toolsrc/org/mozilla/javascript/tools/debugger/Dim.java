@@ -87,6 +87,11 @@ public class Dim {
     private ScopeProvider scopeProvider;
 
     /**
+     * The SourceProvider object that provides the source of evaluated scripts.
+     */
+    private SourceProvider sourceProvider;
+
+    /**
      * The index of the current stack frame.
      */
     private int frameIndex = -1;
@@ -158,17 +163,20 @@ public class Dim {
     /**
      * Table mapping URLs to information about the script source.
      */
-    private final Hashtable urlToSourceInfo = new Hashtable();
+    private final Map<String,SourceInfo> urlToSourceInfo = 
+        Collections.synchronizedMap(new HashMap<String,SourceInfo>());
 
     /**
      * Table mapping function names to information about the function.
      */
-    private final Hashtable functionNames = new Hashtable();
+    private final Map<String,FunctionSource> functionNames =
+        Collections.synchronizedMap(new HashMap<String,FunctionSource>());
 
     /**
      * Table mapping functions to information about the function.
      */
-    private final Hashtable functionToSource = new Hashtable();
+    private final Map<DebuggableScript,FunctionSource> functionToSource =
+        Collections.synchronizedMap(new HashMap<DebuggableScript,FunctionSource>());
 
     /**
      * ContextFactory.Listener instance attached to {@link #contextFactory}.
@@ -194,6 +202,13 @@ public class Dim {
      */
     public void setScopeProvider(ScopeProvider scopeProvider) {
         this.scopeProvider = scopeProvider;
+    }
+
+    /**
+     * Sets the ScopeProvider to be used.
+     */
+    public void setSourceProvider(final SourceProvider sourceProvider) {
+        this.sourceProvider = sourceProvider;
     }
 
     /**
@@ -349,10 +364,17 @@ public class Dim {
         }
         String url = getNormalizedUrl(topScript);
         DebuggableScript[] functions = getAllFunctions(topScript);
+        if (sourceProvider != null) {
+            final String providedSource = sourceProvider.getSource(topScript); 
+            if(providedSource != null) {
+                source = providedSource; 
+            }
+        }
+
         final SourceInfo sourceInfo = new SourceInfo(source, functions, url);
 
         synchronized (urlToSourceInfo) {
-            SourceInfo old = (SourceInfo)urlToSourceInfo.get(url);
+            SourceInfo old = urlToSourceInfo.get(url);
             if (old != null) {
                 sourceInfo.copyBreakpointsFrom(old);
             }
@@ -380,37 +402,30 @@ public class Dim {
      * Returns the FunctionSource object for the given function or script.
      */
     private FunctionSource functionSource(DebuggableScript fnOrScript) {
-        return (FunctionSource)functionToSource.get(fnOrScript);
+        return functionToSource.get(fnOrScript);
     }
 
     /**
      * Returns an array of all function names.
      */
     public String[] functionNames() {
-        String[] a;
         synchronized (urlToSourceInfo) {
-            Enumeration e = functionNames.keys();
-            a = new String[functionNames.size()];
-            int i = 0;
-            while (e.hasMoreElements()) {
-                a[i++] = (String)e.nextElement();
-            }
+            return functionNames.keySet().toArray(new String[functionNames.size()]);
         }
-        return a;
     }
 
     /**
      * Returns the FunctionSource object for the function with the given name.
      */
     public FunctionSource functionSourceByName(String functionName) {
-        return (FunctionSource)functionNames.get(functionName);
+        return functionNames.get(functionName);
     }
 
     /**
      * Returns the SourceInfo object for the given URL.
      */
     public SourceInfo sourceInfo(String url) {
-        return (SourceInfo)urlToSourceInfo.get(url);
+        return urlToSourceInfo.get(url);
     }
 
     /**
@@ -495,9 +510,7 @@ public class Dim {
      * Clears all breakpoints.
      */
     public void clearAllBreakpoints() {
-        Enumeration e = urlToSourceInfo.elements();
-        while (e.hasMoreElements()) {
-            SourceInfo si = (SourceInfo)e.nextElement();
+        for (SourceInfo si: urlToSourceInfo.values()) {
             si.removeAllBreakpoints();
         }
     }
@@ -1244,6 +1257,13 @@ interruptedCheck:
                 dim.handleBreakpointHit(this, cx);
             }
             contextData.popFrame();
+        }
+
+        /**
+         * Called when a 'debugger' statement is executed.
+         */
+        public void onDebuggerStatement(Context cx) {
+            dim.handleBreakpointHit(this, cx);
         }
 
         /**

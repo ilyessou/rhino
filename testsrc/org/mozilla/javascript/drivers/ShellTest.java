@@ -36,28 +36,42 @@
 
 package org.mozilla.javascript.drivers;
 
+import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileFilter;
+import java.io.InputStreamReader;
+import java.io.PrintStream;
+import java.util.ArrayList;
+
 import org.mozilla.javascript.*;
-import java.io.*;
-import java.util.*;
+import org.mozilla.javascript.tools.shell.Global;
+import org.mozilla.javascript.tools.shell.Main;
+import org.mozilla.javascript.tools.shell.ShellContextFactory;
 
-import org.mozilla.javascript.tools.shell.*;
-
-class ShellTest {
-    static final FileFilter DIRECTORY_FILTER = new FileFilter() {
+/**
+ * @version $Id: ShellTest.java,v 1.14 2011/03/29 15:17:49 hannes%helma.at Exp $
+ */
+public class ShellTest {
+    public static final FileFilter DIRECTORY_FILTER = new FileFilter() {
         public boolean accept(File pathname)
         {
             return pathname.isDirectory() && !pathname.getName().equals("CVS");
         }
     };
 
-    static final FileFilter TEST_FILTER = new FileFilter() {
+    public static final FileFilter TEST_FILTER = new FileFilter() {
         public boolean accept(File pathname)
         {
-            return pathname.getName().endsWith(".js") && !pathname.getName().equals("shell.js") && !pathname.getName().equals("browser.js") && !pathname.getName().equals("template.js");
+            return pathname.getName().endsWith(".js")
+                    && !pathname.getName().equals("shell.js")
+                    && !pathname.getName().equals("browser.js")
+                    && !pathname.getName().equals("template.js");
         }
     };
 
-    static String getStackTrace(Throwable t) {
+    public static String getStackTrace(Throwable t) {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         t.printStackTrace(new PrintStream(bytes));
         return new String(bytes.toByteArray());
@@ -78,18 +92,18 @@ class ShellTest {
         int exitCode = 0;
     }
 
-    static abstract class Status {
+    public static abstract class Status {
         private boolean negative;
 
-        final void setNegative() {
+        public final void setNegative() {
             this.negative = true;
         }
 
-        final boolean isNegative() {
+        public final boolean isNegative() {
             return this.negative;
         }
 
-        final void hadErrors(JsError[] errors) {
+        public final void hadErrors(JsError[] errors) {
             if (!negative && errors.length > 0) {
                 failed("JavaScript errors:\n" + JsError.toString(errors));
             } else if (negative && errors.length == 0) {
@@ -97,42 +111,56 @@ class ShellTest {
             }
         }
 
-        abstract void running(File jsFile);
+        public final void hadErrors(File jsFile, JsError[] errors) {
+            if (!negative && errors.length > 0) {
+                failed("JavaScript errors in " + jsFile + ":\n" + JsError.toString(errors));
+            } else if (negative && errors.length == 0) {
+                failed("Should have produced runtime error in " + jsFile + ".");
+            }
+        }
 
-        abstract void failed(String s);
-        abstract void threw(Throwable t);
-        abstract void timedOut();
-        abstract void exitCodesWere(int expected, int actual);
-        abstract void outputWas(String s);
+        public abstract void running(File jsFile);
+
+        public abstract void failed(String s);
+        public abstract void threw(Throwable t);
+        public abstract void timedOut();
+        public abstract void exitCodesWere(int expected, int actual);
+        public abstract void outputWas(String s);
 
         static Status compose(final Status[] array) {
             return new Status() {
-                void running(File file) {
+                @Override
+                public void running(File file) {
 					for (int i=0; i<array.length; i++) {
 						array[i].running(file);
 					}
                 }
-                void threw(Throwable t) {
+                @Override
+                public void threw(Throwable t) {
 					for (int i=0; i<array.length; i++) {
 						array[i].threw(t);
 					}
 				}
-                void failed(String s) {
+                @Override
+                public void failed(String s) {
 					for (int i=0; i<array.length; i++) {
 						array[i].failed(s);
 					}
                 }
-                void exitCodesWere(int expected, int actual) {
+                @Override
+                public void exitCodesWere(int expected, int actual) {
 					for (int i=0; i<array.length; i++) {
 						array[i].exitCodesWere(expected, actual);
 					}
                 }
-                void outputWas(String s) {
+                @Override
+                public void outputWas(String s) {
 					for (int i=0; i<array.length; i++) {
 						array[i].outputWas(s);
 					}
                 }
-                void timedOut() {
+                @Override
+                public void timedOut() {
 					for (int i=0; i<array.length; i++) {
 						array[i].timedOut();
 					}
@@ -166,8 +194,14 @@ class ShellTest {
                 this.lineOffset = lineOffset;
             }
 
+            @Override
             public String toString() {
-                String locationLine = sourceName + ":" + line + ": " + message;
+                String locationLine = "";
+                if (sourceName != null)
+                    locationLine += sourceName + ":";
+                if (line != 0)
+                    locationLine += line + ": ";
+                locationLine += message;
                 String sourceLine = this.lineSource;
                 String errCaret = null;
                 if (lineSource != null) {
@@ -219,7 +253,7 @@ class ShellTest {
 
     private static class ErrorReporterWrapper implements ErrorReporter {
         private ErrorReporter original;
-        private ArrayList errors = new ArrayList();
+        private ArrayList<Status.JsError> errors = new ArrayList<Status.JsError>();
 
         ErrorReporterWrapper(ErrorReporter original) {
             this.original = original;
@@ -242,20 +276,35 @@ class ShellTest {
         }
     }
 
-    static abstract class Parameters {
-        abstract int getTimeoutMilliseconds();
+    public static abstract class Parameters {
+        public abstract int getTimeoutMilliseconds();
+    }
+    
+    @SuppressWarnings(value={"deprecation"})
+    private static void callStop(Thread t) {
+        t.stop();
     }
 
-    static void run(final ShellContextFactory shellContextFactory, final File jsFile, final Parameters parameters, final Status status) throws Exception {
+    public static void run(final ShellContextFactory shellContextFactory,
+            final File jsFile, final Parameters parameters,
+            final Status status) throws Exception {
         final Global global = new Global();
         final ByteArrayOutputStream out = new ByteArrayOutputStream();
         final PrintStream p = new PrintStream(out);
         global.setOut(p);
         global.setErr(p);
+        global.defineFunctionProperties(
+                new String[] { "options" }, ShellTest.class,
+                ScriptableObject.DONTENUM | ScriptableObject.PERMANENT |
+                  ScriptableObject.READONLY);
+        // test suite expects keywords to be disallowed as identifiers
+        shellContextFactory.setAllowReservedKeywords(false);
         final TestState testState = new TestState();
         if (jsFile.getName().endsWith("-n.js")) {
             status.setNegative();
         }
+        final Throwable thrown[] = {null};
+
         Thread t = new Thread(new Runnable()
         {
             public void run()
@@ -275,15 +324,7 @@ class ShellTest {
                                 runFileIfExists(cx, global, new File(jsFile.getParentFile().getParentFile(), "shell.js"));
                                 runFileIfExists(cx, global, new File(jsFile.getParentFile(), "shell.js"));
                                 runFileIfExists(cx, global, jsFile);
-                                //    Emulate SpiderMonkey enum value from mozilla/js/src/js.c
-                                for (int i=0; i<testState.errors.errors.size(); i++) {
-                                    Status.JsError thisOne = (Status.JsError)testState.errors.errors.get(i);
-                                    if (thisOne.getMessage().indexOf("java.lang.OutOfMemoryError") != -1) {
-                                        testState.exitCode = 5;
-                                        testState.errors.errors.remove(thisOne);
-                                    }
-                                }
-                                status.hadErrors( (Status.JsError[])testState.errors.errors.toArray(new Status.JsError[0]) );
+                                status.hadErrors(jsFile, testState.errors.errors.toArray(new Status.JsError[0]));
                             } catch (ThreadDeath e) {
                             } catch (Throwable t) {
                                 status.threw(t);
@@ -291,22 +332,32 @@ class ShellTest {
                             return null;
                         }
                     });
-                } finally {
+                }
+                catch (Error t)
+                {
+                    thrown[0] = t;
+                }
+                catch (RuntimeException t)
+                {
+                    thrown[0] = t;
+                }
+                finally {
                     synchronized(testState)
                     {
                         testState.finished = true;
                     }
                 }
             }
-        });
+        }, jsFile.getPath());
+        t.setDaemon(true);
         t.start();
         t.join(parameters.getTimeoutMilliseconds());
         synchronized(testState)
         {
             if(!testState.finished)
             {
+                callStop(t);
                 status.timedOut();
-                t.stop();
             }
         }
         int expectedExitCode = 0;
@@ -332,10 +383,22 @@ class ShellTest {
                 expectedExitCode = s.charAt(expex + "EXPECT EXIT CODE ".length()) - '0';
             }
         }
+        if (thrown[0] != null)
+        {
+        	status.threw(thrown[0]);
+        }
         status.exitCodesWere(expectedExitCode, testState.exitCode);
         if(failures != "")
         {
             status.failed(failures);
         }
+    }
+
+    // Global function to mimic options() function in spidermonkey.
+    // It looks like this toggles jit compiler mode in spidermonkey
+    // when called with "jit" as argument. Our version is a no-op
+    // and returns an empty string.
+    public static String options() {
+        return "";
     }
 }

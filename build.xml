@@ -38,7 +38,8 @@
     Build file for Rhino using Ant (see http://jakarta.apache.org/ant/index.html)
     Requires Ant version 1.2 or later
 
-    Compilation currently requires JDK 1.4 or later
+    Compilation currently requires JDK 1.5 or later. Can cross-compile to
+    support JDK 1.4.
 -->
 
 <project name="Rhino" default="help" basedir=".">
@@ -80,6 +81,14 @@
     <ant antfile="deprecatedsrc/build.xml" target="compile"/>
   </target>
 
+  <target name="graph" depends="init">
+    <ant antfile="src/build.xml" target="graph"/>
+  </target> 
+
+  <target name="shell" depends="compile">
+    <ant antfile="src/build.xml" target="shell"/>
+  </target> 
+
   <target name="copy-source" depends="init">
     <ant antfile="src/build.xml" target="copy-source"/>
     <ant antfile="toolsrc/build.xml" target="copy-source"/>
@@ -89,6 +98,7 @@
     <copy todir="${dist.dir}" file="build.xml"/>
     <copy todir="${dist.dir}" file="build.properties"/>
     <copy todir="${dist.dir}" file="apiClasses.properties"/>
+    <copy todir="${dist.dir}" file="LICENSE.txt"/>
   </target>
 
   <target name="xmlimplsrc-compile" if="xmlimplsrc-present?">
@@ -104,16 +114,55 @@
   </target>
 
   <target name="jar" depends="compile-all">
-    <jar jarfile="${dist.dir}/${rhino.jar}"
+    <property name="jarfile" location="${dist.dir}/${rhino.jar}"/>
+    <jar jarfile="${jarfile}"
          basedir="${classes}"
          manifest="src/manifest"
-     compress="${jar-compression}"
+         compress="${jar-compression}"
      />
   </target>
 
-  <target name="smalljar" depends="compile">
+  <target name="console" depends="jar">
+    <property name="jarfile" location="${dist.dir}/${rhino.jar}"/>
+    <java jar="${jarfile}"
+          fork="true">
+      <arg line="-version 170"/>
+    </java>
+  </target>
 
-    <jar basedir="${classes}" destfile="${dist.dir}/${small-rhino.jar}"
+  <target name="retrotranslator" depends="retrotranslator-check,retrotranslator-download">
+    <taskdef name="retrotranslator" classpath="build/download/Retrotranslator-1.2.8-bin/retrotranslator-transformer-1.2.8.jar"
+      classname="net.sf.retrotranslator.transformer.RetrotranslatorTask"/>
+  </target>
+
+
+  <target name="retrotranslator-check">
+    <condition property="retrotranslator.available">
+      <and>
+        <available file="build/download/Retrotranslator-1.2.8-bin/retrotranslator-transformer-1.2.8.jar"/>
+        <available file="build/download/Retrotranslator-1.2.8-bin/retrotranslator-runtime-1.2.8.jar"/>
+        <available file="build/download/Retrotranslator-1.2.8-bin/backport-util-concurrent-3.1.jar"/>
+      </and>
+    </condition>
+  </target>
+
+  <target name="retrotranslator-download" unless="retrotranslator.available">
+    <mkdir dir="build/download"/>
+    <get src="http://downloads.sourceforge.net/retrotranslator/Retrotranslator-1.2.8-bin.zip" dest="build/download/Retrotranslator-1.2.8-bin.zip" usetimestamp="true"/>
+    <unzip src="build/download/Retrotranslator-1.2.8-bin.zip" dest="build/download"/>
+  </target>
+
+  <target name="retrojar" depends="jar,retrotranslator">
+    <retrotranslator
+      srcjar="${jarfile}"
+      destjar="${dist.dir}/${rhino-14.jar}"
+      embed="org.mozilla.javascript"
+    />
+  </target>
+
+  <target name="smalljar" depends="compile">
+    <property name="smalljarfile" location="${dist.dir}/${small-rhino.jar}"/>
+    <jar basedir="${classes}" destfile="${smalljarfile}"
          compress="${jar-compression}">
       <include name="org/mozilla/javascript/*.class"/>
 
@@ -133,6 +182,14 @@
                unless="no-regexp"/>
     </jar>
 
+  </target>
+
+  <target name="retrosmalljar" depends="smalljar,retrotranslator">
+    <retrotranslator
+      srcjar="${smalljarfile}"
+      destjar="${dist.dir}/${small-rhino-14.jar}"
+      embed="org.mozilla.javascript"
+    />
   </target>
 
   <target name="copy-examples" depends="init">
@@ -166,7 +223,23 @@
              windowtitle="${Name}" />
   </target>
 
-  <target name="dist" depends="deepclean,jar,copy-all,javadoc">
+  <target name="dev-javadoc" depends="init">
+    <mkdir dir="${dist.dir}/javadoc"/>
+    <javadoc sourcepath="src"
+             destdir="${dist.dir}/javadoc"
+             version="true"
+             package="true"
+             author="true"
+             windowtitle="${Name}">
+       <fileset
+         dir="."
+         includes="**/*.java"
+         excludes="**/deprecatedsrc/**/*.java,**/testsrc/**/*.java"
+       />
+    </javadoc>
+  </target>
+
+  <target name="dist" depends="deepclean,jar,retrojar,copy-all,javadoc">
     <delete file="${dist.file}" />
     <zip destfile="${dist.file}">
       <fileset dir="${build.dir}" includes="${dist.name}/**"/>
@@ -185,10 +258,14 @@
     </zip>
   </target>
 
+  <target name="compile-debugger">
+    <ant antfile="toolsrc/build.xml" target="compile-debugger"/>
+  </target>
+
   <target name="clean" depends="properties">
     <delete quiet="true" file="${dist.dir}/${rhino.jar}"/>
     <delete quiet="true" file="${dist.dir}/${small-rhino.jar}"/>
-    <delete quiet="true" dir="${classes}"/>
+    <delete quiet="true" dir="${build.dir}"/>
   </target>
 
   <target name="deepclean" depends="properties">
@@ -209,7 +286,7 @@
     IDEs that use Ant as the build system probably handle this fine.
   -->
   <target name="junit-all" depends="compile">
-    <ant antfile="testsrc/build.xml" target="junit"/>
+    <ant antfile="testsrc/build.xml" target="junit-coveragereport"/>
   </target>
 
   <!--
@@ -230,13 +307,29 @@
       <ant antfile="testsrc/build.xml" target="compile" />
   </target>
 
+  <target name="benchmark-v8-opt-1" depends="jar">
+    <property name="jarfile" location="${dist.dir}/${rhino.jar}"/>
+    <java jar="${jarfile}" dir="testsrc/benchmarks/v8" fork="true">
+      <jvmarg value="-Xmx256m"/>
+      <arg line="-opt -1 run.js"/>
+    </java>
+  </target>
+
+  <target name="benchmark-v8-opt0" depends="jar">
+    <property name="jarfile" location="${dist.dir}/${rhino.jar}"/>
+    <java jar="${jarfile}" dir="testsrc/benchmarks/v8" fork="true">
+      <jvmarg value="-Xmx256m"/>
+      <arg line="-opt 0 run.js"/>
+    </java>
+  </target>
+
   <target name="help" depends="properties">
 <echo>The following targets are available with this build file:
 
  clean       remove all compiled classes and copied property files
 
  compile     compile classes and copy all property files
-             into ${classes} directory 
+             into ${classes} directory
              excluding deprecated code
 
  compile-all compile all classes and copy all property files

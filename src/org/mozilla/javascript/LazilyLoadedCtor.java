@@ -40,6 +40,8 @@
 package org.mozilla.javascript;
 
 import java.lang.reflect.*;
+import java.security.AccessController;
+import java.security.PrivilegedAction;
 
 /**
  * Avoid loading classes unless they are used.
@@ -57,21 +59,29 @@ public final class LazilyLoadedCtor implements java.io.Serializable {
     private final String propertyName;
     private final String className;
     private final boolean sealed;
+    private final boolean privileged;
     private Object initializedValue;
     private int state;
 
-    public LazilyLoadedCtor(ScriptableObject scope, String propertyName,
-                            String className, boolean sealed)
+    public LazilyLoadedCtor(ScriptableObject scope, String propertyName, 
+            String className, boolean sealed)
+    {
+        this(scope, propertyName, className, sealed, false);
+    }
+
+    LazilyLoadedCtor(ScriptableObject scope, String propertyName,
+            String className, boolean sealed, boolean privileged)
     {
 
         this.scope = scope;
         this.propertyName = propertyName;
         this.className = className;
         this.sealed = sealed;
+        this.privileged = privileged;
         this.state = STATE_BEFORE_INIT;
 
         scope.addLazilyInitializedValue(propertyName, 0, this,
-                                        ScriptableObject.DONTENUM);
+                ScriptableObject.DONTENUM);
     }
 
     void init()
@@ -82,7 +92,7 @@ public final class LazilyLoadedCtor implements java.io.Serializable {
                     "Recursive initialization for "+propertyName);
             if (state == STATE_BEFORE_INIT) {
                 state = STATE_INITIALIZING;
-                // Set value now to have something to set in finaly block if
+                // Set value now to have something to set in finally block if
                 // buildValue throws.
                 Object value = Scriptable.NOT_FOUND;
                 try {
@@ -104,12 +114,33 @@ public final class LazilyLoadedCtor implements java.io.Serializable {
 
     private Object buildValue()
     {
-        Class cl = Kit.classOrNull(className);
+        if(privileged)
+        {
+            return AccessController.doPrivileged(new PrivilegedAction<Object>()
+            {
+                public Object run()
+                {
+                    return buildValue0();
+                }
+            });
+        }
+        else
+        {
+            return buildValue0();
+        }
+    }
+    
+    private Object buildValue0()
+    {
+        Class<? extends Scriptable> cl = cast(Kit.classOrNull(className));
         if (cl != null) {
             try {
                 Object value = ScriptableObject.buildClassCtor(scope, cl,
                                                                sealed, false);
-                if (value == null) {
+                if (value != null) {
+                    return value;
+                }
+                else {
                     // cl has own static initializer which is expected
                     // to set the property on its own.
                     value = scope.get(propertyName, scope);
@@ -128,6 +159,11 @@ public final class LazilyLoadedCtor implements java.io.Serializable {
             }
         }
         return Scriptable.NOT_FOUND;
+    }
+    
+    @SuppressWarnings({"unchecked"})
+    private Class<? extends Scriptable> cast(Class<?> cl) {
+        return (Class<? extends Scriptable>)cl;
     }
 
 }

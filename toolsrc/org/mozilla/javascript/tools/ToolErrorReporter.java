@@ -40,6 +40,7 @@
 package org.mozilla.javascript.tools;
 
 import org.mozilla.javascript.*;
+
 import java.text.MessageFormat;
 import java.io.*;
 import java.util.*;
@@ -84,7 +85,7 @@ public class ToolErrorReporter implements ErrorReporter {
         Context cx = Context.getCurrentContext();
         Locale locale = cx == null ? Locale.getDefault() : cx.getLocale();
 
-        // ResourceBundle does cacheing.
+        // ResourceBundle does caching.
         ResourceBundle rb = ResourceBundle.getBundle
             ("org.mozilla.javascript.tools.resources.Messages", locale);
 
@@ -111,6 +112,8 @@ public class ToolErrorReporter implements ErrorReporter {
             msg = getMessage("msg.uncaughtJSException", ex.details());
         } else if (ex instanceof EcmaError) {
             msg = getMessage("msg.uncaughtEcmaError", ex.details());
+        } else if (ex instanceof EvaluatorException) {
+            msg = ex.details();
         } else {
             msg = ex.toString();
         }
@@ -138,7 +141,6 @@ public class ToolErrorReporter implements ErrorReporter {
                                            int line, String lineSource,
                                            int lineOffset)
     {
-        error(message, sourceName, line, lineSource, lineOffset);
         return new EvaluatorException(message, sourceName, line,
                                       lineSource, lineOffset);
     }
@@ -172,7 +174,10 @@ public class ToolErrorReporter implements ErrorReporter {
             WrappedException we = (WrappedException)ex;
             we.printStackTrace(err);
         } else {
-            String msg = getExceptionMessage(ex);
+            String lineSeparator =
+                SecurityUtilities.getSystemProperty("line.separator");
+            String msg = getExceptionMessage(ex) + lineSeparator +
+                ex.getScriptStackTrace();
             reportErrorMessage(msg, ex.sourceName(), ex.lineNumber(),
                                ex.lineSource(), ex.columnNumber(), false);
         }
@@ -213,7 +218,7 @@ public class ToolErrorReporter implements ErrorReporter {
         return sb.toString();
     }
 
-    private final String messagePrefix = "js: ";
+    private final static String messagePrefix = "js: ";
     private boolean hasReportedErrorFlag;
     private boolean reportWarnings;
     private PrintStream err;

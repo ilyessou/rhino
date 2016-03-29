@@ -42,17 +42,15 @@ Requires Ant version 1.2
 
   <target name="properties">
     <property file="build.properties"/>
-    <property name="debugger"
-              value="org/mozilla/javascript/tools/debugger"/>
   </target>
 
   <target name="compile" depends="properties">
-    <ant dir="toolsrc/${debugger}" target="download"/>
     <javac srcdir="toolsrc"
            destdir="${classes}"
            includes="org/**/*.java"
            deprecation="on"
            debug="${debug}"
+           includeAntRuntime="false"
            target="${target-jvm}"
            source="${source-level}"
     >
@@ -66,8 +64,7 @@ Requires Ant version 1.2
     <mkdir dir="${dist.dir}/toolsrc"/>
     <copy todir="${dist.dir}/toolsrc">
       <fileset dir="toolsrc"
-               includes="**/*.java,**/*.properties,**/*.xml"
-               excludes="${debugger}/downloaded/**" />
+               includes="**/*.java,**/*.properties,**/*.xml" />
     </copy>
   </target>
 

@@ -48,8 +48,11 @@ public class ShellContextFactory extends ContextFactory
     private int languageVersion;
     private int optimizationLevel;
     private boolean generatingDebug;
+    private boolean allowReservedKeywords = true;
     private ErrorReporter errorReporter;
-
+    private String characterEncoding;
+    
+    @Override
     protected boolean hasFeature(Context cx, int featureIndex)
     {
         switch (featureIndex) {
@@ -58,12 +61,19 @@ public class ShellContextFactory extends ContextFactory
           case Context.FEATURE_STRICT_MODE:
             return strictMode;
 
+          case Context.FEATURE_RESERVED_KEYWORD_AS_IDENTIFIER:
+            return allowReservedKeywords;
+
           case Context.FEATURE_WARNING_AS_ERROR:
             return warningAsError;
+
+          case Context.FEATURE_LOCATION_INFORMATION_IN_ERROR:
+            return generatingDebug;
         }
         return super.hasFeature(cx, featureIndex);
     }
 
+    @Override
     protected void onContextCreated(Context cx)
     {
         cx.setLanguageVersion(languageVersion);
@@ -110,5 +120,19 @@ public class ShellContextFactory extends ContextFactory
     public void setGeneratingDebug(boolean generatingDebug)
     {
         this.generatingDebug = generatingDebug;
+    }
+    
+    public String getCharacterEncoding()
+    {
+        return characterEncoding;
+    }
+    
+    public void setCharacterEncoding(String characterEncoding)
+    {
+        this.characterEncoding = characterEncoding;
+    }
+
+    public void setAllowReservedKeywords(boolean allowReservedKeywords) {
+        this.allowReservedKeywords = allowReservedKeywords;
     }
 }

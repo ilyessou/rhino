@@ -1,4 +1,6 @@
-/* ***** BEGIN LICENSE BLOCK *****
+/* -*- Mode: java; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ *
+ * ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0
  *
  * The contents of this file are subject to the Mozilla Public License Version
@@ -37,6 +39,9 @@
 package org.mozilla.javascript.optimizer;
 
 import org.mozilla.javascript.*;
+import org.mozilla.javascript.ast.AstRoot;
+import org.mozilla.javascript.ast.FunctionNode;
+import org.mozilla.javascript.ast.ScriptNode;
 
 /**
  * Generates class files from script sources.
@@ -92,7 +97,7 @@ public class ClassCompiler
     /**
      * Get the class that the generated target will extend.
      */
-    public Class getTargetExtends()
+    public Class<?> getTargetExtends()
     {
         return targetExtends;
     }
@@ -102,7 +107,7 @@ public class ClassCompiler
      *
      * @param extendsClass the class it extends
      */
-    public void setTargetExtends(Class extendsClass)
+    public void setTargetExtends(Class<?> extendsClass)
     {
         targetExtends = extendsClass;
     }
@@ -110,7 +115,7 @@ public class ClassCompiler
     /**
      * Get the interfaces that the generated target will implement.
      */
-    public Class[] getTargetImplements()
+    public Class<?>[] getTargetImplements()
     {
         return targetImplements == null ? null : (Class[])targetImplements.clone();
     }
@@ -121,7 +126,7 @@ public class ClassCompiler
      * @param implementsClasses an array of Class objects, one for each
      *                          interface the target will extend
      */
-    public void setTargetImplements(Class[] implementsClasses)
+    public void setTargetImplements(Class<?>[] implementsClasses)
     {
         targetImplements = implementsClasses == null ? null : (Class[])implementsClasses.clone();
     }
@@ -148,8 +153,8 @@ public class ClassCompiler
      * specified interfaces.
      *
      * @return array where elements with even indexes specifies class name
-     *         and the followinf odd index gives class file body as byte[]
-     *         array. The initial elemnt of the array always holds
+     *         and the following odd index gives class file body as byte[]
+     *         array. The initial element of the array always holds
      *         mainClassName and array[1] holds its byte code.
      */
     public Object[] compileToClassFiles(String source,
@@ -157,12 +162,18 @@ public class ClassCompiler
                                         int lineno,
                                         String mainClassName)
     {
-        Parser p = new Parser(compilerEnv, compilerEnv.getErrorReporter());
-        ScriptOrFnNode tree = p.parse(source, sourceLocation, lineno);
-        String encodedSource = p.getEncodedSource();
+        Parser p = new Parser(compilerEnv);
+        AstRoot ast = p.parse(source, sourceLocation, lineno);
+        IRFactory irf = new IRFactory(compilerEnv);
+        ScriptNode tree = irf.transformTree(ast);
 
-        Class superClass = getTargetExtends();
-        Class[] interfaces = getTargetImplements();
+        // release reference to original parse tree & parser
+        irf = null;
+        ast = null;
+        p = null;
+
+        Class<?> superClass = getTargetExtends();
+        Class<?>[] interfaces = getTargetImplements();
         String scriptClassName;
         boolean isPrimary = (interfaces == null && superClass == null);
         if (isPrimary) {
@@ -175,7 +186,7 @@ public class ClassCompiler
         codegen.setMainMethodClass(mainMethodClassName);
         byte[] scriptClassBytes
             = codegen.compileToClassFile(compilerEnv, scriptClassName,
-                                         tree, encodedSource,
+                                         tree, tree.getEncodedSource(),
                                          false);
 
         if (isPrimary) {
@@ -185,7 +196,7 @@ public class ClassCompiler
         ObjToIntMap functionNames = new ObjToIntMap(functionCount);
         for (int i = 0; i != functionCount; ++i) {
             FunctionNode ofn = tree.getFunctionNode(i);
-            String name = ofn.getFunctionName();
+            String name = ofn.getName();
             if (name != null && name.length() != 0) {
                 functionNames.put(name, ofn.getParamCount());
             }
@@ -204,8 +215,8 @@ public class ClassCompiler
 
     private String mainMethodClassName;
     private CompilerEnvirons compilerEnv;
-    private Class targetExtends;
-    private Class[] targetImplements;
+    private Class<?> targetExtends;
+    private Class<?>[] targetImplements;
 
 }
 

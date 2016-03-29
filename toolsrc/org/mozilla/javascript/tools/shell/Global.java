@@ -46,7 +46,17 @@ package org.mozilla.javascript.tools.shell;
 import java.io.*;
 import java.net.*;
 import java.lang.reflect.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.regex.Pattern;
+import java.util.regex.Matcher;
 import org.mozilla.javascript.*;
+import org.mozilla.javascript.commonjs.module.Require;
+import org.mozilla.javascript.commonjs.module.RequireBuilder;
+import org.mozilla.javascript.commonjs.module.provider.SoftCachingModuleScriptProvider;
+import org.mozilla.javascript.commonjs.module.provider.UrlModuleSourceProvider;
 import org.mozilla.javascript.tools.ToolErrorReporter;
 import org.mozilla.javascript.serialize.*;
 
@@ -61,12 +71,15 @@ public class Global extends ImporterTopLevel
     static final long serialVersionUID = 4029130780977538005L;
 
     NativeArray history;
+    boolean attemptedJLineLoad;
     private InputStream inStream;
     private PrintStream outStream;
     private PrintStream errStream;
     private boolean sealedStdLib = false;
     boolean initialized;
     private QuitAction quitAction;
+    private String[] prompts = { "js> ", "  > " };
+    private HashMap<String,String> doctestCanonicalizations;
 
     public Global()
     {
@@ -75,6 +88,10 @@ public class Global extends ImporterTopLevel
     public Global(Context cx)
     {
         init(cx);
+    }
+
+    public boolean isInitialized() {
+        return initialized;
     }
 
     /**
@@ -109,6 +126,7 @@ public class Global extends ImporterTopLevel
         String[] names = {
             "defineClass",
             "deserialize",
+            "doctest",
             "gc",
             "help",
             "load",
@@ -137,7 +155,40 @@ public class Global extends ImporterTopLevel
 
         history = (NativeArray) cx.newArray(this, 0);
         defineProperty("history", history, ScriptableObject.DONTENUM);
+
         initialized = true;
+    }
+
+    public Require installRequire(Context cx, List<String> modulePath,
+                                  boolean sandboxed) {
+        RequireBuilder rb = new RequireBuilder();
+        rb.setSandboxed(sandboxed);
+        List<URI> uris = new ArrayList<URI>();
+        if (modulePath != null) {
+            for (String path : modulePath) {
+                try {
+                    URI uri = new URI(path);
+                    if (!uri.isAbsolute()) {
+                        // call resolve("") to canonify the path
+                        uri = new File(path).toURI().resolve("");
+                    }
+                    if (!uri.toString().endsWith("/")) {
+                        // make sure URI always terminates with slash to
+                        // avoid loading from unintended locations
+                        uri = new URI(uri + "/");
+                    }
+                    uris.add(uri);
+                } catch (URISyntaxException usx) {
+                    throw new RuntimeException(usx);
+                }
+            }
+        }
+        rb.setModuleScriptProvider(
+                new SoftCachingModuleScriptProvider(
+                        new UrlModuleSourceProvider(uris, null)));
+        Require require = rb.createRequire(cx, this);
+        require.install(this);
+        return require;
     }
 
     /**
@@ -245,13 +296,17 @@ public class Global extends ImporterTopLevel
      *            during execution of methods of the named class
      * @see org.mozilla.javascript.ScriptableObject#defineClass(Scriptable,Class)
      */
+    @SuppressWarnings({"unchecked"})
     public static void defineClass(Context cx, Scriptable thisObj,
                                    Object[] args, Function funObj)
         throws IllegalAccessException, InstantiationException,
                InvocationTargetException
     {
-        Class clazz = getClass(args);
-        ScriptableObject.defineClass(thisObj, clazz);
+        Class<?> clazz = getClass(args);
+        if (!Scriptable.class.isAssignableFrom(clazz)) {
+            throw reportRuntimeError("msg.must.implement.Scriptable");
+        }
+        ScriptableObject.defineClass(thisObj, (Class<? extends Scriptable>)clazz);
     }
 
     /**
@@ -272,7 +327,7 @@ public class Global extends ImporterTopLevel
                                  Object[] args, Function funObj)
         throws IllegalAccessException, InstantiationException
     {
-        Class clazz = getClass(args);
+        Class<?> clazz = getClass(args);
         if (!Script.class.isAssignableFrom(clazz)) {
             throw reportRuntimeError("msg.must.implement.Script");
         }
@@ -280,7 +335,7 @@ public class Global extends ImporterTopLevel
         script.exec(cx, thisObj);
     }
 
-    private static Class getClass(Object[] args) {
+    private static Class<?> getClass(Object[] args) {
         if (args.length == 0) {
             throw reportRuntimeError("msg.expected.string.arg");
         }
@@ -288,7 +343,7 @@ public class Global extends ImporterTopLevel
         if (arg0 instanceof Wrapper) {
             Object wrapped = ((Wrapper)arg0).unwrap();
             if (wrapped instanceof Class)
-                return (Class)wrapped;
+                return (Class<?>)wrapped;
         }
         String className = Context.toString(args[0]);
         try {
@@ -333,7 +388,173 @@ public class Global extends ImporterTopLevel
         in.close();
         return Context.toObject(deserialized, scope);
     }
-
+    
+    public String[] getPrompts(Context cx) {
+        if (ScriptableObject.hasProperty(this, "prompts")) {
+            Object promptsJS = ScriptableObject.getProperty(this,
+                                                            "prompts");
+            if (promptsJS instanceof Scriptable) {
+                Scriptable s = (Scriptable) promptsJS;
+                if (ScriptableObject.hasProperty(s, 0) &&
+                    ScriptableObject.hasProperty(s, 1))
+                {
+                    Object elem0 = ScriptableObject.getProperty(s, 0);
+                    if (elem0 instanceof Function) {
+                        elem0 = ((Function) elem0).call(cx, this, s,
+                                new Object[0]);
+                    }
+                    prompts[0] = Context.toString(elem0);
+                    Object elem1 = ScriptableObject.getProperty(s, 1);
+                    if (elem1 instanceof Function) {
+                        elem1 = ((Function) elem1).call(cx, this, s,
+                                new Object[0]);
+                    }
+                    prompts[1] = Context.toString(elem1);
+                }
+            }
+        }
+        return prompts;
+    }
+    
+    /**
+     * Example: doctest("js> function f() {\n  >   return 3;\n  > }\njs> f();\n3\n"); returns 2
+     * (since 2 tests were executed).
+     */
+    public static Object doctest(Context cx, Scriptable thisObj,
+                                 Object[] args, Function funObj)
+    {
+    	if (args.length == 0) {
+    		return Boolean.FALSE;
+    	}
+    	String session = Context.toString(args[0]);
+        Global global = getInstance(funObj);
+        return new Integer(global.runDoctest(cx, global, session, null, 0));
+    }
+    
+    public int runDoctest(Context cx, Scriptable scope, String session,
+                          String sourceName, int lineNumber)
+    {
+        doctestCanonicalizations = new HashMap<String,String>();
+        String[] lines = session.split("[\n\r]+");
+        String prompt0 = this.prompts[0].trim();
+        String prompt1 = this.prompts[1].trim();
+        int testCount = 0;
+        int i = 0;
+        while (i < lines.length && !lines[i].trim().startsWith(prompt0)) {
+            i++; // skip lines that don't look like shell sessions
+        }
+    	while (i < lines.length) {
+    		String inputString = lines[i].trim().substring(prompt0.length());
+            inputString += "\n";
+    		i++;
+    		while (i < lines.length && lines[i].trim().startsWith(prompt1)) {
+    			inputString += lines[i].trim().substring(prompt1.length());
+    			inputString += "\n";
+    			i++;
+    		}
+            String expectedString = "";
+            while (i < lines.length &&
+                   !lines[i].trim().startsWith(prompt0))
+            {
+                expectedString += lines[i] + "\n";
+                i++;
+            }
+    		PrintStream savedOut = this.getOut();
+    		PrintStream savedErr = this.getErr();
+    		ByteArrayOutputStream out = new ByteArrayOutputStream();
+    		ByteArrayOutputStream err = new ByteArrayOutputStream();
+    		this.setOut(new PrintStream(out));
+    		this.setErr(new PrintStream(err));
+    		String resultString = "";
+    		ErrorReporter savedErrorReporter = cx.getErrorReporter();
+    		cx.setErrorReporter(new ToolErrorReporter(false, this.getErr()));
+    		try {
+    		    testCount++;
+	    		Object result = cx.evaluateString(scope, inputString,
+	    				            "doctest input", 1, null);
+	            if (result != Context.getUndefinedValue() &&
+	                    !(result instanceof Function &&
+	                      inputString.trim().startsWith("function")))
+	            {
+	            	resultString = Context.toString(result);
+	            }
+    		} catch (RhinoException e) {
+                ToolErrorReporter.reportException(cx.getErrorReporter(), e);
+    		} finally {
+    		    this.setOut(savedOut);
+    		    this.setErr(savedErr);
+        		cx.setErrorReporter(savedErrorReporter);
+    			resultString += err.toString() + out.toString();
+    		}
+    		if (!doctestOutputMatches(expectedString, resultString)) {
+    		    String message = "doctest failure running:\n" +
+                    inputString +
+                    "expected: " + expectedString +
+                    "actual: " + resultString + "\n";
+    		    if (sourceName != null)
+                    throw Context.reportRuntimeError(message, sourceName,
+                            lineNumber+i-1, null, 0);
+    		    else
+                    throw Context.reportRuntimeError(message);
+    		}
+    	}
+    	return testCount;
+    }
+    
+    /**
+     * Compare actual result of doctest to expected, modulo some
+     * acceptable differences. Currently just trims the strings
+     * before comparing, but should ignore differences in line numbers
+     * for error messages for example.
+     * 
+     * @param expected the expected string
+     * @param actual the actual string
+     * @return true iff actual matches expected modulo some acceptable
+     *      differences 
+     */
+    private boolean doctestOutputMatches(String expected, String actual) {
+        expected = expected.trim();
+        actual = actual.trim().replace("\r\n", "\n");
+        if (expected.equals(actual))
+            return true;
+        for (Map.Entry<String,String> entry: doctestCanonicalizations.entrySet()) {
+            expected = expected.replace(entry.getKey(), entry.getValue());
+        }
+        if (expected.equals(actual))
+            return true;
+        // java.lang.Object.toString() prints out a unique hex number associated
+        // with each object. This number changes from run to run, so we want to
+        // ignore differences between these numbers in the output. We search for a
+        // regexp that matches the hex number preceded by '@', then enter mappings into
+        // "doctestCanonicalizations" so that we ensure that the mappings are
+        // consistent within a session.
+        Pattern p = Pattern.compile("@[0-9a-fA-F]+");
+        Matcher expectedMatcher = p.matcher(expected);
+        Matcher actualMatcher = p.matcher(actual);
+        for (;;) {
+            if (!expectedMatcher.find())
+                return false;
+            if (!actualMatcher.find())
+                return false;
+            if (actualMatcher.start() != expectedMatcher.start())
+                return false;
+            int start = expectedMatcher.start();
+            if (!expected.substring(0, start).equals(actual.substring(0, start)))
+                return false;
+            String expectedGroup = expectedMatcher.group();
+            String actualGroup = actualMatcher.group();
+            String mapping = doctestCanonicalizations.get(expectedGroup);
+            if (mapping == null) {
+                doctestCanonicalizations.put(expectedGroup, actualGroup);
+                expected = expected.replace(expectedGroup, actualGroup);
+            } else if (!actualGroup.equals(mapping)) {
+                return false; // wrong object!
+            }
+            if (expected.equals(actual))
+                return true;
+        }
+    }
+    
     /**
      * The spawn function runs a given function or script in a different
      * thread.
@@ -372,7 +593,8 @@ public class Global extends ImporterTopLevel
     /**
      * The sync function creates a synchronized function (in the sense
      * of a Java synchronized method) from an existing function. The
-     * new function synchronizes on the <code>this</code> object of
+     * new function synchronizes on the the second argument if it is
+     * defined, or otherwise the <code>this</code> object of
      * its invocation.
      * js> var o = { f : sync(function(x) {
      *       print("entry");
@@ -392,8 +614,12 @@ public class Global extends ImporterTopLevel
     public static Object sync(Context cx, Scriptable thisObj, Object[] args,
                               Function funObj)
     {
-        if (args.length == 1 && args[0] instanceof Function) {
-            return new Synchronizer((Function)args[0]);
+        if (args.length >= 1 && args.length <= 2 && args[0] instanceof Function) {
+            Object syncObject = null;
+            if (args.length == 2 && args[1] != Undefined.instance) {
+                syncObject = args[1];
+            }
+            return new Synchronizer((Function)args[0], syncObject);
         }
         else {
             throw reportRuntimeError("msg.sync.args");
@@ -415,10 +641,10 @@ public class Global extends ImporterTopLevel
      * JavaScript object, it is an option object. Otherwise it is converted to
      * string denoting the last argument and options objects assumed to be
      * empty.
-     * Te following properties of the option object are processed:
+     * The following properties of the option object are processed:
      * <ul>
      * <li><tt>args</tt> - provides an array of additional command arguments
-     * <li><tt>env</tt> - explicit environment object. All its enumeratable
+     * <li><tt>env</tt> - explicit environment object. All its enumerable
      *   properties define the corresponding environment variable names.
      * <li><tt>input</tt> - the process input. If it is not
      *   java.io.InputStream, it is converted to string and sent to the process
@@ -630,7 +856,7 @@ public class Global extends ImporterTopLevel
     }
 
     /**
-     * Convert the argumnet to int32 number.
+     * Convert the argument to int32 number.
      */
     public static Object toint32(Context cx, Scriptable thisObj, Object[] args,
                                  Function funObj)
@@ -642,6 +868,13 @@ public class Global extends ImporterTopLevel
     }
 
     public InputStream getIn() {
+        if (inStream == null && !attemptedJLineLoad) {
+            // Check if we can use JLine for better command line handling
+            InputStream jlineStream = ShellLine.getStream(this);
+            if (jlineStream != null)
+                inStream = jlineStream;
+            attemptedJLineLoad = true;
+        }
         return inStream == null ? System.in : inStream;
     }
 
@@ -680,9 +913,13 @@ public class Global extends ImporterTopLevel
     }
 
     /**
+     * Runs the given process using Runtime.exec().
      * If any of in, out, err is null, the corresponding process stream will
      * be closed immediately, otherwise it will be closed as soon as
      * all data will be read from/written to process
+     *
+     * @return Exit value of process.
+     * @throws IOException If there was an error executing the process.
      */
     private static int runProcess(String[] cmd, String[] environment,
                                   InputStream in, OutputStream out,
@@ -695,98 +932,53 @@ public class Global extends ImporterTopLevel
         } else {
             p = Runtime.getRuntime().exec(cmd, environment);
         }
-        PipeThread inThread = null, errThread = null;
+
         try {
-            InputStream errProcess = null;
-            try {
-                if (err != null) {
-                    errProcess = p.getErrorStream();
-                } else {
-                    p.getErrorStream().close();
-                }
-                InputStream outProcess = null;
+            PipeThread inThread = null;
+            if (in != null) {
+                inThread = new PipeThread(false, in, p.getOutputStream());
+                inThread.start();
+            } else {
+                p.getOutputStream().close();
+            }
+
+            PipeThread outThread = null;
+            if (out != null) {
+                outThread = new PipeThread(true, p.getInputStream(), out);
+                outThread.start();
+            } else {
+                p.getInputStream().close();
+            }
+
+            PipeThread errThread = null;
+            if (err != null) {
+                errThread = new PipeThread(true, p.getErrorStream(), err);
+                errThread.start();
+            } else {
+                p.getErrorStream().close();
+            }
+
+            // wait for process completion
+            for (;;) {
                 try {
-                    if (out != null) {
-                        outProcess = p.getInputStream();
-                    } else {
-                        p.getInputStream().close();
+                    p.waitFor();
+                    if (outThread != null) {
+                        outThread.join();
                     }
-                    OutputStream inProcess = null;
-                    try {
-                        if (in != null) {
-                            inProcess = p.getOutputStream();
-                        } else {
-                            p.getOutputStream().close();
-                        }
-
-                        if (out != null) {
-                            // Read process output on this thread
-                            if (err != null) {
-                                errThread = new PipeThread(true, errProcess,
-                                                           err);
-                                errThread.start();
-                            }
-                            if (in != null) {
-                                inThread = new PipeThread(false, in,
-                                                          inProcess);
-                                inThread.start();
-                            }
-                            pipe(true, outProcess, out);
-                        } else if (in != null) {
-                            // No output, read process input on this thread
-                            if (err != null) {
-                                errThread = new PipeThread(true, errProcess,
-                                                           err);
-                                errThread.start();
-                            }
-                            pipe(false, in, inProcess);
-                            in.close();
-                        } else if (err != null) {
-                            // No output or input, read process err
-                            // on this thread
-                            pipe(true, errProcess, err);
-                            errProcess.close();
-                            errProcess = null;
-                        }
-
-                        // wait for process completion
-                        for (;;) {
-                            try { p.waitFor(); break; }
-                            catch (InterruptedException ex) { }
-                        }
-
-                        return p.exitValue();
-                    } finally {
-                        // pipe will close stream as well, but for reliability
-                        // duplicate it in any case
-                        if (inProcess != null) {
-                            inProcess.close();
-                        }
+                    if (inThread != null) {
+                        inThread.join();
                     }
-                } finally {
-                    if (outProcess != null) {
-                        outProcess.close();
+                    if (errThread != null) {
+                        errThread.join();
                     }
-                }
-            } finally {
-                if (errProcess != null) {
-                    errProcess.close();
+                    break;
+                } catch (InterruptedException ignore) {
                 }
             }
+
+            return p.exitValue();
         } finally {
             p.destroy();
-            if (inThread != null) {
-                for (;;) {
-                    try { inThread.join(); break; }
-                    catch (InterruptedException ex) { }
-                }
-            }
-            if (errThread != null) {
-                for (;;) {
-                    try { errThread.join(); break; }
-                    catch (InterruptedException ex) { }
-                }
-            }
         }
     }
 
@@ -893,7 +1085,11 @@ public class Global extends ImporterTopLevel
                 }
             } else {
                 File f = new File(filePath);
-
+                if (!f.exists()) {
+                    throw new FileNotFoundException("File not found: " + filePath);
+                } else if (!f.canRead()) {
+                    throw new IOException("Cannot read file: " + filePath);
+                }
                 long length = f.length();
                 chunkLength = (int)length;
                 if (chunkLength != length)
@@ -1032,6 +1228,7 @@ class PipeThread extends Thread {
         this.to = to;
     }
 
+    @Override
     public void run() {
         try {
             Global.pipe(fromProcess, from, to);

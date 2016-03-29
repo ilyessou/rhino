@@ -147,7 +147,7 @@ public class NativeWith implements Scriptable, IdFunctionCall, Serializable {
         return prototype.getIds();
     }
 
-    public Object getDefaultValue(Class typeHint) {
+    public Object getDefaultValue(Class<?> typeHint) {
         return prototype.getDefaultValue(typeHint);
     }
 
@@ -190,14 +190,13 @@ public class NativeWith implements Scriptable, IdFunctionCall, Serializable {
         scope = ScriptableObject.getTopLevelScope(scope);
         NativeWith thisObj = new NativeWith();
         thisObj.setPrototype(args.length == 0
-                             ? ScriptableObject.getClassPrototype(scope,
-                                                                  "Object")
+                             ? ScriptableObject.getObjectPrototype(scope)
                              : ScriptRuntime.toObject(cx, scope, args[0]));
         thisObj.setParentScope(scope);
         return thisObj;
     }
 
-    private static final Object FTAG = new Object();
+    private static final Object FTAG = "With";
 
     private static final int
         Id_constructor = 1;

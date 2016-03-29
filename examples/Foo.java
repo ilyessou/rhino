@@ -79,6 +79,7 @@ import org.mozilla.javascript.*;
  */
 
 public class Foo extends ScriptableObject {
+    private static final long serialVersionUID = -3833489808933339159L;
 
     /**
      * The zero-parameter constructor.
@@ -106,6 +107,7 @@ public class Foo extends ScriptableObject {
     /**
      * Returns the name of this JavaScript class, "Foo".
      */
+    @Override
     public String getClassName() {
         return "Foo";
     }
@@ -143,8 +145,6 @@ public class Foo extends ScriptableObject {
      * @return computes the string values and types of 'this' and
      * of each of the supplied arguments and returns them in a string.
      *
-     * @exception ThreadAssociationException if the current
-     *            thread is not associated with a Context
      * @see org.mozilla.javascript.ScriptableObject#getTopLevelScope
      */
     public static Object jsFunction_varargs(Context cx, Scriptable thisObj,

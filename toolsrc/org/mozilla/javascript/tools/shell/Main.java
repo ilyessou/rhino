@@ -27,6 +27,7 @@
  *   Igor Bukanov
  *   Rob Ginda
  *   Kurt Westerfeld
+ *   Hannes Wallnoefer
  *
  * Alternatively, the contents of this file may be used under the terms of
  * the GNU General Public License Version 2 or later (the "GPL"), in which
@@ -42,12 +43,37 @@
 
 package org.mozilla.javascript.tools.shell;
 
-import java.io.*;
-import java.net.URL;
-import java.net.URLConnection;
-import java.net.MalformedURLException;
-import java.util.*;
-import org.mozilla.javascript.*;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.PrintStream;
+import java.io.UnsupportedEncodingException;
+import java.lang.ref.ReferenceQueue;
+import java.lang.ref.SoftReference;
+import java.lang.reflect.UndeclaredThrowableException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.mozilla.javascript.Context;
+import org.mozilla.javascript.ContextAction;
+import org.mozilla.javascript.EvaluatorException;
+import org.mozilla.javascript.Function;
+import org.mozilla.javascript.GeneratedClassLoader;
+import org.mozilla.javascript.Kit;
+import org.mozilla.javascript.NativeArray;
+import org.mozilla.javascript.RhinoException;
+import org.mozilla.javascript.Script;
+import org.mozilla.javascript.Scriptable;
+import org.mozilla.javascript.ScriptableObject;
+import org.mozilla.javascript.SecurityController;
+import org.mozilla.javascript.commonjs.module.Require;
+import org.mozilla.javascript.tools.SourceReader;
 import org.mozilla.javascript.tools.ToolErrorReporter;
 
 /**
@@ -60,17 +86,22 @@ import org.mozilla.javascript.tools.ToolErrorReporter;
  */
 public class Main
 {
-    public static final ShellContextFactory
+    public static ShellContextFactory
         shellContextFactory = new ShellContextFactory();
 
-    static protected final Global global = new Global();
+    public static Global global = new Global();
     static protected ToolErrorReporter errorReporter;
     static protected int exitCode = 0;
     static private final int EXITCODE_RUNTIME_ERROR = 3;
     static private final int EXITCODE_FILE_NOT_FOUND = 4;
     static boolean processStdin = true;
-    static Vector fileList = new Vector(5);
+    static List<String> fileList = new ArrayList<String>();
+    static List<String> modulePath;
+    static String mainModule;
+    static boolean sandboxed = false;
+    static Require require;
     private static SecurityProxy securityImpl;
+    private final static ScriptCache scriptCache = new ScriptCache(32);
 
     static {
         global.initQuitAction(new IProxy(IProxy.SYSTEM_EXIT));
@@ -96,6 +127,9 @@ public class Main
 
         public Object run(Context cx)
         {
+            if (modulePath != null || mainModule != null) {
+                require = global.installRequire(cx, modulePath, sandboxed);
+            }
             if (type == PROCESS_FILES) {
                 processFiles(cx, args);
             } else if (type == EVAL_INLINE_SCRIPT) {
@@ -151,8 +185,10 @@ public class Main
         errorReporter = new ToolErrorReporter(false, global.getErr());
         shellContextFactory.setErrorReporter(errorReporter);
         String[] args = processOptions(origArgs);
+        if (mainModule != null && !fileList.contains(mainModule))
+            fileList.add(mainModule);
         if (processStdin)
-            fileList.addElement(null);
+            fileList.add(null);
 
         if (!global.initialized) {
             global.init(shellContextFactory);
@@ -175,10 +211,9 @@ public class Main
         global.defineProperty("arguments", argsObj,
                               ScriptableObject.DONTENUM);
 
-        for (int i=0; i < fileList.size(); i++) {
-            processSource(cx, (String) fileList.elementAt(i));
+        for (String file: fileList) {
+            processSource(cx, file);
         }
-
     }
 
     public static Global getGlobal()
@@ -199,7 +234,7 @@ public class Main
             String arg = args[i];
             if (!arg.startsWith("-")) {
                 processStdin = false;
-                fileList.addElement(arg);
+                fileList.add(arg);
                 String[] result = new String[args.length - i - 1];
                 System.arraycopy(args, i+1, result, 0, args.length - i - 1);
                 return result;
@@ -245,8 +280,18 @@ public class Main
                 shellContextFactory.setOptimizationLevel(opt);
                 continue;
             }
+            if (arg.equals("-encoding")) {
+                if (++i == args.length) {
+                    usageError = arg;
+                    break goodUsage;
+                }
+                String enc = args[i];
+                shellContextFactory.setCharacterEncoding(enc);
+                continue;
+            }
             if (arg.equals("-strict")) {
                 shellContextFactory.setStrictMode(true);
+                shellContextFactory.setAllowReservedKeywords(false);
                 errorReporter.setIsReportingWarnings(true);
                 continue;
             }
@@ -268,6 +313,30 @@ public class Main
                 shellContextFactory.call(iproxy);
                 continue;
             }
+            if (arg.equals("-modules")) {
+                if (++i == args.length) {
+                    usageError = arg;
+                    break goodUsage;
+                }
+                if (modulePath == null) {
+                    modulePath = new ArrayList<String>();
+                }
+                modulePath.add(args[i]);
+                continue;
+            }
+            if (arg.equals("-main")) {
+                if (++i == args.length) {
+                    usageError = arg;
+                    break goodUsage;
+                }
+                mainModule = args[i];
+                processStdin = false;
+                continue;
+            }
+            if (arg.equals("-sandbox")) {
+                sandboxed = true;
+                continue;
+            }
             if (arg.equals("-w")) {
                 errorReporter.setIsReportingWarnings(true);
                 continue;
@@ -278,7 +347,7 @@ public class Main
                     usageError = arg;
                     break goodUsage;
                 }
-                fileList.addElement(args[i].equals("-") ? null : args[i]);
+                fileList.add(args[i].equals("-") ? null : args[i]);
                 continue;
             }
             if (arg.equals("-sealedlib")) {
@@ -312,7 +381,7 @@ public class Main
     {
         Throwable exObj;
         try {
-            Class cl = Class.forName
+            Class<?> cl = Class.forName
                 ("org.mozilla.javascript.tools.shell.JavaPolicySecurity");
             securityImpl = (SecurityProxy)cl.newInstance();
             SecurityController.initGlobal(securityImpl);
@@ -346,16 +415,27 @@ public class Main
                 ps.println(cx.getImplementationVersion());
             }
 
-            // Use the interpreter for interactive input
-            cx.setOptimizationLevel(-1);
-
-            BufferedReader in = new BufferedReader
-                (new InputStreamReader(global.getIn()));
+            String charEnc = shellContextFactory.getCharacterEncoding();
+            if(charEnc == null)
+            {
+                charEnc = System.getProperty("file.encoding");
+            }
+            BufferedReader in;
+            try
+            {
+                in = new BufferedReader(new InputStreamReader(global.getIn(), 
+                        charEnc));
+            }
+            catch(UnsupportedEncodingException e)
+            {
+                throw new UndeclaredThrowableException(e);
+            }
             int lineno = 1;
             boolean hitEOF = false;
             while (!hitEOF) {
+            	String[] prompts = global.getPrompts(cx);
                 if (filename == null)
-                    ps.print("js> ");
+                    ps.print(prompts[0]);
                 ps.flush();
                 String source = "";
 
@@ -377,6 +457,7 @@ public class Main
                     lineno++;
                     if (cx.stringIsCompilableUnit(source))
                         break;
+                    ps.print(prompts[1]);
                 }
                 Script script = loadScriptFromSource(cx, source, "<stdin>",
                                                      lineno, null);
@@ -399,10 +480,24 @@ public class Main
                 }
             }
             ps.println();
+        } else if (filename.equals(mainModule)) {
+            try {
+                require.requireMain(cx, filename);
+            } catch (RhinoException rex) {
+                ToolErrorReporter.reportException(
+                        cx.getErrorReporter(), rex);
+                exitCode = EXITCODE_RUNTIME_ERROR;
+            } catch (VirtualMachineError ex) {
+                // Treat StackOverflow and OutOfMemory as runtime errors
+                ex.printStackTrace();
+                String msg = ToolErrorReporter.getMessage(
+                        "msg.uncaughtJSException", ex.toString());
+                exitCode = EXITCODE_RUNTIME_ERROR;
+                Context.reportError(msg);
+            }
         } else {
             processFile(cx, global, filename);
         }
-        System.gc();
     }
 
     public static void processFile(Context cx, Scriptable scope,
@@ -416,32 +511,43 @@ public class Main
     }
 
     static void processFileSecure(Context cx, Scriptable scope,
-                                  String path, Object securityDomain)
-    {
-        Script script;
-        if (path.endsWith(".class")) {
-            script = loadCompiledScript(cx, path, securityDomain);
-        } else {
-            String source = (String)readFileOrUrl(path, true);
-            if (source == null) {
-                exitCode = EXITCODE_FILE_NOT_FOUND;
-                return;
-            }
+                                  String path, Object securityDomain) {
 
-            // Support the executable script #! syntax:  If
-            // the first line begins with a '#', treat the whole
-            // line as a comment.
-            if (source.length() > 0 && source.charAt(0) == '#') {
-                for (int i = 1; i != source.length(); ++i) {
-                    int c = source.charAt(i);
-                    if (c == '\n' || c == '\r') {
-                        source = source.substring(i);
-                        break;
+        boolean isClass = path.endsWith(".class");
+        Object source = readFileOrUrl(path, !isClass);
+
+        if (source == null) {
+            exitCode = EXITCODE_FILE_NOT_FOUND;
+            return;
+        }
+
+        byte[] digest = getDigest(source);
+        String key = path + "_" + cx.getOptimizationLevel();
+        ScriptReference ref = scriptCache.get(key, digest);
+        Script script = ref != null ? ref.get() : null;
+
+        if (script == null) {
+            if (isClass) {
+                script = loadCompiledScript(cx, path, (byte[])source, securityDomain);
+            } else {
+                String strSrc = (String) source;
+                // Support the executable script #! syntax:  If
+                // the first line begins with a '#', treat the whole
+                // line as a comment.
+                if (strSrc.length() > 0 && strSrc.charAt(0) == '#') {
+                    for (int i = 1; i != strSrc.length(); ++i) {
+                        int c = strSrc.charAt(i);
+                        if (c == '\n' || c == '\r') {
+                            strSrc = strSrc.substring(i);
+                            break;
+                        }
                     }
                 }
+                script = loadScriptFromSource(cx, strSrc, path, 1, securityDomain);
             }
-            script = loadScriptFromSource(cx, source, path, 1, securityDomain);
+            scriptCache.put(key, digest, script);
         }
+
         if (script != null) {
             evaluateScript(script, cx, scope);
         }
@@ -472,10 +578,34 @@ public class Main
         return null;
     }
 
+    private static byte[] getDigest(Object source) {
+        byte[] bytes, digest = null;
+
+        if (source != null) {
+            if (source instanceof String) {
+                try {
+                    bytes = ((String)source).getBytes("UTF-8");
+                } catch (UnsupportedEncodingException ue) {
+                    bytes = ((String)source).getBytes();
+                }
+            } else {
+                bytes = (byte[])source;
+            }
+            try {
+                MessageDigest md = MessageDigest.getInstance("MD5");
+                digest = md.digest(bytes);
+            } catch (NoSuchAlgorithmException nsa) {
+                // Should not happen
+                throw new RuntimeException(nsa);
+            }
+        }
+
+        return digest;
+    }
+
     private static Script loadCompiledScript(Context cx, String path,
-                                             Object securityDomain)
+                                             byte[] data, Object securityDomain)
     {
-        byte[] data = (byte[])readFileOrUrl(path, false);
         if (data == null) {
             exitCode = EXITCODE_FILE_NOT_FOUND;
             return null;
@@ -497,7 +627,7 @@ public class Main
         String name = path.substring(nameStart, nameEnd);
         try {
             GeneratedClassLoader loader = SecurityController.createLoader(cx.getApplicationClassLoader(), securityDomain);
-            Class clazz = loader.defineClass(name, data);
+            Class<?> clazz = loader.defineClass(name, data);
             loader.linkClass(clazz);
             if (!Script.class.isAssignableFrom(clazz)) {
                 throw Context.reportRuntimeError("msg.must.implement.Script");
@@ -568,69 +698,59 @@ public class Main
      */
     private static Object readFileOrUrl(String path, boolean convertToString)
     {
-        URL url = null;
-        // Assume path is URL if it contains dot and there are at least
-        // 2 characters in the protocol part. The later allows under Windows
-        // to interpret paths with driver letter as file, not URL.
-        if (path.indexOf(':') >= 2) {
-            try {
-                url = new URL(path);
-            } catch (MalformedURLException ex) {
-            }
-        }
-
-        InputStream is = null;
-        int capacityHint = 0;
-        if (url == null) {
-            File file = new File(path);
-            capacityHint = (int)file.length();
-            try {
-                is = new FileInputStream(file);
-            } catch (IOException ex) {
-                Context.reportError(ToolErrorReporter.getMessage(
-                    "msg.couldnt.open", path));
-                return null;
-            }
-        } else {
-            try {
-                URLConnection uc = url.openConnection();
-                is = uc.getInputStream();
-                capacityHint = uc.getContentLength();
-                // Ignore insane values for Content-Length
-                if (capacityHint > (1 << 20)) {
-                    capacityHint = -1;
-                }
-            } catch (IOException ex) {
-                Context.reportError(ToolErrorReporter.getMessage(
-                    "msg.couldnt.open.url", url.toString(), ex.toString()));
-                return null;
-            }
-        }
-        if (capacityHint <= 0) {
-            capacityHint = 4096;
-        }
-
-        byte[] data;
         try {
-            try {
-                data = Kit.readStream(is, capacityHint);
-            } finally {
-                is.close();
-            }
+            return SourceReader.readFileOrUrl(path, convertToString, 
+                    shellContextFactory.getCharacterEncoding());
         } catch (IOException ex) {
-            Context.reportError(ex.toString());
+            Context.reportError(ToolErrorReporter.getMessage(
+                    "msg.couldnt.read.source", path, ex.getMessage()));
             return null;
         }
-
-        Object result;
-        if (!convertToString) {
-            result = data;
-        } else {
-            // Convert to String using the default encoding
-            // XXX: Use 'charset=' argument of Content-Type if URL?
-            result = new String(data);
-        }
-        return result;
     }
 
+    static class ScriptReference extends SoftReference<Script> {
+        String path;
+        byte[] digest;
+
+        ScriptReference(String path, byte[] digest,
+                        Script script, ReferenceQueue<Script> queue) {
+            super(script, queue);
+            this.path = path;
+            this.digest = digest;
+        }
+    }
+
+    static class ScriptCache extends LinkedHashMap<String, ScriptReference> {
+        ReferenceQueue<Script> queue;
+        int capacity;
+
+        ScriptCache(int capacity) {
+            super(capacity + 1, 2f, true);
+            this.capacity = capacity;
+            queue = new ReferenceQueue<Script>();
+        }
+
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, ScriptReference> eldest) {
+            return size() > capacity;
+        }
+
+        ScriptReference get(String path, byte[] digest) {
+            ScriptReference ref;
+            while((ref = (ScriptReference) queue.poll()) != null) {
+                remove(ref.path);
+            }
+            ref = get(path);
+            if (ref != null && !Arrays.equals(digest, ref.digest)) {
+                remove(ref.path);
+                ref = null;
+            }
+            return ref;
+        }
+
+        void put(String path, byte[] digest, Script script) {
+            put(path, new ScriptReference(path, digest, script, queue));
+        }
+
+    }
 }

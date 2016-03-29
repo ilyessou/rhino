@@ -43,6 +43,9 @@ package org.mozilla.javascript;
 import java.io.Serializable;
 
 import org.mozilla.javascript.xml.XMLLib;
+import static org.mozilla.javascript.ScriptableObject.DONTENUM;
+import static org.mozilla.javascript.ScriptableObject.READONLY;
+import static org.mozilla.javascript.ScriptableObject.PERMANENT;
 
 /**
  * This class implements the global native object (function and value
@@ -117,26 +120,26 @@ public class NativeGlobal implements Serializable, IdFunctionCall
 
         ScriptableObject.defineProperty(
             scope, "NaN", ScriptRuntime.NaNobj,
-            ScriptableObject.DONTENUM);
+            READONLY|DONTENUM|PERMANENT);
         ScriptableObject.defineProperty(
             scope, "Infinity",
             ScriptRuntime.wrapNumber(Double.POSITIVE_INFINITY),
-            ScriptableObject.DONTENUM);
+            READONLY|DONTENUM|PERMANENT);
         ScriptableObject.defineProperty(
             scope, "undefined", Undefined.instance,
-            ScriptableObject.DONTENUM);
+            READONLY|DONTENUM|PERMANENT);
 
-        String[] errorMethods = Kit.semicolonSplit(""
-                                    +"ConversionError;"
-                                    +"EvalError;"
-                                    +"RangeError;"
-                                    +"ReferenceError;"
-                                    +"SyntaxError;"
-                                    +"TypeError;"
-                                    +"URIError;"
-                                    +"InternalError;"
-                                    +"JavaException;"
-                                    );
+        String[] errorMethods = {
+                "ConversionError",
+                "EvalError",
+                "RangeError",
+                "ReferenceError",
+                "SyntaxError",
+                "TypeError",
+                "URIError",
+                "InternalError",
+                "JavaException"
+        };
 
         /*
             Each error constructor gets its own Error object as a prototype,
@@ -144,20 +147,19 @@ public class NativeGlobal implements Serializable, IdFunctionCall
         */
         for (int i = 0; i < errorMethods.length; i++) {
             String name = errorMethods[i];
-            Scriptable errorProto = ScriptRuntime.
-                                        newObject(cx, scope, "Error",
+            ScriptableObject errorProto = 
+              (ScriptableObject) ScriptRuntime.newObject(cx, scope, "Error",
                                                   ScriptRuntime.emptyArgs);
             errorProto.put("name", errorProto, name);
-            if (sealed) {
-                if (errorProto instanceof ScriptableObject) {
-                    ((ScriptableObject)errorProto).sealObject();
-                }
-            }
+            errorProto.put("message", errorProto, "");
             IdFunctionObject ctor = new IdFunctionObject(obj, FTAG,
                                                          Id_new_CommonError,
                                                          name, 1, scope);
             ctor.markAsConstructor(errorProto);
+            errorProto.put("constructor", errorProto, ctor);
+            errorProto.setAttributes("constructor", ScriptableObject.DONTENUM);
             if (sealed) {
+                errorProto.sealObject();
                 ctor.sealObject();
             }
             ctor.exportAsScopeProperty();
@@ -261,7 +263,7 @@ public class NativeGlobal implements Serializable, IdFunctionCall
         char c;
         do {
             c = s.charAt(start);
-            if (!Character.isWhitespace(c))
+            if (!ScriptRuntime.isStrWhiteSpaceChar(c))
                 break;
             start++;
         } while (start < len);
@@ -318,7 +320,7 @@ public class NativeGlobal implements Serializable, IdFunctionCall
                 return ScriptRuntime.NaNobj;
             }
             c = s.charAt(start);
-            if (!TokenStream.isJSSpace(c)) {
+            if (!ScriptRuntime.isStrWhiteSpaceChar(c)) {
                 break;
             }
             ++start;
@@ -350,6 +352,7 @@ public class NativeGlobal implements Serializable, IdFunctionCall
         // Find the end of the legal bit
         int decimal = -1;
         int exponent = -1;
+        boolean exponentValid = false;
         for (; i < len; i++) {
             switch (s.charAt(i)) {
               case '.':
@@ -360,26 +363,39 @@ public class NativeGlobal implements Serializable, IdFunctionCall
 
               case 'e':
               case 'E':
-                if (exponent != -1)
+                if (exponent != -1) {
                     break;
+                } else if (i == len - 1) {
+                    break;
+                }
                 exponent = i;
                 continue;
 
               case '+':
               case '-':
                  // Only allow '+' or '-' after 'e' or 'E'
-                if (exponent != i-1)
+                if (exponent != i-1) {
                     break;
+                } else if (i == len - 1) {
+                    --i;
+                    break;
+                }
                 continue;
 
               case '0': case '1': case '2': case '3': case '4':
               case '5': case '6': case '7': case '8': case '9':
+                if (exponent != -1) {
+                    exponentValid = true;
+                }
                 continue;
 
               default:
                 break;
             }
             break;
+        }
+        if (exponent != -1 && !exponentValid) {
+            i = exponent;
         }
         s = s.substring(start, i);
         try {
@@ -504,10 +520,14 @@ public class NativeGlobal implements Serializable, IdFunctionCall
         return s;
     }
 
+    /**
+     * This is an indirect call to eval, and thus uses the global environment.
+     * Direct calls are executed via ScriptRuntime.callSpecial().
+     */
     private Object js_eval(Context cx, Scriptable scope, Object[] args)
     {
-        String m = ScriptRuntime.getMessage1("msg.cant.call.indirect", "eval");
-        throw NativeGlobal.constructError(cx, "EvalError", m, scope);
+        Scriptable global = ScriptableObject.getTopLevelScope(scope);
+        return ScriptRuntime.evalSpecial(cx, global, global, args, "eval code", 1);
     }
 
     static boolean isEvalFunction(Object functionObj)
@@ -607,7 +627,7 @@ public class NativeGlobal implements Serializable, IdFunctionCall
 
     private static char toHexChar(int i) {
         if (i >> 4 != 0) Kit.codeBug();
-        return (char)((i < 10) ? i + '0' : i - 10 + 'a');
+        return (char)((i < 10) ? i + '0' : i - 10 + 'A');
     }
 
     private static int unHex(char c) {
@@ -767,7 +787,7 @@ public class NativeGlobal implements Serializable, IdFunctionCall
         return utf8Length;
     }
 
-    private static final Object FTAG = new Object();
+    private static final Object FTAG = "Global";
 
     private static final int
         Id_decodeURI           =  1,
