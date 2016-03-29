@@ -1,39 +1,42 @@
 /* -*- Mode: java; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Rhino code, released
  * May 6, 1999.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1997-2000 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1997-2000
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Ethan Hugg
- * Terry Lucas
- * Milen Nankov
+ *   Ethan Hugg
+ *   Terry Lucas
+ *   Milen Nankov
  *
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU Public License (the "GPL"), in which case the
- * provisions of the GPL are applicable instead of those above.
- * If you wish to allow use of your version of this file only
- * under the terms of the GPL and not to allow others to use your
- * version of this file under the NPL, indicate your decision by
- * deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL.  If you do not delete
- * the provisions above, a recipient may use your version of this
- * file under either the NPL or the GPL.
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * the GNU General Public License Version 2 or later (the "GPL"), in which
+ * case the provisions of the GPL are applicable instead of those above. If
+ * you wish to allow use of your version of this file only under the terms of
+ * the GPL and not to allow others to use your version of this file under the
+ * MPL, indicate your decision by deleting the provisions above and replacing
+ * them with the notice and other provisions required by the GPL. If you do
+ * not delete the provisions above, a recipient may use your version of this
+ * file under either the MPL or the GPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 package org.mozilla.javascript.xmlimpl;
 
@@ -49,119 +52,67 @@ class Namespace extends IdScriptableObject
 
     private static final Object NAMESPACE_TAG = new Object();
 
-    private XMLLibImpl lib;
-    private String prefix;
-    private String uri;
+	private Namespace prototype;
+	private XmlNode.Namespace ns;
 
-    public Namespace(XMLLibImpl lib, String uri)
-    {
-        super(lib.globalScope(), lib.namespacePrototype);
+	private Namespace() {
+	}
+	
+	static Namespace create(Scriptable scope, Namespace prototype, XmlNode.Namespace namespace) {
+		Namespace rv = new Namespace();
+		rv.setParentScope(scope);
+		rv.prototype = prototype;
+		rv.setPrototype(prototype);
+		rv.ns = namespace;
+		return rv;
+	}
+	
+	final XmlNode.Namespace getDelegate() {
+		return ns;
+	}
+	
+	public void exportAsJSClass(boolean sealed) {
+		exportAsJSClass(MAX_PROTOTYPE_ID, this.getParentScope(), sealed);
+	}
 
-        if (uri == null)
-            throw new IllegalArgumentException();
+	public String uri() {
+		return ns.getUri();
+	}
+	
+	public String prefix() {
+		return ns.getPrefix();
+	}
 
-        this.lib = lib;
-        this.prefix = (uri.length() == 0) ? "" : null;
-        this.uri = uri;
-    }
+	public String toString() {
+		return uri();
+	}
 
+	public String toLocaleString() {
+		return toString();
+	}
 
-    public Namespace(XMLLibImpl lib, String prefix, String uri)
-    {
-        super(lib.globalScope(), lib.namespacePrototype);
+	private boolean equals(Namespace n) {
+		return uri().equals(n.uri());
+	}
 
-        if (uri == null)
-            throw new IllegalArgumentException();
-        if (uri.length() == 0) {
-            // prefix should be "" for empty uri
-            if (prefix == null)
-                throw new IllegalArgumentException();
-            if (prefix.length() != 0)
-                throw new IllegalArgumentException();
-        }
+	public boolean equals(Object obj) {
+		if (!(obj instanceof Namespace)) return false;
+		return equals((Namespace)obj);
+	}
 
-        this.lib = lib;
-        this.prefix = prefix;
-        this.uri = uri;
-    }
+	protected Object equivalentValues(Object value) {
+		if (!(value instanceof Namespace)) return Scriptable.NOT_FOUND;
+		boolean result = equals((Namespace)value);
+		return result ? Boolean.TRUE : Boolean.FALSE;
+	}
 
-    public void exportAsJSClass(boolean sealed)
-    {
-        exportAsJSClass(MAX_PROTOTYPE_ID, lib.globalScope(), sealed);
-    }
+	public String getClassName() {
+		return "Namespace";
+	}
 
-    /**
-     *
-     * @return
-     */
-    public String uri()
-    {
-        return uri;
-    }
-
-    /**
-     *
-     * @return
-     */
-    public String prefix()
-    {
-        return prefix;
-    }
-
-    /**
-     *
-     * @return
-     */
-    public String toString ()
-    {
-        return uri();
-    }
-
-    /**
-     *
-     * @return
-     */
-    public String toLocaleString ()
-    {
-        return toString();
-    }
-
-    public boolean equals(Object obj)
-    {
-        if (!(obj instanceof Namespace)) return false;
-        return equals((Namespace)obj);
-    }
-
-    protected Object equivalentValues(Object value)
-    {
-        if (!(value instanceof Namespace)) return Scriptable.NOT_FOUND;
-        boolean result = equals((Namespace)value);
-        return result ? Boolean.TRUE : Boolean.FALSE;
-    }
-
-    private boolean equals(Namespace n)
-    {
-        return uri().equals(n.uri());
-    }
-
-    /**
-     *
-     * @return
-     */
-    public String getClassName ()
-    {
-        return "Namespace";
-    }
-
-    /**
-     *
-     * @param hint
-     * @return
-     */
-    public Object getDefaultValue (Class hint)
-    {
-        return uri();
-    }
+	public Object getDefaultValue(Class hint) {
+		return uri();
+	}
 
 // #string_id_map#
     private static final int
@@ -213,10 +164,10 @@ class Namespace extends IdScriptableObject
     {
         switch (id - super.getMaxInstanceId()) {
           case Id_prefix:
-            if (prefix == null) return Undefined.instance;
-            return prefix;
+            if (ns.getPrefix() == null) return Undefined.instance;
+            return ns.getPrefix();
           case Id_uri:
-            return uri;
+            return ns.getUri();
         }
         return super.getInstanceIdValue(id);
     }
@@ -282,25 +233,107 @@ class Namespace extends IdScriptableObject
         throw new IllegalArgumentException(String.valueOf(id));
     }
 
-    private Namespace realThis(Scriptable thisObj, IdFunctionObject f)
-    {
-        if(!(thisObj instanceof Namespace))
-            throw incompatibleCallError(f);
-        return (Namespace)thisObj;
-    }
+	private Namespace realThis(Scriptable thisObj, IdFunctionObject f) {
+		if(!(thisObj instanceof Namespace))
+			throw incompatibleCallError(f);
+		return (Namespace)thisObj;
+	}
+	
+	Namespace newNamespace(String uri) {
+		Namespace prototype = (this.prototype == null) ? this : this.prototype;
+		return create( this.getParentScope(), prototype, XmlNode.Namespace.create(uri) );
+	}
+	
+	Namespace newNamespace(String prefix, String uri) {
+		if (prefix == null) return newNamespace(uri);
+		Namespace prototype = (this.prototype == null) ? this : this.prototype;
+		return create( this.getParentScope(), prototype, XmlNode.Namespace.create(prefix, uri) );		
+	}
+	
+	Namespace constructNamespace(Object uriValue) {
+        String prefix;
+        String uri;
 
+        if (uriValue instanceof Namespace) {
+            Namespace ns = (Namespace)uriValue;
+            prefix = ns.prefix();
+            uri = ns.uri();
+        } else if (uriValue instanceof QName) {
+            QName qname = (QName)uriValue;
+            uri = qname.uri();
+            if (uri != null) {
+				//	TODO	Is there a way to push this back into QName so that we can make prefix() private?
+                prefix = qname.prefix();
+            } else {
+                uri = qname.toString();
+                prefix = null;
+            }
+        } else {
+            uri = ScriptRuntime.toString(uriValue);
+            prefix = (uri.length() == 0) ? "" : null;
+        }
+
+        return newNamespace(prefix, uri);		
+	}
+
+	Namespace castToNamespace(Object namespaceObj) {
+		if (namespaceObj instanceof Namespace) {
+			return (Namespace)namespaceObj;
+		}
+		return constructNamespace(namespaceObj);
+	}
+	
+	private Namespace constructNamespace(Object prefixValue, Object uriValue) {
+		String prefix;
+		String uri;
+		
+		if (uriValue instanceof QName) {
+			QName qname = (QName)uriValue;
+			uri = qname.uri();
+			if (uri == null) {
+				uri = qname.toString();
+			}
+		} else {
+			uri = ScriptRuntime.toString(uriValue);
+		}
+		
+		if (uri.length() == 0) {
+			if (prefixValue == Undefined.instance) {
+				prefix = "";
+			} else {
+				prefix = ScriptRuntime.toString(prefixValue);
+				if (prefix.length() != 0) {
+					throw ScriptRuntime.typeError(
+						"Illegal prefix '"+prefix+"' for 'no namespace'.");
+				}
+			}
+		} else if (prefixValue == Undefined.instance) {
+			prefix = "";
+		} else if (!XMLName.accept(prefixValue)) {
+			prefix = "";
+		} else {
+			prefix = ScriptRuntime.toString(prefixValue);
+		}
+		
+		return newNamespace(prefix, uri);		
+	}
+	
+	private Namespace constructNamespace() {
+		return newNamespace("", "");
+	}
+	
     private Object jsConstructor(Context cx, boolean inNewExpr, Object[] args)
     {
         if (!inNewExpr && args.length == 1) {
-            return lib.castToNamespace(cx, args[0]);
+            return castToNamespace(args[0]);
         }
 
         if (args.length == 0) {
-            return lib.constructNamespace(cx);
+            return constructNamespace();
         } else if (args.length == 1) {
-            return lib.constructNamespace(cx, args[0]);
+            return constructNamespace(args[0]);
         } else {
-            return lib.constructNamespace(cx, args[0], args[1]);
+            return constructNamespace(args[0], args[1]);
         }
     }
 
@@ -308,7 +341,7 @@ class Namespace extends IdScriptableObject
     {
         StringBuffer sb = new StringBuffer();
         sb.append('(');
-        toSourceImpl(prefix, uri, sb);
+        toSourceImpl(ns.getPrefix(), ns.getUri(), sb);
         sb.append(')');
         return sb.toString();
     }
@@ -328,5 +361,5 @@ class Namespace extends IdScriptableObject
             sb.append('\'');
         }
         sb.append(')');
-    }
+    }	
 }

@@ -1,41 +1,44 @@
 /* -*- Mode: java; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Rhino code, released
  * May 6, 1999.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1997-2000 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1997-2000
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Norris Boyd
- * Igor Bukanov
- * Frank Mitchell
- * Mike Shaver
- * Kemal Bayram
+ *   Norris Boyd
+ *   Igor Bukanov
+ *   Frank Mitchell
+ *   Mike Shaver
+ *   Kemal Bayram
  *
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU Public License (the "GPL"), in which case the
- * provisions of the GPL are applicable instead of those above.
- * If you wish to allow use of your version of this file only
- * under the terms of the GPL and not to allow others to use your
- * version of this file under the NPL, indicate your decision by
- * deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL.  If you do not delete
- * the provisions above, a recipient may use your version of this
- * file under either the NPL or the GPL.
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * the GNU General Public License Version 2 or later (the "GPL"), in which
+ * case the provisions of the GPL are applicable instead of those above. If
+ * you wish to allow use of your version of this file only under the terms of
+ * the GPL and not to allow others to use your version of this file under the
+ * MPL, indicate your decision by deleting the provisions above and replacing
+ * them with the notice and other provisions required by the GPL. If you do
+ * not delete the provisions above, a recipient may use your version of this
+ * file under either the MPL or the GPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 package org.mozilla.javascript;
 
@@ -64,9 +67,16 @@ public class NativeJavaObject implements Scriptable, Wrapper, Serializable
     public NativeJavaObject(Scriptable scope, Object javaObject,
                             Class staticType)
     {
+        this(scope, javaObject, staticType, false);
+    }
+
+    public NativeJavaObject(Scriptable scope, Object javaObject,
+                            Class staticType, boolean isAdapter)
+    {
         this.parent = scope;
         this.javaObject = javaObject;
         this.staticType = staticType;
+        this.isAdapter = isAdapter;
         initMembers();
     }
 
@@ -77,7 +87,8 @@ public class NativeJavaObject implements Scriptable, Wrapper, Serializable
         } else {
             dynamicType = staticType;
         }
-        members = JavaMembers.lookupClass(parent, dynamicType, staticType);
+        members = JavaMembers.lookupClass(parent, dynamicType, staticType, 
+                                          isAdapter);
         fieldAndMethods
             = members.getFieldAndMethodsObjects(this, javaObject, false);
     }
@@ -592,18 +603,18 @@ WrapFactory#wrap(Context cx, Scriptable scope, Object obj, Class)}
             break;
 
         case JSTYPE_JAVA_OBJECT:
-        case JSTYPE_JAVA_ARRAY:
+        case JSTYPE_JAVA_ARRAY:              
+            if (value instanceof Wrapper) {
+              value = ((Wrapper)value).unwrap();
+            }
             if (type.isPrimitive()) {
                 if (type == Boolean.TYPE) {
                     reportConversionError(value, type);
                 }
                 return coerceToNumber(type, value);
             }
-            else {
-                if (value instanceof Wrapper) {
-                    value = ((Wrapper)value).unwrap();
-                }
-                if (type == ScriptRuntime.StringClass) {
+            else { 
+              if (type == ScriptRuntime.StringClass) {
                     return value.toString();
                 }
                 else {
@@ -762,8 +773,7 @@ WrapFactory#wrap(Context cx, Scriptable scope, Object obj, Class)}
         if (type == ScriptRuntime.LongClass || type == Long.TYPE) {
             if (valueClass == ScriptRuntime.LongClass) {
                 return value;
-            }
-            else {
+            } else {
                 /* Long values cannot be expressed exactly in doubles.
                  * We thus use the largest and smallest double value that
                  * has a value expressible as a long value. We build these
@@ -828,7 +838,8 @@ WrapFactory#wrap(Context cx, Scriptable scope, Object obj, Class)}
         else {
             Method meth;
             try {
-                meth = value.getClass().getMethod("doubleValue", null);
+                meth = value.getClass().getMethod("doubleValue", 
+                		                          (Class [])null);
             }
             catch (NoSuchMethodException e) {
                 meth = null;
@@ -838,7 +849,8 @@ WrapFactory#wrap(Context cx, Scriptable scope, Object obj, Class)}
             }
             if (meth != null) {
                 try {
-                    return ((Number)meth.invoke(value, null)).doubleValue();
+                    return ((Number)meth.invoke(value, 
+                    		                    (Object [])null)).doubleValue();
                 }
                 catch (IllegalAccessException e) {
                     // XXX: ignore, or error message?
@@ -892,25 +904,18 @@ WrapFactory#wrap(Context cx, Scriptable scope, Object obj, Class)}
     {
         out.defaultWriteObject();
 
-        if (javaObject != null) {
-            Class joClass = javaObject.getClass();
-            if (joClass.getName().startsWith("adapter")) {
-                out.writeBoolean(true);
-                if (adapter_writeAdapterObject == null) {
-                    throw new IOException();
-                }
-                Object[] args = { javaObject, out };
-                try {
-                    adapter_writeAdapterObject.invoke(null, args);
-                } catch (Exception ex) {
-                    throw new IOException();
-                }
-            } else {
-                out.writeBoolean(false);
-                out.writeObject(javaObject);
+        out.writeBoolean(isAdapter);
+        if (isAdapter) {
+            if (adapter_writeAdapterObject == null) {
+                throw new IOException();
+            }
+            Object[] args = { javaObject, out };
+            try {
+                adapter_writeAdapterObject.invoke(null, args);
+            } catch (Exception ex) {
+                throw new IOException();
             }
         } else {
-            out.writeBoolean(false);
             out.writeObject(javaObject);
         }
 
@@ -926,7 +931,8 @@ WrapFactory#wrap(Context cx, Scriptable scope, Object obj, Class)}
     {
         in.defaultReadObject();
 
-        if (in.readBoolean()) {
+        isAdapter = in.readBoolean();
+        if (isAdapter) {
             if (adapter_readAdapterObject == null)
                 throw new ClassNotFoundException();
             Object[] args = { this, in };
@@ -964,6 +970,7 @@ WrapFactory#wrap(Context cx, Scriptable scope, Object obj, Class)}
     protected transient Class staticType;
     protected transient JavaMembers members;
     private transient Hashtable fieldAndMethods;
+    private transient boolean isAdapter;
 
     private static final Object COERCED_INTERFACE_KEY = new Object();
     private static Method adapter_writeAdapterObject;

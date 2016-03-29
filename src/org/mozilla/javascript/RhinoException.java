@@ -1,45 +1,51 @@
 /* -*- Mode: java; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Rhino code, released
  * May 6, 1999.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1997-1999 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1997-1999
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Norris Boyd
- * Igor Bukanov
+ *   Norris Boyd
+ *   Igor Bukanov
  *
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU Public License (the "GPL"), in which case the
- * provisions of the GPL are applicable instead of those above.
- * If you wish to allow use of your version of this file only
- * under the terms of the GPL and not to allow others to use your
- * version of this file under the NPL, indicate your decision by
- * deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL.  If you do not delete
- * the provisions above, a recipient may use your version of this
- * file under either the NPL or the GPL.
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * the GNU General Public License Version 2 or later (the "GPL"), in which
+ * case the provisions of the GPL are applicable instead of those above. If
+ * you wish to allow use of your version of this file only under the terms of
+ * the GPL and not to allow others to use your version of this file under the
+ * MPL, indicate your decision by deleting the provisions above and replacing
+ * them with the notice and other provisions required by the GPL. If you do
+ * not delete the provisions above, a recipient may use your version of this
+ * file under either the MPL or the GPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 
 package org.mozilla.javascript;
 
 import java.io.CharArrayWriter;
+import java.io.File;
+import java.io.FilenameFilter;
 import java.io.PrintStream;
 import java.io.PrintWriter;
+import java.util.List;
 
 /**
  * The class of exceptions thrown by the JavaScript engine.
@@ -204,6 +210,59 @@ public abstract class RhinoException extends RuntimeException
         super.printStackTrace(new PrintWriter(writer));
         String origStackTrace = writer.toString();
         return Interpreter.getPatchedStack(this, origStackTrace);
+    }
+
+    /**
+     * Get a string representing the script stack of this exception.
+     * If optimization is enabled, this corresponds to all java stack elements
+     * with a source name ending with ".js".
+     * @return a script stack dump
+     * @since 1.6R6
+     */
+    public String getScriptStackTrace()
+    {
+        return getScriptStackTrace(new FilenameFilter() {
+            public boolean accept(File dir, String name) {
+                return name.endsWith(".js");
+            }
+        });
+    }
+
+    /**
+     * Get a string representing the script stack of this exception.
+     * If optimization is enabled, this corresponds to all java stack elements
+     * with a source name matching the <code>filter</code>.
+     * @param filter the file name filter to determine whether a file is a 
+     *               script file
+     * @return a script stack dump
+     * @since 1.6R6
+     */
+    public String getScriptStackTrace(FilenameFilter filter)
+    {
+        List interpreterStack = Interpreter.getScriptStack(this);
+        int interpreterStackIndex = 0;
+        StringBuffer buffer = new StringBuffer();
+        String lineSeparator = SecurityUtilities.getSystemProperty("line.separator");
+        StackTraceElement[] stack = getStackTrace();
+        for (int i = 0; i < stack.length; i++) {
+            StackTraceElement e = stack[i];
+            String name = e.getFileName();
+            if (e.getLineNumber() > -1 && name != null &&
+                filter.accept(null, name))
+            {
+                buffer.append("\tat ");
+                buffer.append(e.getFileName());
+                buffer.append(':');
+                buffer.append(e.getLineNumber());
+                buffer.append(lineSeparator);
+            } else if (interpreterStack != null &&
+                "org.mozilla.javascript.Interpreter".equals(e.getClassName()) &&
+                "interpretLoop".equals(e.getMethodName()))
+            {
+                buffer.append(interpreterStack.get(interpreterStackIndex++));
+            }
+        }
+        return buffer.toString();
     }
 
     public void printStackTrace(PrintWriter s)

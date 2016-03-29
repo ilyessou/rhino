@@ -1,37 +1,41 @@
 /* -*- Mode: java; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Rhino code, released
  * May 6, 1999.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1997-2000 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1997-2000
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Igor Bukanov
+ *   Igor Bukanov
+ *   David P. Caldwell <inonit@inonit.com>
  *
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU Public License (the "GPL"), in which case the
- * provisions of the GPL are applicable instead of those above.
- * If you wish to allow use of your version of this file only
- * under the terms of the GPL and not to allow others to use your
- * version of this file under the NPL, indicate your decision by
- * deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL.  If you do not delete
- * the provisions above, a recipient may use your version of this
- * file under either the NPL or the GPL.
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * the GNU General Public License Version 2 or later (the "GPL"), in which
+ * case the provisions of the GPL are applicable instead of those above. If
+ * you wish to allow use of your version of this file only under the terms of
+ * the GPL and not to allow others to use your version of this file under the
+ * MPL, indicate your decision by deleting the provisions above and replacing
+ * them with the notice and other provisions required by the GPL. If you do
+ * not delete the provisions above, a recipient may use your version of this
+ * file under either the MPL or the GPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 package org.mozilla.javascript.xmlimpl;
 
@@ -43,12 +47,14 @@ class XMLCtor extends IdFunctionObject
 
     private static final Object XMLCTOR_TAG = new Object();
 
-    private XMLLibImpl lib;
+	private XmlProcessor options;
+//    private XMLLibImpl lib;
 
     XMLCtor(XML xml, Object tag, int id, int arity)
     {
         super(xml, tag, id, arity);
-        this.lib = xml.lib;
+//        this.lib = xml.lib;
+		this.options = xml.getProcessor();
         activatePrototypeMap(MAX_FUNCTION_ID);
     }
 
@@ -159,40 +165,39 @@ class XMLCtor extends IdFunctionObject
     {
         switch (id - super.getMaxInstanceId()) {
           case Id_ignoreComments:
-            return ScriptRuntime.wrapBoolean(lib.ignoreComments);
+            return ScriptRuntime.wrapBoolean(options.isIgnoreComments());
           case Id_ignoreProcessingInstructions:
-            return ScriptRuntime.wrapBoolean(lib.ignoreProcessingInstructions);
+            return ScriptRuntime.wrapBoolean(options.isIgnoreProcessingInstructions());
           case Id_ignoreWhitespace:
-            return ScriptRuntime.wrapBoolean(lib.ignoreWhitespace);
+            return ScriptRuntime.wrapBoolean(options.isIgnoreWhitespace());
           case Id_prettyIndent:
-            return ScriptRuntime.wrapInt(lib.prettyIndent);
+            return ScriptRuntime.wrapInt(options.getPrettyIndent());
           case Id_prettyPrinting:
-            return ScriptRuntime.wrapBoolean(lib.prettyPrinting);
+            return ScriptRuntime.wrapBoolean(options.isPrettyPrinting());
         }
         return super.getInstanceIdValue(id);
     }
 
-    protected void setInstanceIdValue(int id, Object value)
-    {
-        switch (id - super.getMaxInstanceId()) {
-          case Id_ignoreComments:
-            lib.ignoreComments = ScriptRuntime.toBoolean(value);
-            return;
-          case Id_ignoreProcessingInstructions:
-            lib.ignoreProcessingInstructions = ScriptRuntime.toBoolean(value);
-            return;
-          case Id_ignoreWhitespace:
-            lib.ignoreWhitespace = ScriptRuntime.toBoolean(value);
-            return;
-          case Id_prettyIndent:
-            lib.prettyIndent = ScriptRuntime.toInt32(value);
-            return;
-          case Id_prettyPrinting:
-            lib.prettyPrinting = ScriptRuntime.toBoolean(value);
-            return;
-        }
-        super.setInstanceIdValue(id, value);
-    }
+	protected void setInstanceIdValue(int id, Object value) {
+		switch (id - super.getMaxInstanceId()) {
+			case Id_ignoreComments:
+				options.setIgnoreComments(ScriptRuntime.toBoolean(value));
+				return;
+			case Id_ignoreProcessingInstructions:
+				options.setIgnoreProcessingInstructions(ScriptRuntime.toBoolean(value));
+				return;
+			case Id_ignoreWhitespace:
+				options.setIgnoreWhitespace(ScriptRuntime.toBoolean(value));
+				return;
+			case Id_prettyIndent:
+				options.setPrettyIndent(ScriptRuntime.toInt32(value));
+				return;
+			case Id_prettyPrinting:
+				options.setPrettyPrinting(ScriptRuntime.toBoolean(value));
+				return;
+		}
+		super.setInstanceIdValue(id, value);
+	}
 
 // #string_id_map#
     private static final int
@@ -239,7 +244,7 @@ class XMLCtor extends IdFunctionObject
         int id = f.methodId();
         switch (id) {
           case Id_defaultSettings: {
-            lib.defaultSettings();
+            options.setDefault();
             Scriptable obj = cx.newObject(scope);
             writeSetting(obj);
             return obj;
@@ -254,7 +259,7 @@ class XMLCtor extends IdFunctionObject
                 || args[0] == null
                 || args[0] == Undefined.instance)
             {
-                lib.defaultSettings();
+                options.setDefault();
             } else if (args[0] instanceof Scriptable) {
                 readSettings((Scriptable)args[0]);
             }
@@ -263,4 +268,11 @@ class XMLCtor extends IdFunctionObject
         }
         throw new IllegalArgumentException(String.valueOf(id));
     }
+	
+	/**
+		hasInstance for XML objects works differently than other objects; see ECMA357 13.4.3.10.
+	 */
+	public boolean hasInstance(Scriptable instance) {
+		return (instance instanceof XML || instance instanceof XMLList);
+	}
 }

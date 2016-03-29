@@ -1,45 +1,50 @@
 /* -*- Mode: java; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Rhino code, released
  * May 6, 1999.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1997-2000 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1997-2000
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Patrick Beard
- * Norris Boyd
- * Igor Bukanov
- * Ethan Hugg
- * Roger Lawrence
- * Terry Lucas
- * Frank Mitchell
- * Milen Nankov
- * Andrew Wason
+ *   Patrick Beard
+ *   Norris Boyd
+ *   Igor Bukanov
+ *   Ethan Hugg
+ *   Bob Jervis
+ *   Roger Lawrence
+ *   Terry Lucas
+ *   Frank Mitchell
+ *   Milen Nankov
+ *   Hannes Wallnoefer
+ *   Andrew Wason
  *
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU Public License (the "GPL"), in which case the
- * provisions of the GPL are applicable instead of those above.
- * If you wish to allow use of your version of this file only
- * under the terms of the GPL and not to allow others to use your
- * version of this file under the NPL, indicate your decision by
- * deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL.  If you do not delete
- * the provisions above, a recipient may use your version of this
- * file under either the NPL or the GPL.
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * the GNU General Public License Version 2 or later (the "GPL"), in which
+ * case the provisions of the GPL are applicable instead of those above. If
+ * you wish to allow use of your version of this file only under the terms of
+ * the GPL and not to allow others to use your version of this file under the
+ * MPL, indicate your decision by deleting the provisions above and replacing
+ * them with the notice and other provisions required by the GPL. If you do
+ * not delete the provisions above, a recipient may use your version of this
+ * file under either the MPL or the GPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 package org.mozilla.javascript;
 
@@ -66,6 +71,35 @@ public class ScriptRuntime {
     protected ScriptRuntime() {
     }
 
+    private static class NoSuchMethodShim implements Callable {
+        String methodName;
+        Callable noSuchMethodMethod;
+
+        NoSuchMethodShim(Callable noSuchMethodMethod, String methodName)
+        {
+            this.noSuchMethodMethod = noSuchMethodMethod;
+            this.methodName = methodName;
+        }
+        /**
+         * Perform the call.
+         *
+         * @param cx the current Context for this thread
+         * @param scope the scope to use to resolve properties.
+         * @param thisObj the JavaScript <code>this</code> object
+         * @param args the array of arguments
+         * @return the result of the call
+         */
+        public Object call(Context cx, Scriptable scope, Scriptable thisObj,
+                           Object[] args)
+        {
+            Object[] nestedArgs = new Object[2];
+
+            nestedArgs[0] = methodName;
+            nestedArgs[1] = newArrayLiteral(args, null, cx, scope);
+            return noSuchMethodMethod.call(cx, scope, thisObj, nestedArgs);
+        }
+
+    }
     /*
      * There's such a huge space (and some time) waste for the Foo.class
      * syntax: the compiler sticks in a test of a static field in the
@@ -103,9 +137,6 @@ public class ScriptRuntime {
         ScriptableObjectClass
             = Kit.classOrNull("org.mozilla.javascript.ScriptableObject");
 
-    private static final String
-        XML_INIT_CLASS = "org.mozilla.javascript.xmlimpl.XMLLibImpl";
-
     private static final String[] lazilyNames = {
         "RegExp",        "org.mozilla.javascript.regexp.NativeRegExp",
         "Packages",      "org.mozilla.javascript.NativeJavaTopPackage",
@@ -113,10 +144,12 @@ public class ScriptRuntime {
         "getClass",      "org.mozilla.javascript.NativeJavaTopPackage",
         "JavaAdapter",   "org.mozilla.javascript.JavaAdapter",
         "JavaImporter",  "org.mozilla.javascript.ImporterTopLevel",
-        "XML",           XML_INIT_CLASS,
-        "XMLList",       XML_INIT_CLASS,
-        "Namespace",     XML_INIT_CLASS,
-        "QName",         XML_INIT_CLASS,
+		//	TODO	Grotesque hack using literal string (xml) just to minimize 
+		//			changes for now
+        "XML",           "(xml)",
+        "XMLList",       "(xml)",
+        "Namespace",     "(xml)",
+        "QName",         "(xml)",
     };
 
     private static final Object LIBRARY_SCOPE_KEY = new Object();
@@ -170,14 +203,16 @@ public class ScriptRuntime {
         NativeCall.init(scope, sealed);
         NativeScript.init(scope, sealed);
 
-        boolean withXml = cx.hasFeature(Context.FEATURE_E4X);
+        boolean withXml = cx.hasFeature(Context.FEATURE_E4X) && cx.getE4xImplementationFactory() != null;
 
         for (int i = 0; i != lazilyNames.length; i += 2) {
             String topProperty = lazilyNames[i];
             String className = lazilyNames[i + 1];
-            if (!withXml && className == XML_INIT_CLASS) {
+            if (!withXml && className.equals("(xml)")) {
                 continue;
-            }
+            } else if (withXml && className.equals("(xml)")) {
+				className = cx.getE4xImplementationFactory().getImplementationClassName();
+			}
             new LazilyLoadedCtor(scope, topProperty, className, sealed);
         }
 
@@ -785,18 +820,24 @@ public class ScriptRuntime {
             if (!iterating) {
                 cx.iterating.intern(thisObj); // stop recursion.
                 Object[] ids = thisObj.getIds();
-                for(int i=0; i < ids.length; i++) {
-                    if (i > 0)
-                        result.append(", ");
+                for (int i=0; i < ids.length; i++) {
                     Object id = ids[i];
                     Object value;
                     if (id instanceof Integer) {
                         int intId = ((Integer)id).intValue();
                         value = thisObj.get(intId, thisObj);
+                        if (value == Scriptable.NOT_FOUND)
+                            continue;   // a property has been removed
+                        if (i > 0)
+                            result.append(", ");
                         result.append(intId);
                     } else {
                         String strId = (String)id;
                         value = thisObj.get(strId, thisObj);
+                        if (value == Scriptable.NOT_FOUND)
+                            continue;   // a property has been removed
+                        if (i > 0)
+                            result.append(", ");
                         if (ScriptRuntime.isValidIdentifierName(strId)) {
                             result.append(strId);
                         } else {
@@ -1333,6 +1374,10 @@ public class ScriptRuntime {
 
         Object result = ScriptableObject.getProperty(obj, property);
         if (result == Scriptable.NOT_FOUND) {
+            if (cx.hasFeature(Context.FEATURE_STRICT_MODE)) {
+                Context.reportWarning(ScriptRuntime.getMessage1(
+                		"msg.ref.undefined.prop", property));
+            }
             result = Undefined.instance;
         }
 
@@ -1741,8 +1786,11 @@ public class ScriptRuntime {
             // "newname = 7;", where 'newname' has not yet
             // been defined, creates a new property in the
             // top scope unless strict mode is specified.
-            if (cx.hasFeature(Context.FEATURE_STRICT_VARS)) {
-                throw Context.reportRuntimeError1("msg.assn.create.strict", id);
+            if (cx.hasFeature(Context.FEATURE_STRICT_MODE) ||
+                cx.hasFeature(Context.FEATURE_STRICT_VARS))
+            {
+                Context.reportWarning(
+                    ScriptRuntime.getMessage1("msg.assn.create.strict", id));
             }
             // Find the top scope by walking up the scope chain.
             bound = ScriptableObject.getTopLevelScope(scope);
@@ -1750,6 +1798,18 @@ public class ScriptRuntime {
                 bound = checkDynamicScope(cx.topCallScope, bound);
             }
             bound.put(id, bound, value);
+        }
+        return value;
+    }
+
+    public static Object setConst(Scriptable bound, Object value,
+                                 Context cx, String id)
+    {
+        if (bound instanceof XMLObject) {
+            XMLObject xmlObject = (XMLObject)bound;
+            xmlObject.ecmaPut(cx, id, value);
+        } else {
+            ScriptableObject.putConstProperty(bound, id, value);
         }
         return value;
     }
@@ -1985,7 +2045,11 @@ public class ScriptRuntime {
         }
 
         if (!(value instanceof Callable)) {
-            throw notFunctionError(value, property);
+            Object noSuchMethod = ScriptableObject.getProperty(thisObj, "__noSuchMethod__");
+            if (noSuchMethod instanceof Callable)
+                value = new NoSuchMethodShim((Callable)noSuchMethod, property);
+            else
+                throw notFunctionError(value, property);
         }
 
         storeScriptable(cx, thisObj);
@@ -2006,10 +2070,11 @@ public class ScriptRuntime {
         }
 
         Callable f = (Callable)value;
-        Scriptable thisObj;
+        Scriptable thisObj = null;
         if (f instanceof Scriptable) {
             thisObj = ((Scriptable)f).getParentScope();
-        } else {
+        }
+        if (thisObj == null) {
             if (cx.topCallScope == null) throw new IllegalStateException();
             thisObj = cx.topCallScope;
         }
@@ -2029,7 +2094,7 @@ public class ScriptRuntime {
     /**
      * Perform function call in reference context. Should always
      * return value that can be passed to
-     * {@link #refGet(Object)} or @link #refSet(Object, Object)}
+     * {@link #refGet(Ref, Context)} or {@link #refSet(Ref, Object, Context)}
      * arbitrary number of times.
      * The args array reference should not be stored in any object that is
      * can be GC-reachable after this method returns. If this is necessary,
@@ -2182,7 +2247,9 @@ public class ScriptRuntime {
             return Undefined.instance;
         Object x = args[0];
         if (!(x instanceof String)) {
-            if (cx.hasFeature(Context.FEATURE_STRICT_EVAL)) {
+            if (cx.hasFeature(Context.FEATURE_STRICT_MODE) ||
+                cx.hasFeature(Context.FEATURE_STRICT_EVAL))
+            {
                 throw Context.reportRuntimeError0("msg.eval.nonstring.strict");
             }
             String message = ScriptRuntime.getMessage0("msg.eval.nonstring");
@@ -2293,13 +2360,25 @@ public class ScriptRuntime {
         return toString(val1).concat(toString(val2));
     }
 
+    /**
+     * @deprecated The method is only present for compatibility.
+     */
     public static Object nameIncrDecr(Scriptable scopeChain, String id,
                                       int incrDecrMask)
+    {
+        return nameIncrDecr(scopeChain, id, Context.getContext(), incrDecrMask);
+    }
+
+    public static Object nameIncrDecr(Scriptable scopeChain, String id,
+                                      Context cx, int incrDecrMask)
     {
         Scriptable target;
         Object value;
       search: {
             do {
+                if (cx.useDynamicScope && scopeChain.getParentScope() == null) {
+                    scopeChain = checkDynamicScope(cx.topCallScope, scopeChain);
+                }
                 target = scopeChain;
                 do {
                     value = target.get(id, scopeChain);
@@ -2632,7 +2711,7 @@ public class ScriptRuntime {
      *
      * @return true iff rhs appears in lhs' proto chain
      */
-    protected static boolean jsDelegatesTo(Scriptable lhs, Scriptable rhs) {
+    public static boolean jsDelegatesTo(Scriptable lhs, Scriptable rhs) {
         Scriptable proto = lhs.getPrototype();
 
         while (proto != null) {
@@ -2811,17 +2890,23 @@ public class ScriptRuntime {
 
             for (int i = varCount; i-- != 0;) {
                 String name = funObj.getParamOrVarName(i);
+                boolean isConst = funObj.getParamOrVarConst(i);
                 // Don't overwrite existing def if already defined in object
                 // or prototypes of object.
                 if (!ScriptableObject.hasProperty(scope, name)) {
                     if (!evalScript) {
                         // Global var definitions are supposed to be DONTDELETE
-                        ScriptableObject.defineProperty(
-                            varScope, name, Undefined.instance,
-                            ScriptableObject.PERMANENT);
+                        if (isConst)
+                            ScriptableObject.defineConstProperty(varScope, name);
+                        else
+                            ScriptableObject.defineProperty(
+                                varScope, name, Undefined.instance,
+                                ScriptableObject.PERMANENT);
                     } else {
                         varScope.put(name, varScope, Undefined.instance);
                     }
+                } else {
+                    ScriptableObject.redefineProperty(scope, name, isConst);
                 }
             }
         }
@@ -2836,12 +2921,11 @@ public class ScriptRuntime {
 
 
     public static void enterActivationFunction(Context cx,
-                                               Scriptable activation)
+                                               Scriptable scope)
     {
         if (cx.topCallScope == null)
             throw new IllegalStateException();
-
-        NativeCall call = (NativeCall)activation;
+        NativeCall call = (NativeCall)scope;
         call.parentActivationCall = cx.currentActivationCall;
         cx.currentActivationCall = call;
     }
@@ -2948,11 +3032,18 @@ public class ScriptRuntime {
             obj = errorObject;
         }
 
-
         NativeObject catchScopeObject = new NativeObject();
         // See ECMA 12.4
         catchScopeObject.defineProperty(
             exceptionName, obj, ScriptableObject.PERMANENT);
+
+        // Add special Rhino object __exception__ defined in the catch
+        // scope that can be used to retrieve the Java exception associated
+        // with the JavaScript exception (to get stack trace info, etc.)
+        catchScopeObject.defineProperty(
+            "__exception__", Context.javaToJS(t, catchScopeObject),
+            ScriptableObject.PERMANENT|ScriptableObject.DONTENUM);
+
         if (cacheObj) {
             catchScopeObject.associateValue(t, obj);
         }
@@ -3086,16 +3177,51 @@ public class ScriptRuntime {
         return arrayObj;
     }
 
+  /**
+   * This method is here for backward compat with existing compiled code.  It
+   * is called when an object literal is compiled.  The next instance will be
+   * the version called from new code.
+   * @deprecated This method only present for compatibility.
+   */
     public static Scriptable newObjectLiteral(Object[] propertyIds,
                                               Object[] propertyValues,
+                                              Context cx, Scriptable scope)
+    {
+        // This will initialize to all zeros, exactly what we need for old-style
+        // getterSetters values (no getters or setters in the list)
+        int [] getterSetters = new int[propertyIds.length];
+        return newObjectLiteral(propertyIds, propertyValues, getterSetters,
+                cx, scope);
+    }
+
+    public static Scriptable newObjectLiteral(Object[] propertyIds,
+                                              Object[] propertyValues,
+                                              int [] getterSetters,
                                               Context cx, Scriptable scope)
     {
         Scriptable object = cx.newObject(scope);
         for (int i = 0, end = propertyIds.length; i != end; ++i) {
             Object id = propertyIds[i];
+            int getterSetter = getterSetters[i];
             Object value = propertyValues[i];
             if (id instanceof String) {
-                ScriptableObject.putProperty(object, (String)id, value);
+                if (getterSetter == 0)
+                    ScriptableObject.putProperty(object, (String)id, value);
+                else {
+                    Callable fun;
+                    String definer;
+                    if (getterSetter < 0)   // < 0 means get foo() ...
+                        definer = "__defineGetter__";
+                    else
+                        definer = "__defineSetter__";
+                    fun = getPropFunctionAndThis(object, definer, cx);
+                    // Must consume the last scriptable object in cx
+                    lastStoredScriptable(cx);
+                    Object[] outArgs = new Object[2];
+                    outArgs[0] = id;
+                    outArgs[1] = value;
+                    fun.call(cx, scope, object, outArgs);
+                }              
             } else {
                 int index = ((Integer)id).intValue();
                 ScriptableObject.putProperty(object, index, value);
@@ -3481,4 +3607,3 @@ public class ScriptRuntime {
     public static final String[] emptyStrings = new String[0];
 
 }
-

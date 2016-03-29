@@ -1,39 +1,43 @@
 /* -*- Mode: java; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Rhino code, released
  * May 6, 1999.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1997-1999 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1997-1999
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Norris Boyd
- * Frank Mitchell
- * Mike Shaver
+ *   Norris Boyd
+ *   Frank Mitchell
+ *   Mike Shaver
+ *   Ulrike Mueller <umueller@demandware.com>
  *
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU Public License (the "GPL"), in which case the
- * provisions of the GPL are applicable instead of those above.
- * If you wish to allow use of your version of this file only
- * under the terms of the GPL and not to allow others to use your
- * version of this file under the NPL, indicate your decision by
- * deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL.  If you do not delete
- * the provisions above, a recipient may use your version of this
- * file under either the NPL or the GPL.
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * the GNU General Public License Version 2 or later (the "GPL"), in which
+ * case the provisions of the GPL are applicable instead of those above. If
+ * you wish to allow use of your version of this file only under the terms of
+ * the GPL and not to allow others to use your version of this file under the
+ * MPL, indicate your decision by deleting the provisions above and replacing
+ * them with the notice and other provisions required by the GPL. If you do
+ * not delete the provisions above, a recipient may use your version of this
+ * file under either the MPL or the GPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 package org.mozilla.javascript;
 
@@ -160,17 +164,55 @@ public class NativeJavaMethod extends BaseFunction
 
         MemberBox meth = methods[index];
         Class[] argTypes = meth.argTypes;
-
-        // First, we marshall the args.
-        Object[] origArgs = args;
-        for (int i = 0; i < args.length; i++) {
-            Object arg = args[i];
-            Object coerced = Context.jsToJava(arg, argTypes[i]);
-            if (coerced != arg) {
-                if (origArgs == args) {
-                    args = (Object[])args.clone();
+      
+        if (meth.vararg) {
+            // marshall the explicit parameters
+            Object[] newArgs = new Object[argTypes.length];
+            for (int i = 0; i < argTypes.length-1; i++) {
+                newArgs[i] = Context.jsToJava(args[i], argTypes[i]);
+            }
+            
+            Object varArgs;
+            
+            // Handle special situation where a single variable parameter
+            // is given and it is a Java or ECMA array or is null.
+            if (args.length == argTypes.length &&
+                (args[args.length-1] == null ||
+                 args[args.length-1] instanceof NativeArray ||
+                 args[args.length-1] instanceof NativeJavaArray))
+            {
+                // convert the ECMA array into a native array
+                varArgs = Context.jsToJava(args[args.length-1], 
+                                           argTypes[argTypes.length - 1]);
+            } else {            
+                // marshall the variable parameters
+                Class componentType = argTypes[argTypes.length - 1].
+                                         getComponentType();
+                varArgs = Array.newInstance(componentType, 
+                                            args.length - argTypes.length + 1);            
+                for (int i = 0; i < Array.getLength(varArgs); i++) {
+                    Object value = Context.jsToJava(args[argTypes.length-1 + i], 
+                                                    componentType);
+                    Array.set(varArgs, i, value);
                 }
-                args[i] = coerced;
+            }
+            
+            // add varargs
+            newArgs[argTypes.length-1] = varArgs;
+            // replace the original args with the new one
+            args = newArgs;
+        } else {  
+            // First, we marshall the args.
+            Object[] origArgs = args;
+            for (int i = 0; i < args.length; i++) {
+                Object arg = args[i];
+                Object coerced = Context.jsToJava(arg, argTypes[i]);
+                if (coerced != arg) {
+                    if (origArgs == args) {
+                        args = (Object[])args.clone();
+                    }
+                    args[i] = coerced;
+                }
             }
         }
         Object javaObject;
@@ -238,8 +280,16 @@ public class NativeJavaMethod extends BaseFunction
             MemberBox member = methodsOrCtors[0];
             Class[] argTypes = member.argTypes;
             int alength = argTypes.length;
-            if (alength != args.length) {
-                return -1;
+            
+            if (member.vararg) {
+                alength--;
+                if ( alength > args.length) {
+                    return -1;
+                }
+            } else {
+                if (alength != args.length) {
+                    return -1;
+                }
             }
             for (int j = 0; j != alength; ++j) {
                 if (!NativeJavaObject.canConvert(args[j], argTypes[j])) {
@@ -260,10 +310,18 @@ public class NativeJavaMethod extends BaseFunction
         for (int i = 0; i < methodsOrCtors.length; i++) {
             MemberBox member = methodsOrCtors[i];
             Class[] argTypes = member.argTypes;
-            if (argTypes.length != args.length) {
-                continue search;
+            int alength = argTypes.length;
+            if (member.vararg) {
+                alength--;
+                if ( alength > args.length) {
+                    continue search;
+                }
+            } else {
+                if (alength != args.length) {
+                    continue search;
+                }
             }
-            for (int j = 0; j < argTypes.length; j++) {
+            for (int j = 0; j < alength; j++) {
                 if (!NativeJavaObject.canConvert(args[j], argTypes[j])) {
                     if (debug) printDebug("Rejecting (args can't convert) ",
                                           member, args);
@@ -291,7 +349,9 @@ public class NativeJavaMethod extends BaseFunction
                     }
                     MemberBox bestFit = methodsOrCtors[bestFitIndex];
                     int preference = preferSignature(args, argTypes,
-                                                     bestFit.argTypes);
+                                                     member.vararg,
+                                                     bestFit.argTypes,
+                                                     bestFit.vararg );
                     if (preference == PREFERENCE_AMBIGUOUS) {
                         break;
                     } else if (preference == PREFERENCE_FIRST_ARG) {
@@ -401,11 +461,38 @@ public class NativeJavaMethod extends BaseFunction
      * Returns one of PREFERENCE_EQUAL, PREFERENCE_FIRST_ARG,
      * PREFERENCE_SECOND_ARG, or PREFERENCE_AMBIGUOUS.
      */
-    private static int preferSignature(Object[] args,
-                                       Class[] sig1, Class[] sig2)
+    private static int preferSignature(Object[] args, 
+                                       Class[] sig1,
+                                       boolean vararg1,
+                                       Class[] sig2,
+                                       boolean vararg2 )
     {
+        // TODO: This test is pretty primitive. It bascially prefers
+        // a matching no vararg method over a vararg method independent
+        // of the type conversion cost. This can lead to unexpected results.
+        int alength = args.length;
+        if (!vararg1 && vararg2) {
+            // prefer the no vararg signature
+            return PREFERENCE_FIRST_ARG;
+        } else if (vararg1 && !vararg2) {
+            // prefer the no vararg signature
+            return PREFERENCE_SECOND_ARG;
+        } else if (vararg1 && vararg2) {
+            if (sig1.length < sig2.length) {
+                // prefer the signature with more explicit types
+                return PREFERENCE_SECOND_ARG;                
+            } else if (sig1.length > sig2.length) {
+                // prefer the signature with more explicit types
+                return PREFERENCE_FIRST_ARG;                
+            } else {
+                // Both are varargs and have the same length, so make the
+                // decision with the explicit args. 
+                alength = Math.min(args.length, sig1.length-1);
+            }
+        }
+        
         int totalPreference = 0;
-        for (int j = 0; j < args.length; j++) {
+        for (int j = 0; j < alength; j++) {
             Class type1 = sig1[j];
             Class type2 = sig2[j];
             if (type1 == type2) {

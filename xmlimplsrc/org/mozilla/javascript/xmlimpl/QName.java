@@ -1,39 +1,42 @@
 /* -*- Mode: java; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Rhino code, released
  * May 6, 1999.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1997-2000 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1997-2000
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Ethan Hugg
- * Terry Lucas
- * Milen Nankov
+ *   Ethan Hugg
+ *   Terry Lucas
+ *   Milen Nankov
  *
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU Public License (the "GPL"), in which case the
- * provisions of the GPL are applicable instead of those above.
- * If you wish to allow use of your version of this file only
- * under the terms of the GPL and not to allow others to use your
- * version of this file under the NPL, indicate your decision by
- * deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL.  If you do not delete
- * the provisions above, a recipient may use your version of this
- * file under either the NPL or the GPL.
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * the GNU General Public License Version 2 or later (the "GPL"), in which
+ * case the provisions of the GPL are applicable instead of those above. If
+ * you wish to allow use of your version of this file only under the terms of
+ * the GPL and not to allow others to use your version of this file under the
+ * MPL, indicate your decision by deleting the provisions above and replacing
+ * them with the notice and other provisions required by the GPL. If you do
+ * not delete the provisions above, a recipient may use your version of this
+ * file under either the MPL or the GPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 package org.mozilla.javascript.xmlimpl;
 
@@ -49,70 +52,80 @@ final class QName extends IdScriptableObject
 
     private static final Object QNAME_TAG = new Object();
 
-    XMLLibImpl lib;
-    private String prefix;
-    private String localName;
-    private String uri;
+	private XMLLibImpl lib;
+	
+	private QName prototype;
+	
+	private XmlNode.QName delegate;
 
-    QName(XMLLibImpl lib, String uri, String localName, String prefix)
-    {
-        super(lib.globalScope(), lib.qnamePrototype);
-        if (localName == null) throw new IllegalArgumentException();
-        this.lib = lib;
-        this.uri = uri;
-        this.prefix = prefix;
-        this.localName = localName;
-    }
+	private QName() {
+	}
+	
+	static QName create(XMLLibImpl lib, Scriptable scope, QName prototype, XmlNode.QName delegate) {
+		QName rv = new QName();
+		rv.lib = lib;
+		rv.setParentScope(scope);
+		rv.prototype = prototype;
+		rv.setPrototype(prototype);
+		rv.delegate = delegate;
+		return rv;
+	}
+	
+//	/** @deprecated */
+//	static QName create(XMLLibImpl lib, XmlNode.QName nodeQname) {
+//		return create(lib, lib.globalScope(), lib.qnamePrototype(), nodeQname);
+//	}
+	
+	void exportAsJSClass(boolean sealed) {
+		exportAsJSClass(MAX_PROTOTYPE_ID, getParentScope(), sealed);
+	}
 
-    void exportAsJSClass(boolean sealed)
-    {
-        exportAsJSClass(MAX_PROTOTYPE_ID, lib.globalScope(), sealed);
-    }
-
-    /**
-     *
-     * @return
-     */
-    public String toString()
-    {
-        String result;
-
-        if (uri == null)
-        {
-            result = "*::".concat(localName);
-        }
-        else if(uri.length() == 0)
-        {
-            result = localName;
-        }
-        else
-        {
-            result = uri + "::" + localName;
-        }
-
-        return result;
-    }
-
-    public String localName()
-    {
-        return localName;
-    }
-
-    String prefix()
-    {
-        return (prefix == null) ? prefix : "";
-    }
-
-    String uri()
-    {
-        return uri;
-    }
-
-    public boolean equals(Object obj)
-    {
-        if(!(obj instanceof QName)) return false;
-        return equals((QName)obj);
-    }
+	public String toString() {
+		//	ECMA357 13.3.4.2
+		if (delegate.getNamespace() == null) {
+			return "*::" + localName();
+		} else if (delegate.getNamespace().isGlobal()) {
+			//	leave as empty
+			return localName();
+		} else {
+			return uri() + "::" + localName();
+		}
+	}
+	
+	public String localName() {
+		if (delegate.getLocalName() == null) return "*";
+		return delegate.getLocalName();
+	}
+	
+	/** 
+		@deprecated
+	 
+		This property is supposed to be invisible and I think we can make it private at some point, though Namespace
+		might need it
+	*/
+	String prefix() {
+		if (delegate.getNamespace() == null) return null;
+		return delegate.getNamespace().getPrefix();
+	}
+	
+	String uri() {
+		if (delegate.getNamespace() == null) return null;
+		return delegate.getNamespace().getUri();
+	}
+	
+	/** @deprecated */
+	final XmlNode.QName toNodeQname() {
+		return delegate;
+	}
+	
+	final XmlNode.QName getDelegate() {
+		return delegate;
+	}
+	
+	public boolean equals(Object obj) {
+		if(!(obj instanceof QName)) return false;
+		return equals((QName)obj);
+	}
 
     protected Object equivalentValues(Object value)
     {
@@ -121,37 +134,17 @@ final class QName extends IdScriptableObject
         return result ? Boolean.TRUE : Boolean.FALSE;
     }
 
-    private boolean equals(QName q)
-    {
-        boolean result;
-
-        if (uri == null) {
-            result = q.uri == null && localName.equals(q.localName);
-        } else {
-            result = uri.equals(q.uri) && localName.equals(q.localName);
-        }
-
-        return result;
-    }
-
-    /**
-     *
-     * @return
-     */
-    public String getClassName ()
-    {
-        return "QName";
-    }
-
-    /**
-     *
-     * @param hint
-     * @return
-     */
-    public Object getDefaultValue (Class hint)
-    {
-        return toString();
-    }
+	private boolean equals(QName q) {
+		return this.delegate.isEqualTo(q.delegate);
+	}
+	
+	public String getClassName() {
+		return "QName";
+	}
+	
+	public Object getDefaultValue(Class hint) {
+		return toString();
+	}
 
 // #string_id_map#
     private static final int
@@ -202,8 +195,8 @@ final class QName extends IdScriptableObject
     protected Object getInstanceIdValue(int id)
     {
         switch (id - super.getMaxInstanceId()) {
-          case Id_localName: return localName;
-          case Id_uri: return uri;
+          case Id_localName: return localName();
+          case Id_uri: return uri();
         }
         return super.getInstanceIdValue(id);
     }
@@ -274,45 +267,113 @@ final class QName extends IdScriptableObject
             throw incompatibleCallError(f);
         return (QName)thisObj;
     }
+	
+	QName newQName(XMLLibImpl lib, String q_uri, String q_localName, String q_prefix) {
+		QName prototype = this.prototype;
+		if (prototype == null) {
+			prototype = this;
+		}
+		XmlNode.Namespace ns = null;
+		if (q_prefix != null) {
+			ns = XmlNode.Namespace.create(q_uri, q_prefix);
+		} else if (q_uri != null) {
+			ns = XmlNode.Namespace.create(q_uri);
+		} else {
+			ns = null;
+		}
+		if (q_localName != null && q_localName.equals("*")) q_localName = null;
+		return create(lib, this.getParentScope(), prototype, XmlNode.QName.create(ns, q_localName));
+	}
 
-    private Object jsConstructor(Context cx, boolean inNewExpr, Object[] args)
-    {
-        if (!inNewExpr && args.length == 1) {
-            return lib.castToQName(cx, args[0]);
-        }
-        if (args.length == 0) {
-            return lib.constructQName(cx, Undefined.instance);
-        } else if (args.length == 1) {
-            return lib.constructQName(cx, args[0]);
-        } else {
-            return lib.constructQName(cx, args[0], args[1]);
-        }
-    }
+	//	See ECMA357 13.3.2
+	QName constructQName(XMLLibImpl lib, Context cx, Object namespace, Object name) {
+		String nameString = null;
+		if (name instanceof QName) {
+			if (namespace == Undefined.instance) {
+				return (QName)name;
+			} else {
+				nameString = ((QName)name).localName();
+			}
+		}
+		if (name == Undefined.instance) {
+			nameString = "";
+		} else {
+			nameString = ScriptRuntime.toString(name);
+		}
+		
+		if (namespace == Undefined.instance) {
+			if ("*".equals(nameString)) {
+				namespace = null;
+			} else {
+				namespace = lib.getDefaultNamespace(cx);
+			}
+		}
+		Namespace namespaceNamespace = null;
+		if (namespace == null) {
+			//	leave as null
+		} else if (namespace instanceof Namespace) {
+			namespaceNamespace = (Namespace)namespace;
+		} else {
+			namespaceNamespace = lib.newNamespace(ScriptRuntime.toString(namespace));
+		}
+		String q_localName = nameString;
+		String q_uri;
+		String q_prefix;
+		if (namespace == null) {
+			q_uri = null;
+			q_prefix = null;	//	corresponds to undefined; see QName class
+		} else {
+			q_uri = namespaceNamespace.uri();
+			q_prefix = namespaceNamespace.prefix();
+		}
+		return newQName(lib, q_uri, q_localName, q_prefix);
+	}
 
-    private String js_toSource()
-    {
-        StringBuffer sb = new StringBuffer();
-        sb.append('(');
-        toSourceImpl(uri, localName, prefix, sb);
-        sb.append(')');
-        return sb.toString();
-    }
+	QName constructQName(XMLLibImpl lib, Context cx, Object nameValue) {
+		return constructQName(lib, cx, Undefined.instance, nameValue);
+	}
+	
+	QName castToQName(XMLLibImpl lib, Context cx, Object qnameValue) {
+		if (qnameValue instanceof QName) {
+			return (QName)qnameValue;
+		}
+		return constructQName(lib, cx, qnameValue);
+	}
+	
+	private Object jsConstructor(Context cx, boolean inNewExpr, Object[] args) {
+		//	See ECMA357 13.3.2
+		if (!inNewExpr && args.length == 1) {
+			return castToQName(lib, cx, args[0]);
+		}
+		if (args.length == 0) {
+			return constructQName(lib, cx, Undefined.instance);
+		} else if (args.length == 1) {
+			return constructQName(lib, cx, args[0]);
+		} else {
+			return constructQName(lib, cx, args[0], args[1]);
+		}
+	}
 
-    private static void toSourceImpl(String uri, String localName,
-                                     String prefix, StringBuffer sb)
-    {
-        sb.append("new QName(");
-        if (uri == null && prefix == null) {
-            if (!"*".equals(localName)) {
-                sb.append("null, ");
-            }
-        } else {
-            Namespace.toSourceImpl(prefix, uri, sb);
-            sb.append(", ");
-        }
-        sb.append('\'');
-        sb.append(ScriptRuntime.escapeString(localName, '\''));
-        sb.append("')");
-    }
+	private String js_toSource() {
+		StringBuffer sb = new StringBuffer();
+		sb.append('(');
+		toSourceImpl(uri(), localName(), prefix(), sb);
+		sb.append(')');
+		return sb.toString();
+	}
 
+	private static void toSourceImpl(String uri, String localName, String prefix, StringBuffer sb) {
+		sb.append("new QName(");
+		if (uri == null && prefix == null) {
+			if (!"*".equals(localName)) {
+				sb.append("null, ");
+			}
+		} else {
+			Namespace.toSourceImpl(prefix, uri, sb);
+			sb.append(", ");
+		}
+		sb.append('\'');
+		sb.append(ScriptRuntime.escapeString(localName, '\''));
+		sb.append("')");
+	}
 }

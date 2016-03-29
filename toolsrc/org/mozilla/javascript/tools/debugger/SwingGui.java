@@ -1,41 +1,44 @@
 /* -*- Mode: java; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Rhino JavaScript Debugger code, released
  * November 21, 2000.
  *
- * The Initial Developer of the Original Code is SeeBeyond Corporation.
- *
- * Portions created by SeeBeyond are
- * Copyright (C) 2000 SeeBeyond Technology Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * SeeBeyond Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 2000
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Igor Bukanov
- * Matt Gould
- * Christopher Oliver
- * Cameron McCormack
+ *   Igor Bukanov
+ *   Matt Gould
+ *   Cameron McCormack
+ *   Christopher Oliver
+ *   Hannes Wallnoefer
  *
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU Public License (the "GPL"), in which case the
- * provisions of the GPL are applicable instead of those above.
- * If you wish to allow use of your version of this file only
- * under the terms of the GPL and not to allow others to use your
- * version of this file under the NPL, indicate your decision by
- * deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL.  If you do not delete
- * the provisions above, a recipient may use your version of this
- * file under either the NPL or the GPL.
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * the GNU General Public License Version 2 or later (the "GPL"), in which
+ * case the provisions of the GPL are applicable instead of those above. If
+ * you wish to allow use of your version of this file only under the terms of
+ * the GPL and not to allow others to use your version of this file under the
+ * MPL, indicate your decision by deleting the provisions above and replacing
+ * them with the notice and other provisions required by the GPL. If you do
+ * not delete the provisions above, a recipient may use your version of this
+ * file under either the MPL or the GPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 package org.mozilla.javascript.tools.debugger;
 
 import javax.swing.*;
@@ -52,6 +55,7 @@ import javax.swing.tree.TreePath;
 import java.lang.reflect.Method;
 
 import org.mozilla.javascript.Kit;
+import org.mozilla.javascript.SecurityUtilities;
 
 import org.mozilla.javascript.tools.shell.ConsoleTextArea;
 
@@ -104,11 +108,6 @@ public class SwingGui extends JFrame implements GuiCallback {
      * The console that displays I/O from the script.
      */
     private JSInternalConsole console;
-
-    /**
-     * The script evaluation internal frame.
-     */
-    private EvalWindow evalWindow;
 
     /**
      * The {@link JSplitPane} that separates {@link #desk} from {@link context}.
@@ -223,7 +222,6 @@ public class SwingGui extends JFrame implements GuiCallback {
                               "Step Out (F8)"};
         int count = 0;
         button = breakButton = new JButton("Break");
-        JButton focusButton = button;
         button.setToolTipText("Break");
         button.setActionCommand("Break");
         button.addActionListener(menubar);
@@ -434,21 +432,54 @@ public class SwingGui extends JFrame implements GuiCallback {
                 console.show();
             }
         } else {
+            showFileWindow(sourceName, -1);
             int lineNumber = frame.getLineNumber();
             FileWindow w = getFileWindow(sourceName);
             if (w != null) {
                 setFilePosition(w, lineNumber);
-            } else {
-                Dim.SourceInfo si = frame.sourceInfo();
-                createFileWindow(si, lineNumber);
             }
+        }
+    }
+
+    /**
+     * Shows a {@link FileWindow} for the given source, creating it
+     * if it doesn't exist yet. if <code>lineNumber</code> is greater
+     * than -1, it indicates the line number to select and display.
+     * @param sourceUrl the source URL
+     * @param lineNumber the line number to select, or -1
+     */
+    protected void showFileWindow(String sourceUrl, int lineNumber) {
+        FileWindow w = getFileWindow(sourceUrl);
+        if (w == null) {
+            Dim.SourceInfo si = dim.sourceInfo(sourceUrl);
+            createFileWindow(si, -1);
+            w = getFileWindow(sourceUrl);
+        }
+        if (lineNumber > -1) {
+            int start = w.getPosition(lineNumber-1);
+            int end = w.getPosition(lineNumber)-1;
+            w.textArea.select(start);
+            w.textArea.setCaretPosition(start);
+            w.textArea.moveCaretPosition(end);
+        }
+        try {
+            if (w.isIcon()) {
+                w.setIcon(false);
+            }
+            w.setVisible(true);
+            w.moveToFront();
+            w.setSelected(true);
+            requestFocus();
+            w.requestFocus();
+            w.textArea.requestFocus();
+        } catch (Exception exc) {
         }
     }
 
     /**
      * Creates and shows a new {@link FileWindow} for the given source.
      */
-    void createFileWindow(Dim.SourceInfo sourceInfo, int line) {
+    protected void createFileWindow(Dim.SourceInfo sourceInfo, int line) {
         boolean activate = true;
 
         String url = sourceInfo.url();
@@ -483,6 +514,25 @@ public class SwingGui extends JFrame implements GuiCallback {
             } catch (Exception exc) {
             }
         }
+    }
+
+    /**
+     * Update the source text for <code>sourceInfo</code>. This returns true
+     * if a {@link FileWindow} for the given source exists and could be updated.
+     * Otherwise, this does nothing and returns false.
+     * @param sourceInfo the source info
+     * @return true if a {@link FileWindow} for the given source exists
+     *              and could be updated, false otherwise.
+     */
+    protected boolean updateFileWindow(Dim.SourceInfo sourceInfo) {
+        String fileName = sourceInfo.url();
+        FileWindow w = getFileWindow(fileName);
+        if (w != null) {
+            w.updateText(sourceInfo);
+            w.show();
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -583,7 +633,7 @@ public class SwingGui extends JFrame implements GuiCallback {
     private String chooseFile(String title) {
         dlg.setDialogTitle(title);
         File CWD = null;
-        String dir = System.getProperty("user.dir");
+        String dir = SecurityUtilities.getSystemProperty("user.dir");
         if (dir != null) {
             CWD = new File(dir);
         }
@@ -907,7 +957,6 @@ class MessageDialogWrapper {
                 char c = msg.charAt(i);
                 buf.append(c);
                 if (Character.isWhitespace(c)) {
-                    int remainder = len - i;
                     int k;
                     for (k = i + 1; k < len; k++) {
                         if (Character.isWhitespace(msg.charAt(k))) {
@@ -1297,11 +1346,6 @@ class FilePopupMenu extends JPopupMenu {
     private static final long serialVersionUID = 3589525009546013565L;
 
     /**
-     * The {@link FileTextArea} this popup menu is attached to.
-     */
-    private FileTextArea w;
-
-    /**
      * The popup x position.
      */
     int x;
@@ -1315,7 +1359,6 @@ class FilePopupMenu extends JPopupMenu {
      * Creates a new FilePopupMenu.
      */
     public FilePopupMenu(FileTextArea w) {
-        this.w = w;
         JMenuItem item;
         add(item = new JMenuItem("Set Breakpoint"));
         item.addActionListener(w);
@@ -1506,6 +1549,7 @@ class FileTextArea
         case KeyEvent.VK_BACK_SPACE:
         case KeyEvent.VK_ENTER:
         case KeyEvent.VK_DELETE:
+        case KeyEvent.VK_TAB:
             e.consume();
             break;
         }
@@ -1547,19 +1591,14 @@ class MoreWindows extends JDialog implements ActionListener {
     private JList list;
 
     /**
-     * Table of file windows.
+     * Our parent frame.
      */
-    private Hashtable fileWindows;
+    private SwingGui swingGui;
 
     /**
      * The "Select" button.
      */
     private JButton setButton;
-
-    /**
-     * The "Refresh" button.
-     */
-    private JButton refreshButton;
 
     /**
      * The "Cancel" button.
@@ -1569,10 +1608,10 @@ class MoreWindows extends JDialog implements ActionListener {
     /**
      * Creates a new MoreWindows.
      */
-    MoreWindows(JFrame frame, Hashtable fileWindows, String title,
+    MoreWindows(SwingGui frame, Hashtable fileWindows, String title,
                 String labelText) {
         super(frame, title, true);
-        this.fileWindows = fileWindows;
+        this.swingGui = frame;
         //buttons
         cancelButton = new JButton("Cancel");
         setButton = new JButton("Select");
@@ -1651,14 +1690,6 @@ class MoreWindows extends JDialog implements ActionListener {
         return value;
     }
 
-    /**
-     * Sets the selected value.
-     */
-    private void setValue(String newValue) {
-        value = newValue;
-        list.setSelectedValue(value, true);
-    }
-
     // ActionListener
 
     /**
@@ -1672,14 +1703,7 @@ class MoreWindows extends JDialog implements ActionListener {
         } else if (cmd.equals("Select")) {
             value = (String)list.getSelectedValue();
             setVisible(false);
-            JInternalFrame w = (JInternalFrame)fileWindows.get(value);
-            if (w != null) {
-                try {
-                    w.show();
-                    w.setSelected(true);
-                } catch (Exception exc) {
-                }
-            }
+            swingGui.showFileWindow(value, -1);
         }
     }
 
@@ -1724,11 +1748,6 @@ class FindFunction extends JDialog implements ActionListener {
      * The "Select" button.
      */
     private JButton setButton;
-
-    /**
-     * The "Refresh" button.
-     */
-    private JButton refreshButton;
 
     /**
      * The "Cancel" button.
@@ -1816,14 +1835,6 @@ class FindFunction extends JDialog implements ActionListener {
         return value;
     }
 
-    /**
-     * Sets the last function selected.
-     */
-    private void setValue(String newValue) {
-        value = newValue;
-        list.setSelectedValue(value, true);
-    }
-
     // ActionListener
 
     /**
@@ -1849,24 +1860,7 @@ class FindFunction extends JDialog implements ActionListener {
                 Dim.SourceInfo si = item.sourceInfo();
                 String url = si.url();
                 int lineNumber = item.firstLine();
-                FileWindow w = debugGui.getFileWindow(url);
-                if (w == null) {
-                    debugGui.createFileWindow(si, lineNumber);
-                    w = debugGui.getFileWindow(url);
-                    w.setPosition(-1);
-                }
-                int start = w.getPosition(lineNumber-1);
-                int end = w.getPosition(lineNumber)-1;
-                w.textArea.select(start);
-                w.textArea.setCaretPosition(start);
-                w.textArea.moveCaretPosition(end);
-                try {
-                    w.show();
-                    debugGui.requestFocus();
-                    w.requestFocus();
-                    w.textArea.requestFocus();
-                } catch (Exception exc) {
-                }
+                debugGui.showFileWindow(url, lineNumber);
             }
         }
     }
@@ -1945,7 +1939,6 @@ class FileHeader extends JPanel implements MouseListener {
         Rectangle clip = g.getClipBounds();
         g.setColor(getBackground());
         g.fillRect(clip.x, clip.y, clip.width, clip.height);
-        int left = getX();
         int ascent = metrics.getMaxAscent();
         int h = metrics.getHeight();
         int lineCount = textArea.getLineCount() + 1;
@@ -1953,7 +1946,6 @@ class FileHeader extends JPanel implements MouseListener {
         if (dummy.length() < 2) {
             dummy = "99";
         }
-        int maxWidth = metrics.stringWidth(dummy);
         int startLine = clip.y / h;
         int endLine = (clip.y + clip.height) / h + 1;
         int width = getWidth();
@@ -1967,7 +1959,6 @@ class FileHeader extends JPanel implements MouseListener {
             }
             boolean isBreakPoint = fileWindow.isBreakPoint(i + 1);
             text = Integer.toString(i + 1) + " ";
-            int w = metrics.stringWidth(text);
             int y = i * h;
             g.setColor(Color.blue);
             g.drawString(text, 0, y + ascent);
@@ -2038,7 +2029,6 @@ class FileHeader extends JPanel implements MouseListener {
     public void mouseReleased(MouseEvent e) {
         if (e.getComponent() == this
                 && (e.getModifiers() & MouseEvent.BUTTON1_MASK) != 0) {
-            int x = e.getX();
             int y = e.getY();
             Font font = fileWindow.textArea.getFont();
             FontMetrics metrics = getFontMetrics(font);
@@ -2092,11 +2082,6 @@ class FileWindow extends JInternalFrame implements ActionListener {
      * The current offset position.
      */
     int currentPos;
-
-    /**
-     * The status bar.
-     */
-    private JLabel statusBar;
 
     /**
      * Loads the file.
@@ -2960,7 +2945,6 @@ class ContextWindow extends JPanel implements ActionListener {
         final JPanel finalThis = this;
 
         ComponentListener clistener = new ComponentListener() {
-                boolean t1Docked = true;
                 boolean t2Docked = true;
                 void check(Component comp) {
                     Component thisParent = finalThis.getParent();
@@ -3029,7 +3013,6 @@ class ContextWindow extends JPanel implements ActionListener {
                         // no change
                         return;
                     }
-                    t1Docked = leftDocked;
                     t2Docked = rightDocked;
                     JSplitPane split = (JSplitPane)thisParent;
                     if (leftDocked) {
@@ -3537,11 +3520,8 @@ class RunProxy implements Runnable {
           case UPDATE_SOURCE_TEXT:
             {
                 String fileName = sourceInfo.url();
-                FileWindow w = debugGui.getFileWindow(fileName);
-                if (w != null) {
-                    w.updateText(sourceInfo);
-                    w.show();
-                } else if (!fileName.equals("<stdin>")) {
+                if (!debugGui.updateFileWindow(sourceInfo) &&
+                        !fileName.equals("<stdin>")) {
                     debugGui.createFileWindow(sourceInfo, -1);
                 }
             }

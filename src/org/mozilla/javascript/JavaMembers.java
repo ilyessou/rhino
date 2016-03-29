@@ -1,47 +1,53 @@
 /* -*- Mode: java; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Rhino code, released
  * May 6, 1999.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1997-2000 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1997-2000
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Norris Boyd
- * Cameron McCormack
- * Frank Mitchell
- * Mike Shaver
- * Kurt Westerfeld
+ *   Norris Boyd
+ *   Cameron McCormack
+ *   Frank Mitchell
+ *   Mike Shaver
+ *   Kurt Westerfeld
  *
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU Public License (the "GPL"), in which case the
- * provisions of the GPL are applicable instead of those above.
- * If you wish to allow use of your version of this file only
- * under the terms of the GPL and not to allow others to use your
- * version of this file under the NPL, indicate your decision by
- * deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL.  If you do not delete
- * the provisions above, a recipient may use your version of this
- * file under either the NPL or the GPL.
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * the GNU General Public License Version 2 or later (the "GPL"), in which
+ * case the provisions of the GPL are applicable instead of those above. If
+ * you wish to allow use of your version of this file only under the terms of
+ * the GPL and not to allow others to use your version of this file under the
+ * MPL, indicate your decision by deleting the provisions above and replacing
+ * them with the notice and other provisions required by the GPL. If you do
+ * not delete the provisions above, a recipient may use your version of this
+ * file under either the MPL or the GPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 package org.mozilla.javascript;
 
 import java.lang.reflect.*;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.Hashtable;
 import java.util.Enumeration;
+import java.util.Map;
 
 /**
  *
@@ -52,13 +58,17 @@ import java.util.Enumeration;
  */
 class JavaMembers
 {
-
     JavaMembers(Scriptable scope, Class cl)
+    {
+        this(scope, cl, false);
+    }
+    
+    JavaMembers(Scriptable scope, Class cl, boolean includeProtected)
     {
         this.members = new Hashtable(23);
         this.staticMembers = new Hashtable(7);
         this.cl = cl;
-        reflect(scope);
+        reflect(scope, includeProtected);
     }
 
     boolean has(String name, boolean isStatic)
@@ -305,19 +315,114 @@ class JavaMembers
         return member;
     }
 
-    private void reflect(Scriptable scope)
+    /**
+     * Retrieves mapping of methods to accessible methods for a class.
+     * In case the class is not public, retrieves methods with same 
+     * signature as its public methods from public superclasses and 
+     * interfaces (if they exist). Basically upcasts every method to the 
+     * nearest accessible method.
+     */
+    private static Method[] discoverAccessibleMethods(Class clazz, 
+                                                      boolean includeProtected)
+    {
+        Map map = new HashMap();
+        discoverAccessibleMethods(clazz, map, includeProtected);
+        return (Method[])map.values().toArray(new Method[map.size()]);
+    }
+    
+    private static void discoverAccessibleMethods(Class clazz, Map map,
+                                                  boolean includeProtected)
+    {
+        if (Modifier.isPublic(clazz.getModifiers())) {
+            try {
+              if (includeProtected) {
+                while (clazz != null) {
+                  Method[] methods = clazz.getDeclaredMethods();
+                  for (int i = 0; i < methods.length; i++)
+                  {
+                    Method method = methods[i];
+                    int mods = method.getModifiers();
+                    if (Modifier.isPublic(mods) || 
+                        Modifier.isProtected(mods)) 
+                    {
+                      MethodSignature sig = new MethodSignature(method);
+                      map.put(sig, method);
+                    }
+                  }
+                  clazz = clazz.getSuperclass();
+                }
+            } else {
+                Method[] methods = clazz.getMethods();
+                for (int i = 0; i < methods.length; i++)
+                {
+                  Method method = methods[i];
+                  MethodSignature sig = new MethodSignature(method);
+                  map.put(sig, method);
+                }
+              }
+              return;
+            } catch (SecurityException e) {
+                Context.reportWarning(
+                        "Could not discover accessible methods of class " + 
+                        clazz.getName() + " due to lack of privileges, " + 
+                        "attemping superclasses/interfaces.");
+                // Fall through and attempt to discover superclass/interface 
+                // methods
+            }
+        }
+
+        Class[] interfaces = clazz.getInterfaces();
+        for (int i = 0; i < interfaces.length; i++) {
+            discoverAccessibleMethods(interfaces[i], map, includeProtected);
+        }
+        Class superclass = clazz.getSuperclass();
+        if (superclass != null) {
+            discoverAccessibleMethods(superclass, map, includeProtected);
+        }
+    }
+
+    private static final class MethodSignature
+    {
+        private final String name;
+        private final Class[] args;
+        
+        private MethodSignature(String name, Class[] args)
+        {
+            this.name = name;
+            this.args = args;
+        }
+        
+        MethodSignature(Method method)
+        {
+            this(method.getName(), method.getParameterTypes());
+        }
+        
+        public boolean equals(Object o)
+        {
+            if(o instanceof MethodSignature)
+            {
+                MethodSignature ms = (MethodSignature)o;
+                return ms.name.equals(name) && Arrays.equals(args, ms.args);
+            }
+            return false;
+        }
+        
+        public int hashCode()
+        {
+            return name.hashCode() ^ args.length;
+        }
+    }
+    
+    private void reflect(Scriptable scope, boolean includeProtected)
     {
         // We reflect methods first, because we want overloaded field/method
         // names to be allocated to the NativeJavaMethod before the field
         // gets in the way.
 
-        Method[] methods = cl.getMethods();
+        Method[] methods = discoverAccessibleMethods(cl, includeProtected);
         for (int i = 0; i < methods.length; i++) {
             Method method = methods[i];
             int mods = method.getModifiers();
-            if (!Modifier.isPublic(mods)) {
-                continue;
-            }
             boolean isStatic = Modifier.isStatic(mods);
             Hashtable ht = isStatic ? staticMembers : members;
             String name = method.getName();
@@ -468,12 +573,10 @@ class JavaMembers
                     // Find the getter method, or if there is none, the is-
                     // method.
                     MemberBox getter = null;
-                    String getterName = "get".concat(nameComponent);
-                    String isName = "is".concat(nameComponent);
-                    getter = findGetter(isStatic, ht, getterName);
+                    getter = findGetter(isStatic, ht, "get", nameComponent);
                     // If there was no valid getter, check for an is- method.
                     if (getter == null) {
-                        getter = findGetter(isStatic, ht, isName);
+                        getter = findGetter(isStatic, ht, "is", nameComponent);
                     }
 
                     // setter
@@ -525,8 +628,9 @@ class JavaMembers
         }
     }
 
-    private MemberBox findGetter(boolean isStatic, Hashtable ht, String getterName)
+    private MemberBox findGetter(boolean isStatic, Hashtable ht, String prefix, String propertyName)
     {
+        String getterName = prefix.concat(propertyName);
         if (ht.containsKey(getterName)) {
             // Check that the getter is a method.
             Object member = ht.get(getterName);
@@ -633,7 +737,7 @@ class JavaMembers
     }
 
     static JavaMembers lookupClass(Scriptable scope, Class dynamicType,
-                                   Class staticType)
+                                   Class staticType, boolean includeProtected)
     {
         JavaMembers members;
         ClassCache cache = ClassCache.get(scope);
@@ -646,7 +750,7 @@ class JavaMembers
                 return members;
             }
             try {
-                members = new JavaMembers(cache.scope, cl);
+                members = new JavaMembers(cache.scope, cl, includeProtected);
                 break;
             } catch (SecurityException e) {
                 // Reflection may fail for objects that are in a restricted

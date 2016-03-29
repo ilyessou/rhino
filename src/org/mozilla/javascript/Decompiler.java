@@ -1,39 +1,43 @@
 /* -*- Mode: java; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Rhino code, released
  * May 6, 1999.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1997-1999 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1997-1999
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Mike Ang
- * Igor Bukanov
- * Mike McCabe
+ *   Mike Ang
+ *   Igor Bukanov
+ *   Bob Jervis
+ *   Mike McCabe
  *
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU Public License (the "GPL"), in which case the
- * provisions of the GPL are applicable instead of those above.
- * If you wish to allow use of your version of this file only
- * under the terms of the GPL and not to allow others to use your
- * version of this file under the NPL, indicate your decision by
- * deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL.  If you do not delete
- * the provisions above, a recipient may use your version of this
- * file under either the NPL or the GPL.
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * the GNU General Public License Version 2 or later (the "GPL"), in which
+ * case the provisions of the GPL are applicable instead of those above. If
+ * you wish to allow use of your version of this file only under the terms of
+ * the GPL and not to allow others to use your version of this file under the
+ * MPL, indicate your decision by deleting the provisions above and replacing
+ * them with the notice and other provisions required by the GPL. If you do
+ * not delete the provisions above, a recipient may use your version of this
+ * file under either the MPL or the GPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 package org.mozilla.javascript;
 
@@ -350,6 +354,15 @@ public class Decompiler
 
         while (i < length) {
             switch(source.charAt(i)) {
+            case Token.GET:
+            case Token.SET:
+                result.append(source.charAt(i) == Token.GET ? "get " : "set ");
+                ++i;
+                i = printSourceString(source, i + 1, false, result);
+                // Now increment one more to get past the FUNCTION token
+                ++i;
+                break;
+
             case Token.NAME:
             case Token.REGEXP:  // re-wrapped in '/'s in parser...
                 i = printSourceString(source, i + 1, false, result);
@@ -731,6 +744,10 @@ public class Decompiler
                 result.append("void ");
                 break;
 
+            case Token.CONST:
+                result.append("const ");
+                break;
+            
             case Token.NOT:
                 result.append('!');
                 break;
@@ -793,7 +810,8 @@ public class Decompiler
 
             default:
                 // If we don't know how to decompile it, raise an exception.
-                throw new RuntimeException();
+                throw new RuntimeException("Token: " +
+                                               Token.name(source.charAt(i)));
             }
             ++i;
         }
